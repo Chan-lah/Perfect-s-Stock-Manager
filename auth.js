@@ -1,10 +1,10 @@
 // ============================================================
-// auth.js — PSM Authentication & Permissions (V2)
-// Admin-managed accounts with Supabase Auth + profiles table.
+// auth.js — PSM Authentication & Permissions (V3)
+// 100% Supabase Auth — no local passwords
 // ============================================================
 
 var _supabaseUser = null;   // Supabase auth user object
-var _userProfile  = null;   // Profile from profiles table {email, display_name, role, permissions}
+var _userProfile  = null;   // Profile from profiles table
 
 // ── Supabase Auth ──────────────────────────────────────────
 
@@ -43,7 +43,6 @@ async function _loadUserProfile() {
       .eq('email', _supabaseUser.email).single();
     if (r.data) {
       _userProfile = r.data;
-      // Sync with local APP.users
       _syncProfileToLocal(_userProfile);
       return _userProfile;
     }
@@ -59,26 +58,37 @@ function _syncProfileToLocal(profile) {
     existing.name = profile.display_name || existing.name;
     existing.role = profile.role || existing.role;
     if (profile.permissions) existing.permissions = profile.permissions;
+  } else {
+    // Create local entry from cloud profile
+    APP.users.push({
+      id: 'u_' + Date.now(),
+      name: profile.display_name || profile.email.split('@')[0],
+      email: profile.email,
+      password: null,
+      role: profile.role || 'viewer',
+      photo: null,
+      signature: null,
+      permissions: profile.permissions || null,
+      createdAt: Date.now(),
+      _version: 1
+    });
   }
 }
 
 // ── Activity Log ───────────────────────────────────────────
 
 async function logActivity(action, details) {
-  // Local log
   if (typeof APP !== 'undefined') {
     if (!APP._activityLog) APP._activityLog = [];
-    var entry = {
+    APP._activityLog.unshift({
       ts: Date.now(),
       email: (_supabaseUser && _supabaseUser.email) || (_currentUser() && _currentUser().email) || 'unknown',
       user: (_currentUser() && _currentUser().name) || 'unknown',
       action: action,
       details: details || ''
-    };
-    APP._activityLog.unshift(entry);
+    });
     if (APP._activityLog.length > 500) APP._activityLog = APP._activityLog.slice(0, 500);
   }
-  // Cloud log
   if (_supabase && _supabaseUser) {
     try {
       await _supabase.from('activity_log').insert({
@@ -90,12 +100,13 @@ async function logActivity(action, details) {
   }
 }
 
-// ── Supabase Login Screen ──────────────────────────────────
-
-function showSupabaseLogin() { showLoginScreen(); }
+// ── Login Screen (email + password → Supabase Auth) ────────
 
 function showLoginScreen() {
+  // Remove any existing overlay
   var old = document.getElementById('supabase-login-overlay');
+  if (old) old.remove();
+  old = document.getElementById('login-overlay');
   if (old) old.remove();
 
   var overlay = document.createElement('div');
@@ -136,6 +147,9 @@ function showLoginScreen() {
   }, 100);
 }
 
+// Alias for backwards compat
+function showSupabaseLogin() { showLoginScreen(); }
+
 async function _handleLogin(e) {
   e.preventDefault();
   var email = document.getElementById('supa-email').value.trim();
@@ -149,49 +163,69 @@ async function _handleLogin(e) {
   btn.textContent = 'Connexion...';
 
   try {
-    // 1. Check local credentials first
-    var users = (typeof APP !== 'undefined' && APP.users) ? APP.users : [];
-    var localUser = users.find(function(u) {
-      return u.email && u.email.toLowerCase() === email.toLowerCase() && u.password === password;
-    });
-
-    if (!localUser) {
-      throw new Error('Email ou mot de passe incorrect');
+    // 1. Authenticate via Supabase
+    if (typeof _supabase === 'undefined' || !_supabase) {
+      throw new Error('Service de connexion indisponible. V\u00e9rifiez votre connexion internet.');
     }
 
-    // 2. Set local session
-    sessionStorage.setItem('psm_user', localUser.id);
+    await _supabaseSignIn(email, password);
+    _onlineMode = true;
 
-    // 3. Try Supabase sync in background (non-blocking)
-    if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
-      try {
-        await _supabaseSignIn(email, password);
-        _onlineMode = true;
-        await _loadUserProfile();
-        try { await _loadFromCloud(); } catch(ex) {}
-      } catch(cloudErr) {
-        // Supabase auth failed — that's OK, local auth succeeded
-        console.warn('[PSM] Supabase sync skipped:', cloudErr.message);
+    // 2. Load profile from profiles table (role, permissions)
+    await _loadUserProfile();
+
+    // 3. Sync local user (create if needed)
+    if (!APP.users) APP.users = [];
+    var localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
+    if (!localUser) {
+      localUser = {
+        id: 'u_' + Date.now(),
+        name: (_userProfile && _userProfile.display_name) || email.split('@')[0],
+        email: email,
+        password: null,
+        role: (_userProfile && _userProfile.role) || 'admin',
+        photo: null,
+        signature: null,
+        permissions: (_userProfile && _userProfile.permissions) || null,
+        createdAt: Date.now(),
+        _version: 1
+      };
+      APP.users.push(localUser);
+    } else {
+      // Update from profile
+      if (_userProfile) {
+        localUser.role = _userProfile.role || localUser.role;
+        if (_userProfile.display_name) localUser.name = _userProfile.display_name;
+        if (_userProfile.permissions) localUser.permissions = _userProfile.permissions;
       }
     }
 
-    // 4. Log activity
-    if (typeof logActivity === 'function') {
-      logActivity('login', 'Connexion: ' + localUser.name + ' (' + localUser.role + ')');
-    }
+    // 4. Set session
+    sessionStorage.setItem('psm_user', localUser.id);
+    if (typeof saveDB === 'function') saveDB();
 
-    // 5. Remove overlay
+    // 5. Load cloud data
+    try { if (typeof _loadFromCloud === 'function') await _loadFromCloud(); } catch(ex) {}
+
+    // 6. Log activity
+    logActivity('login', 'Connexion: ' + localUser.name + ' (' + localUser.role + ')');
+
+    // 7. Remove overlay
     var overlay = document.getElementById('supabase-login-overlay');
     if (overlay) overlay.remove();
 
-    // 6. Re-render
+    // 8. Re-render
     if (typeof renderSidebar === 'function') renderSidebar();
     if (typeof showPage === 'function') showPage((APP.settings && APP.settings.lastPage) || 'dashboard');
     if (typeof updateUserBadge === 'function') updateUserBadge();
     if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + localUser.name + ' !', 'success');
 
   } catch(err) {
-    errEl.textContent = err.message || 'Erreur de connexion';
+    var msg = err.message || String(err);
+    if (msg.includes('Invalid login')) msg = 'Email ou mot de passe incorrect';
+    else if (msg.includes('Email not confirmed')) msg = 'Email non confirm\u00e9. Contactez l\u2019administrateur.';
+    else if (msg.includes('Failed to fetch')) msg = 'Impossible de contacter le serveur. V\u00e9rifiez votre connexion internet.';
+    errEl.textContent = msg;
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.style.opacity = '1';
@@ -200,26 +234,20 @@ async function _handleLogin(e) {
   return false;
 }
 
-// ── Admin: Create Supabase account for a user ──────────────
+// ── Admin: Create Supabase account ─────────────────────────
 
 async function _adminCreateSupabaseUser(email, password, displayName, role, permissions) {
   if (!_supabase) throw new Error('Supabase non disponible');
 
-  // 1. Create auth account via Supabase signup
-  //    (In production, use Edge Function with service_role key)
-  //    For now: create via signUp then immediately sign back in as admin
   var adminSession = await _supabase.auth.getSession();
 
   var signUpResult = await _supabase.auth.signUp({
     email: email,
     password: password,
-    options: {
-      data: { display_name: displayName, role: role }
-    }
+    options: { data: { display_name: displayName, role: role } }
   });
   if (signUpResult.error) throw signUpResult.error;
 
-  // 2. Insert profile
   var profileResult = await _supabase.from('profiles').upsert({
     email: email,
     display_name: displayName,
@@ -229,12 +257,10 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
     created_by: _supabaseUser ? _supabaseUser.email : 'admin',
     is_active: true
   }, { onConflict: 'email' });
-
   if (profileResult.error) throw profileResult.error;
 
-  // 3. Restore admin session (signUp may have changed session)
+  // Restore admin session
   if (adminSession.data && adminSession.data.session) {
-    // Re-authenticate as admin
     await _supabase.auth.setSession({
       access_token: adminSession.data.session.access_token,
       refresh_token: adminSession.data.session.refresh_token
@@ -242,22 +268,17 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
     _supabaseUser = adminSession.data.session.user;
   }
 
-  // 4. Log activity
-  logActivity('admin_create_user', 'Cr\u00e9ation du compte: ' + email + ' (r\u00f4le: ' + role + ')');
-
+  logActivity('admin_create_user', 'Cr\u00e9ation: ' + email + ' (r\u00f4le: ' + role + ')');
   return signUpResult.data;
 }
 
 async function _adminUpdateProfile(email, displayName, role, permissions, isActive) {
   if (!_supabase) return;
   var result = await _supabase.from('profiles').update({
-    display_name: displayName,
-    role: role,
-    permissions: permissions,
-    is_active: isActive
+    display_name: displayName, role: role, permissions: permissions, is_active: isActive
   }).eq('email', email);
   if (result.error) throw result.error;
-  logActivity('admin_update_user', 'Modification: ' + email + ' -> r\u00f4le: ' + role);
+  logActivity('admin_update_user', 'Modification: ' + email + ' -> ' + role);
 }
 
 async function _adminDeactivateUser(email) {
@@ -285,82 +306,35 @@ async function _adminGetActivityLog(limit) {
 
 // ── Local session helpers ──────────────────────────────────
 
-function getSessionUserId() {
-  return sessionStorage.getItem('psm_user');
-}
-function setSessionUserId(userId) {
-  if (userId) sessionStorage.setItem('psm_user', userId);
-  else sessionStorage.removeItem('psm_user');
-}
-
-// ── Local user & permissions ───────────────────────────────
-
 function _currentUser() {
   var id = sessionStorage.getItem('psm_user');
-  if (!id) return (APP.users || [])[0] || { id: 'admin', name: 'PERFECT', role: 'admin', permissions: null };
-  return (APP.users || []).find(function(u) { return u.id === id; }) || (APP.users || [])[0];
+  if (!id) return null;
+  return (APP.users || []).find(function(u) { return u.id === id; }) || null;
 }
 
 function hasPermission(pageId, action) {
-  // If we have a Supabase profile, use its permissions
-  if (_userProfile && _userProfile.role !== 'admin') {
-    var p = _userProfile.permissions;
-    if (p && p[pageId]) return p[pageId][action] === true;
-    return false;
-  }
-  // Admin bypass
   var u = _currentUser();
-  if (!u) return true;
+  if (!u) return false;
   if (u.role === 'admin') return true;
+  // Check Supabase profile first
+  if (_userProfile && _userProfile.permissions) {
+    var pp = _userProfile.permissions[pageId];
+    if (pp) return pp[action] === true;
+  }
+  // Fallback to local permissions
   if (!u.permissions) return false;
   var perm = u.permissions[pageId];
   if (!perm) return false;
   return perm[action] === true;
 }
+
 function canView(pageId) { return hasPermission(pageId, 'view'); }
 function canEdit(pageId) { return hasPermission(pageId, 'edit'); }
 
-// ── Local Login / User-switch ──────────────────────────────
-
-function showLoginScreen() {
-  var users = APP.users || [];
-  var overlay = document.createElement('div');
-  overlay.id = 'login-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:var(--bg-0);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:24px';
-  var logo = (APP.settings && APP.settings.companyLogo) ? '<img src="' + APP.settings.companyLogo + '" style="max-height:80px;object-fit:contain;margin-bottom:8px">' : '';
-  var html = '<div style="text-align:center;max-width:480px;width:100%;padding:0 16px">'
-    + logo
-    + '<div style="font-size:22px;font-weight:800;color:var(--text-0);margin-bottom:6px">' + ((APP.settings && APP.settings.companyName) || 'PSM') + '</div>'
-    + '<div style="font-size:13px;color:var(--text-2);margin-bottom:28px">S\u00e9lectionnez votre compte pour continuer</div>'
-    + '<div style="display:grid;gap:10px;margin-bottom:20px">';
-  users.forEach(function(u) {
-    html += '<button onclick="loginAs(\'' + u.id + '\')" style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--bg-1);border:1.5px solid var(--border);border-radius:var(--radius);cursor:pointer;text-align:left;transition:border-color .15s,background .15s" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'
-      + '<div style="width:42px;height:42px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--accent);flex-shrink:0;overflow:hidden">'
-      + (u.photo ? '<img src="' + u.photo + '" style="width:42px;height:42px;object-fit:cover;border-radius:50%">' : u.name.charAt(0).toUpperCase())
-      + '</div><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--text-0)">' + u.name + '</div>'
-      + '<div style="font-size:11px;color:var(--text-2)">' + (u.email || '') + '</div></div>'
-      + '<div style="font-size:10px;background:' + (u.role === 'admin' ? 'var(--accent)' : 'var(--bg-2)') + ';color:' + (u.role === 'admin' ? '#fff' : 'var(--text-2)') + ';padding:2px 8px;border-radius:99px">' + (u.role === 'admin' ? 'Admin' : 'Utilisateur') + '</div>'
-      + '</button>';
-  });
-  html += '</div></div>';
-  overlay.innerHTML = html;
-  document.body.appendChild(overlay);
-}
-
-function loginAs(userId) {
-  sessionStorage.setItem('psm_user', userId);
-  var overlay = document.getElementById('login-overlay');
-  if (overlay) overlay.remove();
-  var u = _currentUser();
-  if (typeof notify === 'function') notify('\uD83D\uDC4B Bonjour ' + (u ? u.name : '') + ' !', 'success');
-  logActivity('local_switch', 'Connexion locale: ' + (u ? u.name : userId));
-  if (typeof renderSidebar === 'function') renderSidebar();
-  if (typeof showPage === 'function') showPage((APP.settings && APP.settings.lastPage) || 'dashboard');
-  if (typeof updateUserBadge === 'function') updateUserBadge();
-}
+// ── Logout ─────────────────────────────────────────────────
 
 function logoutUser() {
-  if (typeof logActivity === 'function') logActivity('logout', 'D\u00e9connexion');
+  logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
   _supabaseUser = null;
   _userProfile = null;
@@ -369,6 +343,8 @@ function logoutUser() {
   }
   showLoginScreen();
 }
+
+// ── User badge (topbar) ────────────────────────────────────
 
 function updateUserBadge() {
   var el = document.getElementById('topbar-user');
@@ -379,9 +355,12 @@ function updateUserBadge() {
     ? '<img src="' + u.photo + '" style="width:28px;height:28px;object-fit:cover;border-radius:50%">'
     : u.name.charAt(0).toUpperCase();
   var onlineIcon = _supabaseUser ? '<span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;margin-left:4px" title="En ligne"></span>' : '';
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="showUserSwitchMenu(this)" title="Changer d\u2019utilisateur">'
+  var roleMeta = (typeof ROLE_TEMPLATES !== 'undefined' && ROLE_TEMPLATES[u.role]) ? ROLE_TEMPLATES[u.role] : null;
+  var roleTag = roleMeta ? '<span style="font-size:9px;background:' + roleMeta.color + '22;color:' + roleMeta.color + ';padding:1px 6px;border-radius:99px;margin-left:4px">' + roleMeta.label + '</span>' : '';
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="showUserSwitchMenu(this)">'
     + '<div style="width:28px;height:28px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--accent);overflow:hidden">' + photoHtml + '</div>'
     + '<span style="font-size:12px;color:var(--text-1);font-weight:600">' + u.name + onlineIcon + '</span>'
+    + roleTag
     + '<span style="font-size:10px;color:var(--text-3)">\u25be</span>'
     + '</div>';
 }
@@ -392,24 +371,32 @@ function showUserSwitchMenu(el) {
   var rect = el.getBoundingClientRect();
   var menu = document.createElement('div');
   menu.id = 'user-switch-menu';
-  menu.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;right:' + (window.innerWidth - rect.right) + 'px;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 24px rgba(0,0,0,.3);z-index:999;min-width:200px;padding:6px';
+  menu.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;right:' + (window.innerWidth - rect.right) + 'px;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 24px rgba(0,0,0,.3);z-index:999;min-width:220px;padding:6px';
   var u = _currentUser();
   var html = '';
 
-  // Show connection status
-  if (_supabaseUser) {
-    html += '<div style="padding:8px 10px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);margin-bottom:4px">'
-      + '<span style="color:#22c55e">\u25cf</span> ' + _supabaseUser.email + '</div>';
+  // User info
+  if (u) {
+    var roleMeta = (typeof ROLE_TEMPLATES !== 'undefined' && ROLE_TEMPLATES[u.role]) ? ROLE_TEMPLATES[u.role] : null;
+    html += '<div style="padding:10px 10px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">'
+      + '<div style="font-weight:700;font-size:13px;color:var(--text-0)">' + u.name + '</div>'
+      + '<div style="font-size:11px;color:var(--text-3)">' + (u.email || '') + '</div>'
+      + (roleMeta ? '<div style="margin-top:4px"><span style="font-size:10px;background:' + roleMeta.color + '22;color:' + roleMeta.color + ';padding:2px 8px;border-radius:99px">' + roleMeta.label + '</span></div>' : '')
+      + '</div>';
   }
 
-  (APP.users || []).forEach(function(uu) {
-    if (uu.id === (u && u.id)) return;
-    html += '<button onclick="loginAs(\'' + uu.id + '\');document.getElementById(\'user-switch-menu\').remove()" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:none;border:none;border-radius:6px;cursor:pointer;color:var(--text-0);font-size:13px" onmouseover="this.style.background=\'var(--bg-2)\'" onmouseout="this.style.background=\'none\'">'
-      + '<span style="font-size:15px">' + uu.name.charAt(0).toUpperCase() + '</span>' + uu.name + '</button>';
-  });
-  html += '<div style="border-top:1px solid var(--border);margin:4px 0"></div>';
-  html += '<button onclick="logoutUser();var m=document.getElementById(\'user-switch-menu\');if(m)m.remove()" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:none;border:none;border-radius:6px;cursor:pointer;color:var(--danger);font-size:13px" onmouseover="this.style.background=\'var(--bg-2)\'" onmouseout="this.style.background=\'none\'">'
+  // Connection status
+  if (_supabaseUser) {
+    html += '<div style="padding:6px 10px;font-size:11px;color:var(--text-3)">'
+      + '<span style="color:#22c55e">\u25cf</span> Connect\u00e9 au cloud</div>';
+  }
+
+  // Logout button
+  html += '<button onclick="logoutUser();var m=document.getElementById(\'user-switch-menu\');if(m)m.remove()" '
+    + 'style="display:flex;align-items:center;gap:8px;width:100%;padding:10px;background:none;border:none;border-radius:6px;cursor:pointer;color:var(--danger);font-size:13px;font-weight:600" '
+    + 'onmouseover="this.style.background=\'var(--bg-2)\'" onmouseout="this.style.background=\'none\'">'
     + '\uD83D\uDEAA Se d\u00e9connecter</button>';
+
   menu.innerHTML = html;
   document.body.appendChild(menu);
   setTimeout(function() {

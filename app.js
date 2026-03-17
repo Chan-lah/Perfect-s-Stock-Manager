@@ -477,26 +477,31 @@ const BON_STATUSES = [
 
 async function initApp() {
   try {
-    // 1. Always load local data first (never blocks)
+    // 1. Always load local data first
     await initFileStorage();
 
-    // 2. Try Supabase cloud sync in background (non-blocking)
+    // 2. Check if user has an existing Supabase session (page refresh)
     if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
       try {
         var session = await _checkSupabaseSession();
         if (session) {
           _onlineMode = true;
           _supabaseUser = session.user;
-          await _loadFromCloud();
           await _loadUserProfile();
+          try { await _loadFromCloud(); } catch(ex) {}
+
+          // Auto-restore local session from Supabase user
+          if (!APP.users) APP.users = [];
+          var localUser = APP.users.find(function(u) { return u.email === _supabaseUser.email; });
+          if (localUser) {
+            sessionStorage.setItem('psm_user', localUser.id);
+          }
         }
-      } catch(e) { console.warn('[PSM] cloud sync:', e); }
+      } catch(e) { console.warn('[PSM] session restore:', e); }
     }
 
-    // 3. Finish init (always runs)
+    // 3. Finish init (shows login if no session)
     await _finishAppInit();
-
-    // 4. Login is handled by _finishAppInit -> showLoginScreen
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
     try { loadDB(); renderSidebar(); showPage('dashboard'); } catch(e2) { console.error('[PSM] fallback failed:', e2); }
