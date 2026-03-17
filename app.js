@@ -476,25 +476,31 @@ const BON_STATUSES = [
 
 async function initApp() {
   try {
-    // Check Supabase session first (if available and online)
-    if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
-      var session = await _checkSupabaseSession();
-      if (!session) {
-        // No active session — show Supabase login
-        showSupabaseLogin();
-        return; // App init continues after successful login via _onSupabaseAuthSuccess()
-      }
-      // Session exists — enable online mode and load cloud data
-      _onlineMode = true;
-      _supabaseUser = session.user;
-      try { await _loadFromCloud(); } catch(e) { console.warn('[PSM] cloud load:', e); }
-    }
-    // File storage (local backup) + finish init
+    // 1. Always load local data first (never blocks)
     await initFileStorage();
+
+    // 2. Try Supabase cloud sync in background (non-blocking)
+    if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
+      try {
+        var session = await _checkSupabaseSession();
+        if (session) {
+          _onlineMode = true;
+          _supabaseUser = session.user;
+          await _loadFromCloud();
+          await _loadUserProfile();
+        }
+      } catch(e) { console.warn('[PSM] cloud sync:', e); }
+    }
+
+    // 3. Finish init (always runs)
     await _finishAppInit();
+
+    // 4. After init: check auth and show login if needed
+    if (typeof _supabase !== 'undefined' && _supabase && !_supabaseUser) {
+      showSupabaseLogin();
+    }
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
-    // Fallback: tenter de rendre l'interface malgr\u00e9 l'erreur
     try { loadDB(); renderSidebar(); showPage('dashboard'); } catch(e2) { console.error('[PSM] fallback failed:', e2); }
   }
 }
