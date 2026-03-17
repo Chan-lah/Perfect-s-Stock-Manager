@@ -958,7 +958,7 @@ function openModal(id, title, body, onConfirm, sizeClass='') {
     return;
   }
   closeModal();
-  const overlay = document.createElement('div');
+  var overlay = document.createElement('div');
   overlay.className = 'modal-overlay'; overlay.id = 'active-modal';
   overlay.onclick = e => { if(e.target===overlay) closeModal(); };
   overlay.innerHTML = `<div class="modal ${sizeClass}">
