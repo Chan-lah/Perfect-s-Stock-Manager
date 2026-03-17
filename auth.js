@@ -92,7 +92,9 @@ async function logActivity(action, details) {
 
 // ── Supabase Login Screen ──────────────────────────────────
 
-function showSupabaseLogin() {
+function showSupabaseLogin() { showLoginScreen(); }
+
+function showLoginScreen() {
   var old = document.getElementById('supabase-login-overlay');
   if (old) old.remove();
 
@@ -117,16 +119,13 @@ function showSupabaseLogin() {
     + '</div>'
     + '<div>'
     + '<label style="font-size:12px;color:#8888aa;display:block;margin-bottom:4px">Mot de passe</label>'
-    + '<input id="supa-password" type="password" required minlength="6" autocomplete="current-password" placeholder="Votre mot de passe" '
+    + '<input id="supa-password" type="password" required autocomplete="current-password" placeholder="Votre mot de passe" '
     + 'style="width:100%;padding:12px 14px;background:#1a1d35;border:1.5px solid #2a2d45;border-radius:10px;color:#f0f2f8;font-size:14px;outline:none;box-sizing:border-box" '
     + 'onfocus="this.style.borderColor=\'#6366f1\'" onblur="this.style.borderColor=\'#2a2d45\'">'
     + '</div>'
     + '<button id="supa-submit" type="submit" style="padding:13px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .15s">'
     + 'Se connecter</button>'
     + '</form>'
-    + '<div style="text-align:center;margin-top:20px;border-top:1px solid #2a2d45;padding-top:16px">'
-    + '<a href="#" onclick="_skipLogin(event)" style="color:#555;font-size:12px;text-decoration:none">Mode hors ligne (sans compte) \u2192</a>'
-    + '</div>'
     + '<p style="color:#444;font-size:11px;text-align:center;margin:14px 0 0">Demandez vos identifiants \u00e0 l\u2019administrateur</p>'
     + '</div>';
 
@@ -150,69 +149,55 @@ async function _handleLogin(e) {
   btn.textContent = 'Connexion...';
 
   try {
-    await _supabaseSignIn(email, password);
-    _onlineMode = true;
+    // 1. Check local credentials first
+    var users = (typeof APP !== 'undefined' && APP.users) ? APP.users : [];
+    var localUser = users.find(function(u) {
+      return u.email && u.email.toLowerCase() === email.toLowerCase() && u.password === password;
+    });
 
-    // Load profile
-    await _loadUserProfile();
+    if (!localUser) {
+      throw new Error('Email ou mot de passe incorrect');
+    }
 
-    // Load cloud data
-    try { await _loadFromCloud(); } catch(ex) { console.warn('[PSM] cloud load:', ex); }
+    // 2. Set local session
+    sessionStorage.setItem('psm_user', localUser.id);
 
-    // Log activity
-    logActivity('login', 'Connexion depuis ' + navigator.userAgent.split(' ').pop());
+    // 3. Try Supabase sync in background (non-blocking)
+    if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
+      try {
+        await _supabaseSignIn(email, password);
+        _onlineMode = true;
+        await _loadUserProfile();
+        try { await _loadFromCloud(); } catch(ex) {}
+      } catch(cloudErr) {
+        // Supabase auth failed — that's OK, local auth succeeded
+        console.warn('[PSM] Supabase sync skipped:', cloudErr.message);
+      }
+    }
 
-    // Remove overlay
+    // 4. Log activity
+    if (typeof logActivity === 'function') {
+      logActivity('login', 'Connexion: ' + localUser.name + ' (' + localUser.role + ')');
+    }
+
+    // 5. Remove overlay
     var overlay = document.getElementById('supabase-login-overlay');
     if (overlay) overlay.remove();
 
-    // Sync local user session — create local user if needed
-    if (!APP.users) APP.users = [];
-    var localUser = APP.users.find(function(u) { return u.email === email; });
-    if (!localUser) {
-      // Create local user from Supabase profile
-      localUser = {
-        id: 'u_' + Date.now(),
-        name: (_userProfile && _userProfile.display_name) || email.split('@')[0],
-        email: email,
-        password: null,
-        role: (_userProfile && _userProfile.role) || 'viewer',
-        photo: null,
-        signature: null,
-        permissions: (_userProfile && _userProfile.permissions) || null,
-        createdAt: Date.now(),
-        _version: 1
-      };
-      APP.users.push(localUser);
-      if (typeof saveDB === 'function') saveDB();
-    }
-    sessionStorage.setItem('psm_user', localUser.id);
-
-    // Re-render
+    // 6. Re-render
     if (typeof renderSidebar === 'function') renderSidebar();
     if (typeof showPage === 'function') showPage((APP.settings && APP.settings.lastPage) || 'dashboard');
     if (typeof updateUserBadge === 'function') updateUserBadge();
-    if (typeof notify === 'function') notify('\uD83D\uDC4B Connect\u00e9 !', 'success');
+    if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + localUser.name + ' !', 'success');
 
   } catch(err) {
-    var msg = err.message || String(err);
-    if (msg.includes('Invalid login')) msg = 'Email ou mot de passe incorrect';
-    else if (msg.includes('Email not confirmed')) msg = 'Email non confirm\u00e9. V\u00e9rifiez votre bo\u00eete mail.';
-    errEl.textContent = msg;
+    errEl.textContent = err.message || 'Erreur de connexion';
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.style.opacity = '1';
     btn.textContent = 'Se connecter';
   }
   return false;
-}
-
-function _skipLogin(e) {
-  e.preventDefault();
-  var overlay = document.getElementById('supabase-login-overlay');
-  if (overlay) overlay.remove();
-  _onlineMode = false;
-  if (typeof notify === 'function') notify('Mode hors ligne actif', 'info');
 }
 
 // ── Admin: Create Supabase account for a user ──────────────
@@ -375,11 +360,12 @@ function loginAs(userId) {
 }
 
 function logoutUser() {
+  if (typeof logActivity === 'function') logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
-  if (_supabase && _supabaseUser) {
-    logActivity('logout', 'D\u00e9connexion');
-    _supabaseSignOut().then(function() { window.location.reload(); });
-    return;
+  _supabaseUser = null;
+  _userProfile = null;
+  if (typeof _supabase !== 'undefined' && _supabase) {
+    _supabase.auth.signOut().catch(function(){});
   }
   showLoginScreen();
 }

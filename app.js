@@ -496,10 +496,7 @@ async function initApp() {
     // 3. Finish init (always runs)
     await _finishAppInit();
 
-    // 4. After init: check auth and show login if needed
-    if (typeof _supabase !== 'undefined' && _supabase && !_supabaseUser) {
-      showSupabaseLogin();
-    }
+    // 4. Login is handled by _finishAppInit -> showLoginScreen
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
     try { loadDB(); renderSidebar(); showPage('dashboard'); } catch(e2) { console.error('[PSM] fallback failed:', e2); }
@@ -550,12 +547,10 @@ async function _finishAppInit() {
   initStockNotifications();
   applyTheme(APP.settings.theme || 'dark');
   setTimeout(updateThemeBtn, 50);
-  // Check if user is logged in; auto-login as first user if single user with no password
+  // Always require login — show login screen if no session
   if(!sessionStorage.getItem('psm_user')) {
-    const users = APP.users || [];
-    if(users.length === 1 && !users[0].password) { sessionStorage.setItem('psm_user', users[0].id); }
-    else if(users.length > 1) { showLoginScreen(); return; }
-    else { sessionStorage.setItem('psm_user', (users[0]||{}).id||'admin'); }
+    showLoginScreen();
+    return;
   }
   updateUserBadge();
   startBackupScheduler();
