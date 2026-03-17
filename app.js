@@ -519,7 +519,7 @@ async function _finishAppInit() {
   if(!APP.dispatch.history) APP.dispatch.history = [];
   if(!APP.dispatch.rules) APP.dispatch.rules = {respectMin:true,respectMax:true};
   if(!APP.settings.categories) APP.settings.categories = [];
-  if(!APP.users) APP.users = [{ id:'admin', name:'PERFECT', email:'admin@gma.ci', password:null, role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 }];
+  if(!APP.users) APP.users = [{ id:'admin', name:'PERFECT', email:'ibkonate26@gmail.com', password:'+yQHbrlrea%rjP8R3(Za', role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 }];
   initGMAData();
   APP.commerciaux.forEach(c => dInitCommercialDispatchFields(c));
   APP.articles.forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
@@ -938,6 +938,25 @@ function notify(msg, type='info') {
 // MODAL ENGINE
 // ============================================================
 function openModal(id, title, body, onConfirm, sizeClass='') {
+  // Support alternate call: openModal(title, bodyHtml, buttonsArray)
+  if(Array.isArray(body)) {
+    var _btns = body; body = title; title = id; id = 'modal-' + Date.now();
+    closeModal();
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay'; overlay.id = 'active-modal';
+    overlay.onclick = function(e){ if(e.target===overlay) closeModal(); };
+    var footerBtns = _btns.map(function(b) {
+      return '<button class="btn ' + (b.cls||'btn-secondary') + '" onclick="' + (b.onclick||'closeModal()') + '">' + b.label + '</button>';
+    }).join('');
+    overlay.innerHTML = '<div class="modal modal-lg">'
+      + '<div class="modal-header"><div class="modal-title">' + title + '</div><button class="close-btn" onclick="closeModal()">✕</button></div>'
+      + '<div class="modal-body">' + body + '</div>'
+      + '<div class="modal-footer">' + footerBtns + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function(){ overlay.classList.add('show'); });
+    return;
+  }
   closeModal();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay'; overlay.id = 'active-modal';
@@ -5688,9 +5707,8 @@ function openUserModal(userId) {
     </div>
     <div class="form-row">
       <div class="form-group"><label>Mot de passe <span style="font-size:10px;color:var(--text-3)">(optionnel pour l'instant)</span></label><input id="um-pass" type="password" placeholder="Laisser vide = sans mot de passe" value=""></div>
-      <div class="form-group"><label>R\u00f4le</label><select id="um-role" onchange="document.getElementById('um-perms-section').style.display=this.value==='admin'?'none':'block'">
-        <option value="user" ${u?.role!=='admin'?'selected':''}>Utilisateur</option>
-        <option value="admin" ${u?.role==='admin'?'selected':''}>Administrateur</option>
+      <div class="form-group"><label>R\u00f4le</label><select id="um-role" onchange="_onRoleChange(this.value)">
+        ${typeof ROLE_TEMPLATES!=='undefined' ? Object.keys(ROLE_TEMPLATES).map(function(k){ return '<option value="'+k+'" '+(u&&u.role===k?'selected':'')+'>'+ROLE_TEMPLATES[k].label+'</option>'; }).join('') : '<option value="user">Utilisateur</option><option value="admin">Administrateur</option>'}
       </select></div>
     </div>
     <div class="form-group">
@@ -5725,17 +5743,34 @@ function openUserModal(userId) {
     </div>
     <div id="um-perms-section" style="display:${u?.role==='admin'?'none':'block'}">
       <label style="display:block;margin:12px 0 6px;font-weight:600">Permissions par module</label>
-      <div class="table-wrap" style="max-height:220px;overflow-y:auto">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr><th>Module</th><th style="text-align:center;width:70px">Voir</th><th style="text-align:center;width:70px">Modifier</th></tr></thead>
+      <div style="max-height:200px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border);border-radius:8px;padding:4px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr><th style="text-align:left;padding:4px 6px;position:sticky;top:0;background:var(--bg-1)">Module</th><th style="text-align:center;width:60px;padding:4px;position:sticky;top:0;background:var(--bg-1)">Voir</th><th style="text-align:center;width:60px;padding:4px;position:sticky;top:0;background:var(--bg-1)">Modifier</th></tr></thead>
           <tbody>${permHtml}</tbody>
         </table>
       </div>
     </div>
   `, [
     { label: 'Annuler', cls: 'btn-secondary', onclick: 'closeModal()' },
-    { label: '✓ Enregistrer', cls: 'btn-primary', onclick: `saveUserModal('${userId||''}')` }
+    { label: '\u2713 Enregistrer', cls: 'btn-primary', onclick: 'saveUserModal(\"' + (userId||'') + '\")' }
   ]);
+
+  // Apply role preset permissions if changing role
+  setTimeout(function() { _onRoleChange(document.getElementById('um-role')?.value); }, 50);
+}
+
+function _onRoleChange(role) {
+  var permsSection = document.getElementById('um-perms-section');
+  if(permsSection) permsSection.style.display = (role === 'admin') ? 'none' : 'block';
+  if(typeof _getDefaultPerms === 'function' && role && role !== 'custom') {
+    var defaults = _getDefaultPerms(role);
+    ALL_PAGES_PERMS.forEach(function(pg) {
+      var vEl = document.getElementById('perm-v-' + pg.id);
+      var eEl = document.getElementById('perm-e-' + pg.id);
+      if(vEl && defaults[pg.id]) vEl.checked = defaults[pg.id].view;
+      if(eEl && defaults[pg.id]) eEl.checked = defaults[pg.id].edit;
+    });
+  }
 }
 
 function previewUserPhoto(input) {
@@ -5838,7 +5873,8 @@ function saveUserModal(userId) {
   saveDB();
   closeModal();
   notify('\u2705 Utilisateur enregistr\u00e9', 'success');
-  renderSettings(); // re-render settings to refresh user list
+  if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
+  else { renderSettings(); }
 }
 
 function deleteUser(userId) {
