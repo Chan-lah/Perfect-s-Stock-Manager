@@ -519,7 +519,16 @@ async function _finishAppInit() {
   if(!APP.dispatch.history) APP.dispatch.history = [];
   if(!APP.dispatch.rules) APP.dispatch.rules = {respectMin:true,respectMax:true};
   if(!APP.settings.categories) APP.settings.categories = [];
-  if(!APP.users) APP.users = [{ id:'admin', name:'PERFECT', email:'ibkonate26@gmail.com', password:'+yQHbrlrea%rjP8R3(Za', role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 }];
+  if(!APP.users || APP.users.length === 0) APP.users = [{ id:'admin', name:'Admin GMA', email:'ibkonate26@gmail.com', password:'Perfectionniste', role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 }];
+  // Migration: update old PERFECT admin to new credentials
+  (function(){
+    var adm = APP.users.find(function(u){ return u.id==='admin' || u.email==='admin@gma.ci' || u.name==='PERFECT'; });
+    if(adm) { adm.name='Admin GMA'; adm.email='ibkonate26@gmail.com'; adm.password='Perfectionniste'; adm.role='admin'; }
+    // Ensure at least one admin exists
+    if(!APP.users.find(function(u){ return u.role==='admin'; })) {
+      APP.users.unshift({ id:'admin', name:'Admin GMA', email:'ibkonate26@gmail.com', password:'Perfectionniste', role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 });
+    }
+  })();
   initGMAData();
   APP.commerciaux.forEach(c => dInitCommercialDispatchFields(c));
   APP.articles.forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
