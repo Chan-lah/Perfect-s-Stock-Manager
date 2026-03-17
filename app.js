@@ -519,7 +519,7 @@ async function _finishAppInit() {
   if(!APP.users || APP.users.length === 0) APP.users = [{ id:'admin', name:'Admin GMA', email:'ibkonate26@gmail.com', password:'Perfectionniste', role:'admin', photo:null, signature:null, permissions:null, createdAt:Date.now(), _version:1 }];
   // Migration: update old PERFECT admin to new credentials
   (function(){
-    var adm = APP.users.find(function(u){ return u.id==='admin' || u.email==='admin@gma.ci' || u.name==='PERFECT'; });
+    var adm = APP.users.find(function(u){ return u.id==='admin' || u.email==='admin@gma.ci' || u.email==='ibkonate26@gmail.com' || u.name==='PERFECT'; });
     if(adm) { adm.name='Admin GMA'; adm.email='ibkonate26@gmail.com'; adm.password='Perfectionniste'; adm.role='admin'; }
     // Ensure at least one admin exists
     if(!APP.users.find(function(u){ return u.role==='admin'; })) {
