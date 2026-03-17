@@ -37,14 +37,88 @@ function setOnlineMode(enabled) {
 }
 
 // ── Cloud placeholders (Supabase) ───────────────────────
+var _cloudSaveTimer = null;
+
 async function _saveToCloud() {
-  // TODO: Implement Supabase upsert
-  console.log('[PSM] _saveToCloud: not yet implemented');
+  // Debounce cloud saves (5 seconds)
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(_doSaveToCloud, 5000);
+}
+
+async function _doSaveToCloud() {
+  if (!_supabase || !_supabaseUser) return;
+  try {
+    // Strip images for compact JSON
+    var refs = (typeof _stripImages === 'function') ? _stripImages(APP) : null;
+    var dataStr = JSON.stringify(APP);
+    if (refs) _restoreImages(APP, refs);
+
+    var dataObj = JSON.parse(dataStr);
+
+    // Extract images separately
+    var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
+
+    var result = await _supabase
+      .from('app_data')
+      .upsert({
+        user_id: _supabaseUser.id,
+        data: dataObj,
+        images: imgs,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+
+    if (result.error) {
+      console.warn('[PSM] Cloud save error:', result.error.message);
+    } else {
+      console.log('[PSM] Cloud save OK');
+    }
+  } catch(e) {
+    console.warn('[PSM] _doSaveToCloud:', e);
+  }
 }
 
 async function _loadFromCloud() {
-  // TODO: Implement Supabase fetch
-  console.log('[PSM] _loadFromCloud: not yet implemented');
+  if (!_supabase || !_supabaseUser) return null;
+  try {
+    var result = await _supabase
+      .from('app_data')
+      .select('data, images, updated_at')
+      .eq('user_id', _supabaseUser.id)
+      .single();
+
+    if (result.error) {
+      if (result.error.code === 'PGRST116') {
+        // No data yet for this user — first time
+        console.log('[PSM] No cloud data yet, will create on first save');
+        return null;
+      }
+      console.warn('[PSM] Cloud load error:', result.error.message);
+      return null;
+    }
+
+    if (result.data && result.data.data) {
+      var cloudData = result.data.data;
+      var cloudImages = result.data.images || {};
+
+      // Use cloud data if newer than local
+      if (!APP._ts || (cloudData._ts && cloudData._ts >= APP._ts)) {
+        Object.assign(APP, cloudData);
+        // Restore images from cloud
+        if (typeof _restoreImages === 'function') {
+          _restoreImages(APP, cloudImages);
+        }
+        // Also update local images cache
+        Object.assign(_imagesCache, cloudImages);
+        _savedDataLoaded = true;
+        console.log('[PSM] Cloud data loaded');
+      } else {
+        console.log('[PSM] Local data is newer, keeping local');
+      }
+      return cloudData;
+    }
+  } catch(e) {
+    console.warn('[PSM] _loadFromCloud:', e);
+  }
   return null;
 }
 
