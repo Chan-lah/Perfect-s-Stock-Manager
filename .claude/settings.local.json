@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"^[A-Za-z0-9+/]*$\")",
+      "Bash(node --version)",
+      "Bash(node -e \":*)",
+      "Bash(where.exe node)",
+      "Bash(where.exe python3)",
+      "Bash(python3.exe -c \"print\\(''hello''\\)\")",
+      "Bash(/c/Users/PERFECT/AppData/Local/Microsoft/WindowsApps/python3.exe -c \"print\\(''hello''\\)\")",
+      "Bash(where.exe node.exe)",
+      "Read(//c/Users/PERFECT/AppData/Roaming/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(powershell.exe -Command \"node --version\")",
+      "Bash(powershell.exe -Command \"python -c \"\"print\\(''hello''\\)\"\"\")",
+      "Bash(py -3 C:/tmp/mega_patch_1.py)"
+    ]
+  }
+}

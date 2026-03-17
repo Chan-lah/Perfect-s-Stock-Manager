@@ -441,6 +441,7 @@ const PAGES = [
   { id:'audit',           label:'Audit Trail',        icon:'shield',    section:'OUTILS' },
   { id:'calendar',        label:'Calendrier',         icon:'calendar',  section:null },
   { id:'boneditor',       label:'Éditeur de Bon',     icon:'edit',      section:null },
+  { id:'administration', label:'Administration',     icon:'shield',    section:'OUTILS' },
   { id:'settings',        label:'Paramètres',         icon:'settings',  section:null },
 ];
 
@@ -608,6 +609,7 @@ function renderSidebar() {
     const item = document.createElement('div');
     item.className = 'sb-item' + (p.id === currentPage ? ' active' : '');
     item.dataset.page = p.id;
+    if(p.id==='administration' && (!_currentUser() || _currentUser().role!=='admin')) { return; }
     const lbl = I18N[_lang()][p.id] || p.label;
     item.innerHTML = `${ICONS[p.icon]||''}<span>${lbl}</span>`;
     // Badges
@@ -668,7 +670,7 @@ function showPage(id) {
     pdv:'\ud83c\udfea Points de Vente', fournisseurs:'Fournisseurs',
     'fourn-dashboard':'Suivi des livraisons', 'gma-catalogue':'\u2b50 Catalogue GMA',
     analytics:'\ud83e\udde0 Analytique', dispatch:'\u2699\ufe0f Dispatch Gadgets',
-    audit:'Audit Trail', calendar:'Calendrier des Mouvements', boneditor:'\ud83c\udfa8 \u00c9diteur de Bon', settings:'Param\u00e8tres'
+    audit:'Audit Trail', calendar:'Calendrier des Mouvements', boneditor:'\ud83c\udfa8 \u00c9diteur de Bon', administration:'\ud83d\udee1\ufe0f Administration', settings:'Param\u00e8tres'
   };
   const titleEl = document.getElementById('topbar-title');
   if(titleEl) titleEl.textContent = titles[id] || id;
@@ -678,10 +680,12 @@ function showPage(id) {
     fournisseurs:renderFournisseurs, 'fourn-dashboard':renderFournDashboard,
     'gma-catalogue':renderGMACatalogue,
     analytics:renderAnalytics, dispatch:renderDispatchPage, audit:renderAudit, boneditor:renderBonEditor, settings:renderSettings,
-    calendar:renderCalendar
+    calendar:renderCalendar,
+    administration:function(){ document.getElementById('content').innerHTML = renderAdminPage(); }
   };
   document.getElementById('content').innerHTML = '';
   if(renders[id]) renders[id]();
+  if(id==='administration' && typeof _initAdminPage==='function') _initAdminPage();
 }
 
 function startClock() {
@@ -5632,6 +5636,7 @@ const ALL_PAGES_PERMS = [
   { id:'dispatch',        label:'Dispatch Gadgets',   group:'DISPATCH' },
   { id:'audit',           label:'Audit Trail',        group:'OUTILS' },
   { id:'boneditor',       label:'\u00c9diteur de Bon', group:'OUTILS' },
+  { id:'administration', label:'Administration',     group:'OUTILS' },
   { id:'settings',        label:'Param\u00e8tres',     group:'OUTILS' },
 ];
 
@@ -5847,6 +5852,263 @@ function deleteUser(userId) {
 }
 
 
+
+
+// ============================================================
+// ADMINISTRATION MODULE — Admin-only user & account management
+// ============================================================
+
+var ROLE_TEMPLATES = {
+  admin:    { label: 'Administrateur', desc: 'Accès total à tous les modules', color: '#6366f1' },
+  manager:  { label: 'Manager', desc: 'Voir et modifier la plupart des modules', color: '#f59e0b' },
+  commercial: { label: 'Commercial', desc: 'Bons, articles, mouvements, PDV', color: '#22c55e' },
+  viewer:   { label: 'Lecteur', desc: 'Consultation uniquement (aucune modification)', color: '#8888aa' },
+  custom:   { label: 'Personnalisé', desc: 'Permissions définies manuellement', color: '#ec4899' }
+};
+
+function _getDefaultPerms(role) {
+  var p = {};
+  ALL_PAGES_PERMS.forEach(function(pg) { p[pg.id] = { view: false, edit: false }; });
+  if (role === 'admin') {
+    ALL_PAGES_PERMS.forEach(function(pg) { p[pg.id] = { view: true, edit: true }; });
+  } else if (role === 'manager') {
+    ALL_PAGES_PERMS.forEach(function(pg) { p[pg.id] = { view: true, edit: pg.id !== 'settings' && pg.id !== 'administration' }; });
+  } else if (role === 'commercial') {
+    ['dashboard','articles','bons','mouvements','pdv','gma-catalogue','boneditor'].forEach(function(id) { if(p[id]) p[id] = { view: true, edit: true }; });
+    ['commerciaux','territoire','fourn-dashboard'].forEach(function(id) { if(p[id]) p[id] = { view: true, edit: false }; });
+  } else if (role === 'viewer') {
+    ALL_PAGES_PERMS.forEach(function(pg) { p[pg.id] = { view: true, edit: false }; });
+    p['settings'] = { view: false, edit: false };
+    p['administration'] = { view: false, edit: false };
+  }
+  return p;
+}
+
+function renderAdminPage() {
+  var u = _currentUser();
+  if (!u || u.role !== 'admin') return '<div class="empty-state"><p>\u26d4 R\u00e9serv\u00e9 aux administrateurs</p></div>';
+
+  var users = APP.users || [];
+  var onlineStatus = (typeof _supabaseUser !== 'undefined' && _supabaseUser)
+    ? '<span style="color:#22c55e">\u25cf En ligne</span> (' + _supabaseUser.email + ')'
+    : '<span style="color:#f59e0b">\u25cf Mode hors ligne</span>';
+
+  var userCards = users.map(function(uu) {
+    var roleMeta = ROLE_TEMPLATES[uu.role] || ROLE_TEMPLATES.custom;
+    var lastActivity = '';
+    if (APP._activityLog) {
+      var entry = APP._activityLog.slice().reverse().find(function(e) { return e.email === uu.email || e.user === uu.name; });
+      if (entry) lastActivity = '<div style="font-size:10px;color:var(--text-3);margin-top:2px">Derni\u00e8re activit\u00e9: ' + fmtDateTime(entry.ts) + '</div>';
+    }
+    return '<div class="card" style="padding:16px;margin-bottom:8px">'
+      + '<div style="display:flex;align-items:center;gap:14px">'
+      + '<div style="width:48px;height:48px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--accent);overflow:hidden;flex-shrink:0">'
+      + (uu.photo ? '<img src="' + uu.photo + '" style="width:48px;height:48px;object-fit:cover;border-radius:50%">' : uu.name.charAt(0).toUpperCase())
+      + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-weight:700;font-size:14px">' + uu.name + (uu.id === u.id ? ' <span style="font-size:10px;color:var(--accent)">(vous)</span>' : '') + '</div>'
+      + '<div style="font-size:12px;color:var(--text-2)">' + (uu.email || '\u2014') + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">'
+      + '<span style="font-size:10px;background:' + roleMeta.color + '22;color:' + roleMeta.color + ';padding:2px 8px;border-radius:99px;border:1px solid ' + roleMeta.color + '44">' + roleMeta.label + '</span>'
+      + (uu.signature ? '<span style="font-size:10px;color:var(--success)">\u2713 Signature</span>' : '<span style="font-size:10px;color:var(--text-3)">Pas de signature</span>')
+      + '</div>'
+      + lastActivity
+      + '</div>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button class="btn btn-sm btn-secondary" onclick="openUserModal(\'' + uu.id + '\')" title="Modifier">\u270f</button>'
+      + (uu.role !== 'admin' ? '<button class="btn btn-sm btn-secondary" onclick="_confirmDeleteUser(\'' + uu.id + '\')" title="Supprimer" style="color:var(--danger)">\u2716</button>' : '')
+      + '</div>'
+      + '</div></div>';
+  }).join('');
+
+  return '<div class="page-content" style="max-width:900px;margin:0 auto">'
+    + '<div class="card" style="padding:20px;margin-bottom:16px">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">'
+    + '<div><h2 style="margin:0;font-size:20px">\ud83d\udee1\ufe0f Administration</h2>'
+    + '<p style="margin:4px 0 0;font-size:12px;color:var(--text-2)">G\u00e9rez les comptes, r\u00f4les et permissions</p></div>'
+    + '<div style="font-size:12px">' + onlineStatus + '</div>'
+    + '</div></div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'
+    + '<button class="btn btn-primary" onclick="openUserModal()">+ Nouvel utilisateur</button>'
+    + '<button class="btn btn-secondary" onclick="_adminCreateSupabaseAccount()">\u2601 Cr\u00e9er compte en ligne</button>'
+    + '<button class="btn btn-secondary" onclick="_showActivityLog()">\ud83d\udccb Journal d\'activit\u00e9</button>'
+    + '</div>'
+    + '<div class="card" style="padding:16px;margin-bottom:16px">'
+    + '<div class="card-header" style="margin-bottom:12px"><span class="card-title">\ud83d\udc65 Comptes (' + users.length + ')</span></div>'
+    + userCards
+    + '</div>'
+    + '<div class="card" style="padding:16px">'
+    + '<div class="card-header" style="margin-bottom:12px"><span class="card-title">\ud83c\udfad R\u00f4les disponibles</span></div>'
+    + '<div style="display:grid;gap:8px">'
+    + Object.keys(ROLE_TEMPLATES).map(function(k) {
+      var r = ROLE_TEMPLATES[k];
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-2);border-radius:8px">'
+        + '<span style="width:10px;height:10px;border-radius:50%;background:' + r.color + '"></span>'
+        + '<span style="font-weight:600;font-size:13px;min-width:120px">' + r.label + '</span>'
+        + '<span style="font-size:12px;color:var(--text-2)">' + r.desc + '</span>'
+        + '</div>';
+    }).join('')
+    + '</div></div>'
+    + '</div>';
+}
+
+function _initAdminPage() {
+  if (typeof _supabase !== 'undefined' && _supabase && typeof _supabaseUser !== 'undefined' && _supabaseUser && typeof _adminGetAllProfiles === 'function') {
+    _adminGetAllProfiles().then(function(profiles) {
+      if (profiles && profiles.length > 0) {
+        profiles.forEach(function(p) { if (typeof _syncProfileToLocal === 'function') _syncProfileToLocal(p); });
+      }
+    }).catch(function() {});
+  }
+}
+
+function _adminCreateSupabaseAccount() {
+  if (typeof _supabase === 'undefined' || !_supabase) {
+    notify('Connexion Supabase requise.', 'warning');
+    return;
+  }
+  if (typeof _supabaseUser === 'undefined' || !_supabaseUser) {
+    notify('Vous devez \u00eatre connect\u00e9 pour cr\u00e9er des comptes.', 'warning');
+    return;
+  }
+
+  var roleOpts = Object.keys(ROLE_TEMPLATES).map(function(k) {
+    return '<option value="' + k + '">' + ROLE_TEMPLATES[k].label + '</option>';
+  }).join('');
+
+  openModal('Cr\u00e9er un compte en ligne', ''
+    + '<div class="form-row">'
+    + '<div class="form-group"><label>Nom complet *</label><input id="ac-name" placeholder="Ex: Kouam\u00e9 Jean"></div>'
+    + '<div class="form-group"><label>Email *</label><input id="ac-email" type="email" placeholder="jean@gma.ci"></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    + '<div class="form-group"><label>Mot de passe *</label><input id="ac-pass" type="text" placeholder="Min. 6 caract\u00e8res" value="' + _generateTempPassword() + '"></div>'
+    + '<div class="form-group"><label>R\u00f4le</label><select id="ac-role" onchange="_adminPreviewPerms(this.value)">' + roleOpts + '</select></div>'
+    + '</div>'
+    + '<div id="ac-perms-preview" style="margin-top:8px"></div>'
+    + '<div style="margin-top:12px;padding:10px;background:var(--bg-3);border-radius:8px;font-size:12px;color:var(--text-2)">'
+    + '\u2139\ufe0f Le mot de passe est visible pour que vous puissiez le communiquer. Il pourra le changer plus tard.'
+    + '</div>'
+  , [
+    { label: 'Annuler', cls: 'btn-secondary', onclick: 'closeModal()' },
+    { label: '\u2601 Cr\u00e9er le compte', cls: 'btn-primary', onclick: '_doCreateSupabaseAccount()' }
+  ]);
+  _adminPreviewPerms('admin');
+}
+
+function _generateTempPassword() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  var pass = '';
+  for (var i = 0; i < 10; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  return pass;
+}
+
+function _adminPreviewPerms(role) {
+  var el = document.getElementById('ac-perms-preview');
+  if (!el) return;
+  var perms = _getDefaultPerms(role);
+  if (role === 'admin') { el.innerHTML = '<div style="color:var(--success);font-size:12px">\u2705 Acc\u00e8s total</div>'; return; }
+  var html = '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">Permissions :</label>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">';
+  ALL_PAGES_PERMS.forEach(function(pg) {
+    var p = perms[pg.id] || {};
+    var v = p.view ? '\u2705' : '\u274c';
+    var e = p.edit ? '\u270f' : '\u2014';
+    html += '<div style="padding:3px 6px;background:var(--bg-3);border-radius:4px">' + pg.label + ' ' + v + ' ' + e + '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function _doCreateSupabaseAccount() {
+  var name = document.getElementById('ac-name').value.trim();
+  var email = document.getElementById('ac-email').value.trim();
+  var pass = document.getElementById('ac-pass').value;
+  var role = document.getElementById('ac-role').value;
+
+  if (!name || !email || !pass) { notify('Remplissez tous les champs obligatoires', 'warning'); return; }
+  if (pass.length < 6) { notify('Mot de passe: 6 caract\u00e8res minimum', 'warning'); return; }
+
+  var perms = _getDefaultPerms(role);
+
+  try {
+    notify('Cr\u00e9ation du compte...', 'info');
+    if (typeof _adminCreateSupabaseUser === 'function') {
+      await _adminCreateSupabaseUser(email, pass, name, role, perms);
+    }
+    if (!APP.users) APP.users = [];
+    var existing = APP.users.find(function(u) { return u.email === email; });
+    if (!existing) {
+      APP.users.push({
+        id: generateId(), name: name, email: email, password: null,
+        role: role, photo: null, signature: null, permissions: perms,
+        createdAt: Date.now(), _version: 1
+      });
+    }
+    saveDB();
+    closeModal();
+    notify('\u2705 Compte cr\u00e9\u00e9 pour ' + name, 'success');
+    showPage('administration');
+  } catch(err) {
+    var msg = err.message || String(err);
+    if (msg.includes('already registered')) msg = 'Cet email est d\u00e9j\u00e0 utilis\u00e9';
+    notify('\u274c ' + msg, 'error');
+  }
+}
+
+function _confirmDeleteUser(uid) {
+  var user = (APP.users || []).find(function(u) { return u.id === uid; });
+  if (!user) return;
+  if (confirm('Supprimer "' + user.name + '" ? Cette action est irr\u00e9versible.')) {
+    APP.users = APP.users.filter(function(u) { return u.id !== uid; });
+    saveDB();
+    notify('Utilisateur supprim\u00e9', 'success');
+    showPage('administration');
+  }
+}
+
+function _showActivityLog() {
+  var logs = (APP._activityLog || []).slice().reverse();
+  var html = '<div style="max-height:60vh;overflow-y:auto">';
+  if (logs.length === 0) {
+    html += '<div style="text-align:center;padding:20px;color:var(--text-3)">Aucune activit\u00e9 enregistr\u00e9e</div>';
+  } else {
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr><th style="text-align:left;padding:6px">Date</th><th style="text-align:left;padding:6px">Utilisateur</th><th style="text-align:left;padding:6px">Action</th><th style="text-align:left;padding:6px">D\u00e9tails</th></tr></thead><tbody>';
+    logs.slice(0, 100).forEach(function(l) {
+      html += '<tr style="border-top:1px solid var(--border)">'
+        + '<td style="padding:6px;white-space:nowrap">' + fmtDateTime(l.ts) + '</td>'
+        + '<td style="padding:6px">' + (l.user || l.email || '\u2014') + '</td>'
+        + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
+        + '<td style="padding:6px;color:var(--text-2)">' + (l.details || '') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  html += '</div>';
+
+  openModal('Journal d\'activit\u00e9', html, [
+    { label: 'Fermer', cls: 'btn-secondary', onclick: 'closeModal()' }
+  ]);
+
+  if (typeof _supabase !== 'undefined' && _supabase && typeof _supabaseUser !== 'undefined' && _supabaseUser && typeof _adminGetActivityLog === 'function') {
+    _adminGetActivityLog(100).then(function(cloudLogs) {
+      if (cloudLogs && cloudLogs.length > 0) {
+        var tbody = document.querySelector('#modal .modal-body tbody');
+        if (tbody) {
+          cloudLogs.forEach(function(l) {
+            var row = document.createElement('tr');
+            row.style.borderTop = '1px solid var(--border)';
+            row.innerHTML = '<td style="padding:6px;white-space:nowrap">' + (l.created_at ? new Date(l.created_at).toLocaleString('fr') : '') + '</td>'
+              + '<td style="padding:6px">' + (l.user_email || '') + '</td>'
+              + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
+              + '<td style="padding:6px;color:var(--text-2)">' + (l.details || '') + '</td>';
+            tbody.appendChild(row);
+          });
+        }
+      }
+    }).catch(function() {});
+  }
+}
 
 // ============================================================
 // CALENDAR PAGE — Monthly / Weekly / Daily views

@@ -166,11 +166,27 @@ async function _handleLogin(e) {
     var overlay = document.getElementById('supabase-login-overlay');
     if (overlay) overlay.remove();
 
-    // Sync local user session
-    if (_userProfile) {
-      var localUser = (APP.users || []).find(function(u) { return u.email === email; });
-      if (localUser) sessionStorage.setItem('psm_user', localUser.id);
+    // Sync local user session — create local user if needed
+    if (!APP.users) APP.users = [];
+    var localUser = APP.users.find(function(u) { return u.email === email; });
+    if (!localUser) {
+      // Create local user from Supabase profile
+      localUser = {
+        id: 'u_' + Date.now(),
+        name: (_userProfile && _userProfile.display_name) || email.split('@')[0],
+        email: email,
+        password: null,
+        role: (_userProfile && _userProfile.role) || 'viewer',
+        photo: null,
+        signature: null,
+        permissions: (_userProfile && _userProfile.permissions) || null,
+        createdAt: Date.now(),
+        _version: 1
+      };
+      APP.users.push(localUser);
+      if (typeof saveDB === 'function') saveDB();
     }
+    sessionStorage.setItem('psm_user', localUser.id);
 
     // Re-render
     if (typeof renderSidebar === 'function') renderSidebar();

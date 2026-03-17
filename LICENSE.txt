@@ -1,0 +1,13 @@
+Perfect's Stock Manager — Proprietary License
+
+Copyright (c) 2026 Fassibiri Ibrahim Konate
+
+All rights reserved.
+
+This software is the exclusive property of the author.
+
+Permission is granted to use this software for evaluation and testing purposes only.
+
+Unauthorized copying, modification, distribution, sublicensing, resale, or commercial use of this software, in whole or in part, is strictly prohibited without explicit written permission from the author.
+
+This software is provided as is, without warranty of any kind.
