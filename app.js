@@ -954,15 +954,20 @@ function openModal(id, title, body, onConfirm, sizeClass='') {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay'; overlay.id = 'active-modal';
     overlay.onclick = function(e){ if(e.target===overlay) closeModal(); };
-    var footerBtns = _btns.map(function(b) {
-      return '<button class="btn ' + (b.cls||'btn-secondary') + '" onclick="' + (b.onclick||'closeModal()') + '">' + b.label + '</button>';
-    }).join('');
     overlay.innerHTML = '<div class="modal modal-lg">'
       + '<div class="modal-header"><div class="modal-title">' + title + '</div><button class="close-btn" onclick="closeModal()">✕</button></div>'
       + '<div class="modal-body">' + body + '</div>'
-      + '<div class="modal-footer">' + footerBtns + '</div>'
+      + '<div class="modal-footer" id="_modal_btns"></div>'
       + '</div>';
     document.body.appendChild(overlay);
+    var _footer = document.getElementById('_modal_btns');
+    _btns.forEach(function(b) {
+      var _b = document.createElement('button');
+      _b.className = 'btn ' + (b.cls || 'btn-secondary');
+      _b.textContent = b.label;
+      _b.onclick = function() { new Function(b.onclick || 'closeModal()')(); };
+      _footer.appendChild(_b);
+    });
     requestAnimationFrame(function(){ overlay.classList.add('show'); });
     return;
   }
