@@ -5720,7 +5720,7 @@ function openUserModal(userId) {
       <div class="form-group"><label>Email</label><input id="um-email" value="${u?.email||''}" type="email"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Mot de passe <span style="font-size:10px;color:var(--text-3)">(optionnel pour l'instant)</span></label><input id="um-pass" type="password" placeholder="Laisser vide = sans mot de passe" value=""></div>
+      <div class="form-group"><label>Mot de passe ${userId ? '<span style="font-size:10px;color:var(--text-3)">(laisser vide = inchang\u00e9)</span>' : '<span style="font-size:10px;color:var(--danger)">* obligatoire</span>'}</label><input id="um-pass" type="text" placeholder="${userId ? 'Laisser vide = inchang\u00e9' : 'Min. 6 caract\u00e8res'}" value="" autocomplete="off">${userId && u ? '<div style="font-size:10px;color:var(--text-3);margin-top:2px">\u2705 Mot de passe d\u00e9j\u00e0 d\u00e9fini dans Supabase</div>' : ''}</div>
       <div class="form-group"><label>R\u00f4le</label><select id="um-role" onchange="_onRoleChange(this.value)">
         ${typeof ROLE_TEMPLATES!=='undefined' ? Object.keys(ROLE_TEMPLATES).map(function(k){ return '<option value="'+k+'" '+(u&&u.role===k?'selected':'')+'>'+ROLE_TEMPLATES[k].label+'</option>'; }).join('') : '<option value="user">Utilisateur</option><option value="admin">Administrateur</option>'}
       </select></div>
@@ -5849,15 +5849,21 @@ function saveSigCanvas() {
   notify('Signature captur\u00e9e \u2713', 'success');
 }
 
-function saveUserModal(userId) {
-  if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e \u00e0 l\'administrateur', 'warning'); return; }
+async function saveUserModal(userId) {
+  if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
   const name  = document.getElementById('um-name')?.value?.trim();
   const email = document.getElementById('um-email')?.value?.trim();
   const pass  = document.getElementById('um-pass')?.value?.trim() || null;
-  const role  = document.getElementById('um-role')?.value || 'user';
+  const role  = document.getElementById('um-role')?.value || 'viewer';
   const photo = document.getElementById('um-photo-data')?.value || null;
   const sig   = document.getElementById('um-sig-data')?.value || null;
   if(!name) { notify('Le nom est obligatoire', 'warning'); return; }
+  if(!email) { notify('L\'email est obligatoire', 'warning'); return; }
+
+  // Validate for new user
+  if(!userId) {
+    if(!pass || pass.length < 6) { notify('Mot de passe obligatoire (min. 6 caract\u00e8res)', 'warning'); return; }
+  }
 
   // Collect permissions
   let permissions = null;
@@ -5872,23 +5878,45 @@ function saveUserModal(userId) {
   }
 
   if(!APP.users) APP.users = [];
-  if(userId) {
-    const u = APP.users.find(x => x.id === userId);
-    if(u) {
-      u.name = name; u.email = email; u.role = role; u.permissions = permissions;
-      if(photo) u.photo = photo;
-      if(sig) u.signature = sig;
-      if(pass) u.password = pass;
-      u._version = (u._version||1) + 1;
+
+  try {
+    if(userId) {
+      // ── EDIT existing user ──
+      const u = APP.users.find(x => x.id === userId);
+      if(u) {
+        u.name = name; u.email = email; u.role = role; u.permissions = permissions;
+        if(photo) u.photo = photo;
+        if(sig) u.signature = sig;
+        u._version = (u._version||1) + 1;
+      }
+      // Update Supabase profile
+      if(typeof _adminUpdateProfile === 'function' && _supabase && _supabaseUser) {
+        try { await _adminUpdateProfile(email, name, role, permissions, true); } catch(e) { console.warn('[PSM] profile update:', e); }
+      }
+    } else {
+      // ── CREATE new user ──
+      // 1. Create Supabase Auth account + profile
+      if(typeof _adminCreateSupabaseUser === 'function' && _supabase && _supabaseUser) {
+        notify('Cr\u00e9ation du compte Supabase...', 'info');
+        await _adminCreateSupabaseUser(email, pass, name, role, permissions);
+      }
+      // 2. Create local entry
+      var existing = APP.users.find(function(x) { return x.email === email; });
+      if(!existing) {
+        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, photo: photo||null, signature: sig||null, permissions: permissions, createdAt: Date.now(), _version: 1 });
+      }
     }
-  } else {
-    APP.users.push({ id: generateId(), name, email, password: pass, role, photo: photo||null, signature: sig||null, permissions, createdAt: Date.now(), _version: 1 });
+
+    saveDB();
+    closeModal();
+    notify('\u2705 Utilisateur enregistr\u00e9', 'success');
+    if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
+    else { renderSettings(); }
+  } catch(err) {
+    var msg = err.message || String(err);
+    if(msg.includes('already registered')) msg = 'Cet email a d\u00e9j\u00e0 un compte Supabase';
+    notify('\u274c ' + msg, 'error');
   }
-  saveDB();
-  closeModal();
-  notify('\u2705 Utilisateur enregistr\u00e9', 'success');
-  if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
-  else { renderSettings(); }
 }
 
 function deleteUser(userId) {
