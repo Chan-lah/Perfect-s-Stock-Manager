@@ -477,17 +477,18 @@ const BON_STATUSES = [
 
 async function initApp() {
   try {
-    // 1. Always load local data first
+    // 1. Load local data (silent — no UI rendering yet)
     await initFileStorage();
 
-    // 2. Check if user has an existing Firebase session (page refresh)
+    // 2. Check Firebase session BEFORE rendering anything
+    var hasSession = false;
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth && navigator.onLine) {
       try {
         var session = await _checkSession();
         if (session) {
           _onlineMode = true;
           _cloudUser = session.user;
-          _supabaseUser = _cloudUser; // backward compat
+          _supabaseUser = _cloudUser;
           await _loadUserProfile();
           try { await _loadFromCloud(); } catch(ex) {}
 
@@ -496,14 +497,14 @@ async function initApp() {
           var localUser = APP.users.find(function(u) { return u.email === _cloudUser.email; });
           if (localUser) {
             sessionStorage.setItem('psm_user', localUser.id);
+            hasSession = true;
           }
-          // Start real-time sync
           if (typeof startRealtimeSync === 'function') startRealtimeSync();
         }
       } catch(e) { console.warn('[PSM] session restore:', e); }
     }
 
-    // 3. Finish init (shows login if no session)
+    // 3. Now render UI (data is already final — no flash)
     await _finishAppInit();
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
@@ -544,6 +545,12 @@ async function _finishAppInit() {
     const legacyLogo = localStorage.getItem('gma_logo_b64');
     if(legacyLogo && !APP.settings.gmaLogo) { APP.settings.gmaLogo = legacyLogo; localStorage.removeItem('gma_logo_b64'); }
   } catch(e) {}
+  // Always require login — check BEFORE rendering UI
+  if(!sessionStorage.getItem('psm_user')) {
+    applyTheme(APP.settings.theme || 'dark');
+    showLoginScreen();
+    return;
+  }
   updateFileSaveIndicator(!!_dirHandle);
   renderSidebar();
   if(_pendingHandle && !_autoReconnectBound) _showReconnectBar();
@@ -555,11 +562,6 @@ async function _finishAppInit() {
   initStockNotifications();
   applyTheme(APP.settings.theme || 'dark');
   setTimeout(updateThemeBtn, 50);
-  // Always require login — show login screen if no session
-  if(!sessionStorage.getItem('psm_user')) {
-    showLoginScreen();
-    return;
-  }
   updateUserBadge();
   startBackupScheduler();
 }
