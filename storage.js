@@ -320,8 +320,9 @@ function _extractImages(appObj) {
   if(s.gmaLogo && s.gmaLogo.length > 200) imgs.gmaLogo = s.gmaLogo;
   if(s.bgImage && s.bgImage.length > 200) imgs.bgImage = s.bgImage;
   (appObj.users||[]).forEach(function(u) {
-    if(u.signature && u.signature.length > 200) imgs['sig_'+u.id] = u.signature;
-    if(u.photo && u.photo.length > 200) imgs['photo_'+u.id] = u.photo;
+    var ukey = u.email ? u.email.replace(/[^a-zA-Z0-9]/g,'_') : u.id;
+    if(u.signature && u.signature.length > 200) imgs['sig_'+ukey] = u.signature;
+    if(u.photo && u.photo.length > 200) imgs['photo_'+ukey] = u.photo;
   });
   return imgs;
 }
@@ -341,8 +342,9 @@ function _stripImages(appObj) {
   if(s.gmaLogo && s.gmaLogo.length > 200) { refs.gmaLogo = s.gmaLogo; s.gmaLogo = '__img:gmaLogo'; }
   if(s.bgImage && s.bgImage.length > 200) { refs.bgImage = s.bgImage; s.bgImage = '__img:bgImage'; }
   (appObj.users||[]).forEach(function(u) {
-    if(u.signature && u.signature.length > 200) { refs['sig_'+u.id] = u.signature; u.signature = '__img:sig_'+u.id; }
-    if(u.photo && u.photo.length > 200) { refs['photo_'+u.id] = u.photo; u.photo = '__img:photo_'+u.id; }
+    var ukey = u.email ? u.email.replace(/[^a-zA-Z0-9]/g,'_') : u.id;
+    if(u.signature && u.signature.length > 200) { refs['sig_'+ukey] = u.signature; u.signature = '__img:sig_'+ukey; }
+    if(u.photo && u.photo.length > 200) { refs['photo_'+ukey] = u.photo; u.photo = '__img:photo_'+ukey; }
   });
   return refs;
 }
@@ -361,8 +363,14 @@ function _restoreImages(appObj, refs) {
   if(s.gmaLogo && s.gmaLogo.indexOf('__img:')===0) s.gmaLogo = refs[s.gmaLogo.slice(6)] || _imagesCache[s.gmaLogo.slice(6)] || '';
   if(s.bgImage && s.bgImage.indexOf('__img:')===0) s.bgImage = refs[s.bgImage.slice(6)] || _imagesCache[s.bgImage.slice(6)] || '';
   (appObj.users||[]).forEach(function(u) {
-    if(u.signature && u.signature.indexOf('__img:')===0) u.signature = refs[u.signature.slice(6)] || _imagesCache[u.signature.slice(6)] || '';
-    if(u.photo && u.photo.indexOf('__img:')===0) u.photo = refs[u.photo.slice(6)] || _imagesCache[u.photo.slice(6)] || '';
+    if(u.signature && u.signature.indexOf('__img:')===0) {
+      var sk = u.signature.slice(6);
+      u.signature = refs[sk] || _imagesCache[sk] || '';
+    }
+    if(u.photo && u.photo.indexOf('__img:')===0) {
+      var pk = u.photo.slice(6);
+      u.photo = refs[pk] || _imagesCache[pk] || '';
+    }
   });
 }
 

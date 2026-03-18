@@ -477,11 +477,7 @@ const BON_STATUSES = [
 
 async function initApp() {
   try {
-    // 1. Load local data (silent — no UI rendering yet)
-    await initFileStorage();
-
-    // 2. Check Firebase session BEFORE rendering anything
-    var hasSession = false;
+    // 1. Check Firebase session FIRST — cloud is primary
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth && navigator.onLine) {
       try {
         var session = await _checkSession();
@@ -497,14 +493,18 @@ async function initApp() {
           var localUser = APP.users.find(function(u) { return u.email === _cloudUser.email; });
           if (localUser) {
             sessionStorage.setItem('psm_user', localUser.id);
-            hasSession = true;
           }
           if (typeof startRealtimeSync === 'function') startRealtimeSync();
         }
       } catch(e) { console.warn('[PSM] session restore:', e); }
     }
 
-    // 3. Now render UI (data is already final — no flash)
+    // 2. If no cloud data loaded, fall back to local storage
+    if (!_onlineMode || !APP._ts) {
+      try { await initFileStorage(); } catch(ex) { console.warn('[PSM] local storage:', ex); }
+    }
+
+    // 3. Now render UI (data is final — no flash)
     await _finishAppInit();
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
