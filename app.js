@@ -4321,6 +4321,131 @@ function refreshOrderCard(c) {
   card.outerHTML = renderOrderCard(c);
 }
 
+// ── Créer une nouvelle commande ─────────────────────────────
+
+function openNewCmdModal(prefFournId, preselectedArts) {
+  var fournOpts = (APP.fournisseurs||[]).map(function(f) {
+    return '<option value="' + f.id + '" ' + (prefFournId === f.id ? 'selected' : '') + '>' + f.nom + (f.entreprise ? ' (' + f.entreprise + ')' : '') + '</option>';
+  }).join('');
+
+  var artOpts = (APP.articles||[]).map(function(a) {
+    return '<option value="' + a.id + '" data-name="' + (a.name||'').replace(/"/g,'&quot;') + '" data-prix="' + (a.prixAchat||a.prix||0) + '">' + a.name + ' (stock: ' + (a.stock||0) + ')</option>';
+  }).join('');
+
+  // Pre-fill lines
+  var prefillHtml = '';
+  if (preselectedArts && preselectedArts.length) {
+    preselectedArts.forEach(function(pa, i) {
+      var art = APP.articles.find(function(a) { return a.id === pa.artId; });
+      prefillHtml += _newCmdLineHtml(i, pa.artId, pa.name || (art ? art.name : ''), 1, art ? (art.prixAchat||art.prix||0) : 0, artOpts);
+    });
+  }
+
+  var body = '<div class="form-row">'
+    + '<div class="form-group"><label>Fournisseur *</label><select id="nc-fourn"><option value="">-- Choisir --</option>' + fournOpts + '</select></div>'
+    + '<div class="form-group"><label>N\u00b0 Commande</label><input id="nc-num" value="' + cmdOrderNum() + '"></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    + '<div class="form-group"><label>Date commande</label><input id="nc-date" type="date" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+    + '<div class="form-group"><label>Livraison pr\u00e9vue</label><input id="nc-dliv" type="date"></div>'
+    + '</div>'
+    + '<div style="font-size:12px;font-weight:700;margin:12px 0 6px">Articles de la commande</div>'
+    + '<div id="nc-lignes">' + prefillHtml + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:end;margin:8px 0;background:var(--bg-3);padding:10px;border-radius:8px">'
+    + '<div style="flex:2"><label style="font-size:10px">Ajouter un article</label><select id="nc-art-sel"><option value="">-- Choisir --</option>' + artOpts + '</select></div>'
+    + '<div style="flex:1"><label style="font-size:10px">Qt\u00e9</label><input id="nc-art-qty" type="number" value="1" min="1"></div>'
+    + '<div style="flex:1"><label style="font-size:10px">Prix unit.</label><input id="nc-art-prix" type="number" value="0" min="0" step="0.01"></div>'
+    + '<button class="btn btn-sm btn-primary" onclick="_addNewCmdLine()">+ Ajouter</button>'
+    + '</div>'
+    + '<div class="form-group"><label>Note</label><textarea id="nc-note" style="min-height:50px" placeholder="Remarques sur la commande..."></textarea></div>';
+
+  openModal('new-cmd', '\ud83d\udce6 Nouvelle commande fournisseur', body, function() {
+    var fournId = document.getElementById('nc-fourn').value;
+    if (!fournId) { notify('S\u00e9lectionnez un fournisseur', 'warning'); return; }
+    var fourn = APP.fournisseurs.find(function(f) { return f.id === fournId; });
+
+    // Collect lines
+    var lignes = [];
+    document.querySelectorAll('.nc-ligne-row').forEach(function(row) {
+      var artId = row.dataset.artid;
+      var artName = row.dataset.artname;
+      var qty = parseInt(row.querySelector('.nc-ligne-qty').value) || 0;
+      var prix = parseFloat(row.querySelector('.nc-ligne-prix').value) || 0;
+      if (artId && qty > 0) {
+        lignes.push({ articleId: artId, articleName: artName, qteCommandee: qty, qteRecue: 0, prixUnitaire: prix, receptions: [] });
+      }
+    });
+
+    if (lignes.length === 0) { notify('Ajoutez au moins un article', 'warning'); return; }
+
+    var dateVal = document.getElementById('nc-date').value;
+    var dlivVal = document.getElementById('nc-dliv').value;
+
+    var cmd = {
+      id: generateId(),
+      numero: document.getElementById('nc-num').value || cmdOrderNum(),
+      fournisseurId: fournId,
+      fournisseurNom: fourn ? fourn.nom : '',
+      lignes: lignes,
+      status: 'pending',
+      note: document.getElementById('nc-note').value || '',
+      dateCommande: dateVal ? new Date(dateVal).getTime() : Date.now(),
+      dateLivraisonPrevue: dlivVal ? new Date(dlivVal).getTime() : null,
+      createdAt: Date.now()
+    };
+
+    if (!APP.commandesFourn) APP.commandesFourn = [];
+    APP.commandesFourn.push(cmd);
+
+    auditLog('create', 'commandeFourn', cmd.id, null, cmd);
+    saveDB(); closeModal(); renderFournDashboard(); updateAlertBadge();
+    notify('Commande ' + cmd.numero + ' cr\u00e9\u00e9e \u2713', 'success');
+  }, 'modal-lg');
+
+  // Auto-fill price when selecting article
+  var artSel = document.getElementById('nc-art-sel');
+  if (artSel) {
+    artSel.onchange = function() {
+      var opt = artSel.options[artSel.selectedIndex];
+      if (opt && opt.dataset.prix) {
+        document.getElementById('nc-art-prix').value = opt.dataset.prix;
+      }
+    };
+  }
+}
+
+function _newCmdLineHtml(idx, artId, artName, qty, prix, artOpts) {
+  return '<div class="nc-ligne-row" data-artid="' + artId + '" data-artname="' + (artName||'').replace(/"/g,'&quot;') + '" style="background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">'
+    + '<div style="display:grid;grid-template-columns:2.5fr 1fr 1fr auto;gap:8px;align-items:end">'
+    + '<div><label style="font-size:10px">Article</label><input value="' + (artName||'') + '" disabled style="font-weight:600"></div>'
+    + '<div><label style="font-size:10px">Qt\u00e9</label><input class="nc-ligne-qty" type="number" value="' + (qty||1) + '" min="1"></div>'
+    + '<div><label style="font-size:10px">Prix unit.</label><input class="nc-ligne-prix" type="number" value="' + (prix||0) + '" min="0" step="0.01"></div>'
+    + '<button class="btn btn-sm btn-danger" onclick="this.closest(\'.nc-ligne-row\').remove()" style="margin-bottom:2px">\u2716</button>'
+    + '</div></div>';
+}
+
+function _addNewCmdLine() {
+  var sel = document.getElementById('nc-art-sel');
+  var qtyEl = document.getElementById('nc-art-qty');
+  var prixEl = document.getElementById('nc-art-prix');
+  if (!sel || !sel.value) { notify('Choisissez un article', 'warning'); return; }
+  var opt = sel.options[sel.selectedIndex];
+  var artId = sel.value;
+  var artName = opt.dataset.name || opt.textContent;
+  var qty = parseInt(qtyEl.value) || 1;
+  var prix = parseFloat(prixEl.value) || 0;
+
+  // Check if already added
+  var existing = document.querySelector('.nc-ligne-row[data-artid="' + artId + '"]');
+  if (existing) { notify('Article d\u00e9j\u00e0 ajout\u00e9', 'warning'); return; }
+
+  var container = document.getElementById('nc-lignes');
+  container.insertAdjacentHTML('beforeend', _newCmdLineHtml(0, artId, artName, qty, prix));
+  sel.value = '';
+  qtyEl.value = '1';
+  prixEl.value = '0';
+}
+
 // Legacy compat
 function attachOrderInlineEditors() {}
 function openFragLivModal() {}
