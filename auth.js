@@ -249,6 +249,8 @@ async function _handleLogin(e) {
 
     // 5b. Re-sync profile after cloud load (cloud may have overwritten APP.users)
     if (_userProfile) _syncProfileToLocal(_userProfile);
+    // Deduplicate users (cloud + local may have created duplicates)
+    if (typeof _deduplicateUsers === 'function') _deduplicateUsers();
     localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
     if (localUser) sessionStorage.setItem('psm_user', localUser.id);
 

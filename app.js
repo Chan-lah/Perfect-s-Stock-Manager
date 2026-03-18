@@ -479,7 +479,27 @@ async function initApp() {
   }
 }
 
+function _deduplicateUsers() {
+  if (!APP.users) return;
+  var seen = {};
+  APP.users = APP.users.filter(function(u) {
+    if (!u.email) return true;
+    var key = u.email.toLowerCase();
+    if (seen[key]) {
+      // Keep the one with more data (photo, signature, etc.)
+      var prev = seen[key];
+      if (u.photo && !prev.photo) prev.photo = u.photo;
+      if (u.signature && !prev.signature) prev.signature = u.signature;
+      if (u.name && u.name !== u.email.split('@')[0] && prev.name === prev.email.split('@')[0]) prev.name = u.name;
+      return false;
+    }
+    seen[key] = u;
+    return true;
+  });
+}
+
 async function _finishAppInit() {
+  _deduplicateUsers();
   try {
   if(!APP.commandesFourn) APP.commandesFourn = [];
   if(!APP.backups) APP.backups = [];
@@ -5964,6 +5984,13 @@ function _getDefaultPerms(role) {
   return p;
 }
 
+
+function _findUserIdByEmail(email) {
+  if (!email) return null;
+  var u = (APP.users||[]).find(function(x) { return x.email && x.email.toLowerCase() === email.toLowerCase(); });
+  return u ? u.id : null;
+}
+
 function renderAdminPage() {
   var u = _currentUser();
   var role = (typeof _userProfile !== 'undefined' && _userProfile && _userProfile.role) || (u && u.role);
@@ -5996,8 +6023,8 @@ function renderAdminPage() {
       + lastActivity
       + '</div>'
       + '<div style="display:flex;gap:6px">'
-      + '<button class="btn btn-sm btn-secondary" onclick="openUserModal(\'' + uu.id + '\')" title="Modifier">\u270f</button>'
-      + (uu.role !== 'admin' ? '<button class="btn btn-sm btn-secondary" onclick="_confirmDeleteUser(\'' + uu.id + '\')" title="Supprimer" style="color:var(--danger)">\u2716</button>' : '')
+      + '<button class="btn btn-sm btn-secondary" onclick="openUserModal(_findUserIdByEmail(\'' + (uu.email||'').replace(/'/g, "\\'") + '\'))" title="Modifier">\u270f</button>'
+      + (uu.role !== 'admin' ? '<button class="btn btn-sm btn-secondary" onclick="_confirmDeleteUser(_findUserIdByEmail(\'' + (uu.email||'').replace(/'/g, "\\'") + '\'))" title="Supprimer" style="color:var(--danger)">\u2716</button>' : '')
       + '</div>'
       + '</div></div>';
   }).join('');
