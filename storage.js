@@ -48,6 +48,9 @@ async function _saveToCloud() {
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
   try {
+    // Track local save timestamp to prevent realtime echo
+    _lastLocalSaveTs = APP._ts || Date.now();
+
     // Strip images for compact JSON
     var refs = (typeof _stripImages === 'function') ? _stripImages(APP) : null;
     var dataStr = JSON.stringify(APP);
@@ -85,15 +88,17 @@ async function _loadFromCloud() {
     var cloudImages = cloudEntry.images || {};
 
     if (cloudData) {
-      // Use cloud data if newer than local
-      if (!APP._ts || (cloudData._ts && cloudData._ts >= APP._ts)) {
+      // Use cloud data if newer than local (strict: cloud must be strictly newer)
+      if (cloudData._ts && (!APP._ts || cloudData._ts > APP._ts)) {
         Object.assign(APP, cloudData);
         if (typeof _restoreImages === 'function') {
           _restoreImages(APP, cloudImages);
         }
-        console.log('[PSM] Cloud data loaded');
+        console.log('[PSM] Cloud data loaded (cloud _ts=' + cloudData._ts + ', local _ts=' + APP._ts + ')');
       } else {
-        console.log('[PSM] Local data is newer, keeping local');
+        console.log('[PSM] Local data is newer or equal, keeping local (cloud _ts=' + (cloudData._ts||0) + ', local _ts=' + (APP._ts||0) + ')');
+        // Push local data to cloud since it's newer
+        _doSaveToCloud();
       }
     }
     return cloudData;
@@ -105,23 +110,26 @@ async function _loadFromCloud() {
 
 // ── Real-time sync listener ──────────────────────────────
 var _realtimeListenerActive = false;
+var _lastLocalSaveTs = 0;
 
 function startRealtimeSync() {
   if (!_firebaseDB || _realtimeListenerActive) return;
   _realtimeListenerActive = true;
+  var _firstSnapshot = true;
 
   _firebaseDB.ref('app_data/data').on('value', function(snap) {
+    // Skip the initial snapshot (we already loaded data)
+    if (_firstSnapshot) { _firstSnapshot = false; return; }
     if (!snap.exists()) return;
     var cloudData = snap.val();
     if (!cloudData || !cloudData._ts) return;
 
-    // Only update if cloud data is newer than local
-    if (cloudData._ts > (APP._ts || 0)) {
-      // Don't overwrite if we just saved (prevent echo)
-      if (Math.abs(cloudData._ts - (APP._ts || 0)) < 2000) return;
+    // Skip if this is our own save echoing back (within 3 seconds)
+    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 3000) return;
 
-      console.log('[PSM] Real-time update received');
-      var currentUser = sessionStorage.getItem('psm_user');
+    // Only update if cloud data is strictly newer
+    if (cloudData._ts > (APP._ts || 0)) {
+      console.log('[PSM] Real-time update received from another user');
       Object.assign(APP, cloudData);
 
       // Also load images
@@ -208,6 +216,10 @@ function saveDB() {
   else {
     // Fallback localStorage seulement si pas de fichier local
     try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  }
+  // Cloud sync: immediate save (no debounce)
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
+    _doSaveToCloud();
   }
 }
 function loadDB() {
