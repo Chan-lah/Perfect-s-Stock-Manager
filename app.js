@@ -5701,7 +5701,12 @@ function renderUserManagement() {
 }
 
 function openUserModal(userId) {
-  const u = userId ? (APP.users||[]).find(x=>x.id===userId) : null;
+  // Accept either an ID or an email
+  var u = null;
+  if (userId) {
+    u = (APP.users||[]).find(x=>x.id===userId);
+    if (!u) u = (APP.users||[]).find(x=>x.email && x.email.toLowerCase() === userId.toLowerCase());
+  }
   const permHtml = ALL_PAGES_PERMS.map(p => {
     const vChecked = u?.permissions?.[p.id]?.view ? 'checked' : (!userId || u?.role==='admin' ? 'checked' : '');
     const eChecked = u?.permissions?.[p.id]?.edit ? 'checked' : (!userId || u?.role==='admin' ? 'checked' : '');
@@ -5879,8 +5884,9 @@ async function saveUserModal(userId) {
 
   try {
     if(userId) {
-      // ── EDIT existing user ──
-      const u = APP.users.find(x => x.id === userId);
+      // ── EDIT existing user ── (find by ID or email)
+      var u = APP.users.find(x => x.id === userId);
+      if (!u) u = APP.users.find(x => x.email && x.email.toLowerCase() === userId.toLowerCase());
       if(u) {
         u.name = name; u.email = email; u.role = role; u.permissions = permissions;
         if(photo) u.photo = photo;
@@ -5921,8 +5927,10 @@ async function deleteUser(userId) {
   if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
   if(!confirm('Supprimer cet utilisateur ?')) return;
   var user = (APP.users||[]).find(u => u.id === userId);
+  if (!user) user = (APP.users||[]).find(u => u.email && u.email.toLowerCase() === userId.toLowerCase());
   var userEmail = user ? user.email : null;
-  APP.users = (APP.users||[]).filter(u => u.id !== userId);
+  var userIdToRemove = user ? user.id : userId;
+  APP.users = (APP.users||[]).filter(u => u.id !== userIdToRemove);
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
 
   // Delete profile from Firebase
@@ -6023,8 +6031,8 @@ function renderAdminPage() {
       + lastActivity
       + '</div>'
       + '<div style="display:flex;gap:6px">'
-      + '<button class="btn btn-sm btn-secondary" onclick="openUserModal(_findUserIdByEmail(\'' + (uu.email||'').replace(/'/g, "\\'") + '\'))" title="Modifier">\u270f</button>'
-      + (uu.role !== 'admin' ? '<button class="btn btn-sm btn-secondary" onclick="_confirmDeleteUser(_findUserIdByEmail(\'' + (uu.email||'').replace(/'/g, "\\'") + '\'))" title="Supprimer" style="color:var(--danger)">\u2716</button>' : '')
+      + '<button class="btn btn-sm btn-secondary" onclick="openUserModal(\'' + (uu.email||'').replace(/'/g, "\\'") + '\')" title="Modifier">\u270f</button>'
+      + (uu.role !== 'admin' ? '<button class="btn btn-sm btn-secondary" onclick="_confirmDeleteUser(\'' + (uu.email||'').replace(/'/g, "\\'") + '\')" title="Supprimer" style="color:var(--danger)">\u2716</button>' : '')
       + '</div>'
       + '</div></div>';
   }).join('');
@@ -6165,7 +6173,9 @@ async function _doCreateSupabaseAccount() {
 }
 
 async function _confirmDeleteUser(uid) {
+  // Accept either ID or email
   var user = (APP.users || []).find(function(u) { return u.id === uid; });
+  if (!user) user = (APP.users || []).find(function(u) { return u.email && u.email.toLowerCase() === uid.toLowerCase(); });
   if (!user) return;
   if (!confirm('Supprimer "' + user.name + '" ? Cette action est irr\u00e9versible.')) return;
   var userEmail = user.email;
