@@ -1,66 +1,45 @@
 ﻿(function(){
-  // Si déjà chargé dans cette session (F5/rechargement), masquer le splash immédiatement
-  if(sessionStorage.getItem('psm_loaded')) {
-    var s = document.getElementById('splash');
-    if(s) s.style.display = 'none';
-    var a = document.getElementById('app');
-    if(a) a.classList.remove('splash-hidden');
-    return;
-  }
+  // Splash stays visible until Firebase is connected + data synced
+  var _splashProgress = 0;
+  var _splashInterval = null;
 
-  var progress = 0;
-  var labels = ["Chargement des donn\u00e9es\u2026","Initialisation\u2026","Pr\u00e9paration de l'interface\u2026","Presque pr\u00eat\u2026"];
-  var labelIdx = 0;
-  var interval = null;
-  var started = false;
-
-  function startProgress(){
-    if(started) return; started = true;
+  window._splashSetProgress = function(pct, text) {
     var bar = document.getElementById('splash-bar-fill');
     var label = document.getElementById('splash-label');
-    interval = setInterval(function(){
-      if(progress < 85){
-        progress += Math.random() * 8 + 3;
-        if(progress > 85) progress = 85;
-        if(bar) bar.style.width = progress + '%';
-        labelIdx = Math.min(Math.floor(progress / 25), labels.length - 1);
-        if(label) label.textContent = labels[labelIdx];
-      }
-    }, 120);
-  }
+    if (pct > _splashProgress) _splashProgress = pct;
+    if (bar) { bar.style.transition = 'width 0.3s ease'; bar.style.width = _splashProgress + '%'; }
+    if (label && text) label.textContent = text;
+  };
 
-  function hideSplash(){
-    clearInterval(interval);
+  window._splashHide = function() {
+    clearInterval(_splashInterval);
     var bar = document.getElementById('splash-bar-fill');
     var label = document.getElementById('splash-label');
     var splash = document.getElementById('splash');
     var app = document.getElementById('app');
-    if(bar) bar.style.transition = 'width 0.3s ease';
-    if(bar) bar.style.width = '100%';
+    if(bar) { bar.style.transition = 'width 0.3s ease'; bar.style.width = '100%'; }
     if(label) label.textContent = 'Pr\u00eat !';
     setTimeout(function(){
       if(splash) splash.classList.add('splash-out');
       if(app) app.classList.remove('splash-hidden');
-      // Marquer la session comme chargée — les F5 suivants skipperont le splash
-      try { sessionStorage.setItem('psm_loaded', '1'); } catch(e) {}
       setTimeout(function(){
         if(splash && splash.parentNode) splash.parentNode.removeChild(splash);
       }, 750);
     }, 400);
-  }
+  };
 
+  // Gentle progress animation while waiting
   document.addEventListener('DOMContentLoaded', function(){
-    startProgress();
-    var minWait = new Promise(function(res){ setTimeout(res, 2500); });
-    var appReady = new Promise(function(res){
-      var check = setInterval(function(){
-        if(typeof APP !== 'undefined' && APP.articles !== undefined){
-          clearInterval(check); res();
-        }
-      }, 50);
-      setTimeout(function(){ clearInterval(check); res(); }, 5000);
-    });
-    Promise.all([minWait, appReady]).then(hideSplash);
+    var bar = document.getElementById('splash-bar-fill');
+    var label = document.getElementById('splash-label');
+    if(label) label.textContent = 'Connexion au serveur\u2026';
+    _splashInterval = setInterval(function(){
+      if(_splashProgress < 30) {
+        _splashProgress += Math.random() * 2 + 0.5;
+        if(_splashProgress > 30) _splashProgress = 30;
+        if(bar) bar.style.width = _splashProgress + '%';
+      }
+    }, 200);
   });
 })();
 
@@ -478,6 +457,8 @@ const BON_STATUSES = [
 async function initApp() {
   try {
     // 1. Check Firebase session FIRST — cloud is primary
+    if (typeof _splashSetProgress === 'function') _splashSetProgress(15, 'Connexion au serveur\u2026');
+
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth && navigator.onLine) {
       try {
         var session = await _checkSession();
@@ -485,19 +466,22 @@ async function initApp() {
           _onlineMode = true;
           _cloudUser = session.user;
           _supabaseUser = _cloudUser;
+          if (typeof _splashSetProgress === 'function') _splashSetProgress(40, 'Session trouv\u00e9e, chargement des donn\u00e9es\u2026');
 
-          // Preserve local theme preference before cloud overwrite
-          var _savedTheme = (APP.settings && APP.settings.theme) || localStorage.getItem('psm_theme') || 'dark';
+          // Preserve local theme
+          var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
 
-          // Load cloud data FIRST (sets APP.users etc.)
+          // Load cloud data FIRST
           try { await _loadFromCloud(); } catch(ex) {}
+          if (typeof _splashSetProgress === 'function') _splashSetProgress(65, 'Donn\u00e9es synchronis\u00e9es');
 
-          // Restore local theme (not synced)
+          // Restore local theme
           if (!APP.settings) APP.settings = {};
           APP.settings.theme = _savedTheme;
 
-          // THEN sync current user's profile (adds/updates in APP.users)
+          // Sync current user's profile
           await _loadUserProfile();
+          if (typeof _splashSetProgress === 'function') _splashSetProgress(80, 'Profil charg\u00e9');
 
           // Restore local session
           if (!APP.users) APP.users = [];
@@ -510,12 +494,15 @@ async function initApp() {
       } catch(e) { console.warn('[PSM] session restore:', e); }
     }
 
-    // 2. If no cloud data loaded, fall back to local storage
+    // 2. If no cloud data, fall back to local
     if (!_onlineMode || !APP._ts) {
+      if (typeof _splashSetProgress === 'function') _splashSetProgress(50, 'Mode hors ligne\u2026');
       try { await initFileStorage(); } catch(ex) { console.warn('[PSM] local storage:', ex); }
     }
 
-    // 3. Now render UI (data is final — no flash)
+    if (typeof _splashSetProgress === 'function') _splashSetProgress(90, 'Pr\u00e9paration de l\'interface\u2026');
+
+    // 3. Render UI (data is final)
     await _finishAppInit();
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
@@ -550,6 +537,7 @@ async function _finishAppInit() {
   // Always require login — check BEFORE rendering UI
   if(!sessionStorage.getItem('psm_user')) {
     applyTheme(APP.settings.theme || 'dark');
+    if (typeof _splashHide === 'function') _splashHide();
     showLoginScreen();
     return;
   }
@@ -566,6 +554,8 @@ async function _finishAppInit() {
   setTimeout(updateThemeBtn, 50);
   updateUserBadge();
   startBackupScheduler();
+  // Hide splash — app is fully ready
+  if (typeof _splashHide === 'function') _splashHide();
 }
 
 function toggleSidebar() {
