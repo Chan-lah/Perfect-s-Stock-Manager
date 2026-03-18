@@ -238,21 +238,30 @@ async function _handleLogin(e) {
     sessionStorage.setItem('psm_user', localUser.id);
     if (typeof saveDB === 'function') saveDB();
 
-    // 5. Load cloud data
+    // 5. Preserve local theme, then load cloud data
+    var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
     try { if (typeof _loadFromCloud === 'function') await _loadFromCloud(); } catch(ex) {}
+    if (!APP.settings) APP.settings = {};
+    APP.settings.theme = _savedTheme;
+
+    // 5b. Re-sync profile after cloud load (cloud may have overwritten APP.users)
+    if (_userProfile) _syncProfileToLocal(_userProfile);
+    localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
+    if (localUser) sessionStorage.setItem('psm_user', localUser.id);
+
+    // 5c. Start real-time sync
+    if (typeof startRealtimeSync === 'function') startRealtimeSync();
 
     // 6. Log activity
-    logActivity('login', 'Connexion: ' + localUser.name + ' (' + localUser.role + ')');
+    logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
 
     // 7. Remove overlay
     var overlay = document.getElementById('login-overlay');
     if (overlay) overlay.remove();
 
-    // 8. Re-render
-    if (typeof renderSidebar === 'function') renderSidebar();
-    if (typeof showPage === 'function') showPage((APP.settings && APP.settings.lastPage) || 'dashboard');
-    if (typeof updateUserBadge === 'function') updateUserBadge();
-    if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + localUser.name + ' !', 'success');
+    // 8. Re-render full UI
+    if (typeof _finishAppInit === 'function') await _finishAppInit();
+    if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + (localUser ? localUser.name : email) + ' !', 'success');
 
   } catch(err) {
     var msg = err.message || String(err);

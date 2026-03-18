@@ -456,53 +456,22 @@ const BON_STATUSES = [
 
 async function initApp() {
   try {
-    // 1. Check Firebase session FIRST — cloud is primary
-    if (typeof _splashSetProgress === 'function') _splashSetProgress(15, 'Connexion au serveur\u2026');
+    if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
 
-    if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth && navigator.onLine) {
-      try {
-        var session = await _checkSession();
-        if (session) {
-          _onlineMode = true;
-          _cloudUser = session.user;
-          _supabaseUser = _cloudUser;
-          if (typeof _splashSetProgress === 'function') _splashSetProgress(40, 'Session trouv\u00e9e, chargement des donn\u00e9es\u2026');
-
-          // Preserve local theme
-          var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
-
-          // Load cloud data FIRST
-          try { await _loadFromCloud(); } catch(ex) {}
-          if (typeof _splashSetProgress === 'function') _splashSetProgress(65, 'Donn\u00e9es synchronis\u00e9es');
-
-          // Restore local theme
-          if (!APP.settings) APP.settings = {};
-          APP.settings.theme = _savedTheme;
-
-          // Sync current user's profile
-          await _loadUserProfile();
-          if (typeof _splashSetProgress === 'function') _splashSetProgress(80, 'Profil charg\u00e9');
-
-          // Restore local session
-          if (!APP.users) APP.users = [];
-          var localUser = APP.users.find(function(u) { return u.email === _cloudUser.email; });
-          if (localUser) {
-            sessionStorage.setItem('psm_user', localUser.id);
-          }
-          if (typeof startRealtimeSync === 'function') startRealtimeSync();
-        }
-      } catch(e) { console.warn('[PSM] session restore:', e); }
+    // 1. Sign out any previous session — force fresh login every time
+    if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
+      try { await _firebaseAuth.signOut(); } catch(e) {}
     }
+    sessionStorage.removeItem('psm_user');
 
-    // 2. If no cloud data, fall back to local
-    if (!_onlineMode || !APP._ts) {
-      if (typeof _splashSetProgress === 'function') _splashSetProgress(50, 'Mode hors ligne\u2026');
-      try { await initFileStorage(); } catch(ex) { console.warn('[PSM] local storage:', ex); }
-    }
+    if (typeof _splashSetProgress === 'function') _splashSetProgress(60, 'Serveur pr\u00eat');
 
-    if (typeof _splashSetProgress === 'function') _splashSetProgress(90, 'Pr\u00e9paration de l\'interface\u2026');
+    // 2. No cloud data loaded yet — user must login first
+    // _handleLogin in auth.js will load cloud data after successful auth
 
-    // 3. Render UI (data is final)
+    if (typeof _splashSetProgress === 'function') _splashSetProgress(90, 'Pr\u00e9paration\u2026');
+
+    // 3. Render init + show login
     await _finishAppInit();
   } catch(e) {
     console.error('[PSM] initApp failed:', e);
@@ -511,6 +480,7 @@ async function initApp() {
 }
 
 async function _finishAppInit() {
+  try {
   if(!APP.commandesFourn) APP.commandesFourn = [];
   if(!APP.backups) APP.backups = [];
   if(!APP.zones) APP.zones = [];
@@ -524,9 +494,13 @@ async function _finishAppInit() {
   if(!APP.dispatch.rules) APP.dispatch.rules = {respectMin:true,respectMax:true};
   if(!APP.settings.categories) APP.settings.categories = [];
   if(!APP.users) APP.users = [];
+  if(!APP.commerciaux) APP.commerciaux = [];
+  if(!APP.articles) APP.articles = [];
+  if(!APP.bons) APP.bons = [];
+  if(!APP.fournisseurs) APP.fournisseurs = [];
   initGMAData();
-  APP.commerciaux.forEach(c => dInitCommercialDispatchFields(c));
-  APP.articles.forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
+  (APP.commerciaux||[]).forEach(c => dInitCommercialDispatchFields(c));
+  (APP.articles||[]).forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
   if(!APP.dispatchHistory) APP.dispatchHistory = [];
   if(!APP.recentlyViewed) APP.recentlyViewed = [];
   // Migration: déplacer le logo GMA de localStorage vers APP.settings
@@ -556,6 +530,12 @@ async function _finishAppInit() {
   startBackupScheduler();
   // Hide splash — app is fully ready
   if (typeof _splashHide === 'function') _splashHide();
+  } catch(err) {
+    console.error('[PSM] _finishAppInit error:', err);
+    // Always hide splash even on error
+    if (typeof _splashHide === 'function') _splashHide();
+    if (!sessionStorage.getItem('psm_user') && typeof showLoginScreen === 'function') showLoginScreen();
+  }
 }
 
 function toggleSidebar() {
