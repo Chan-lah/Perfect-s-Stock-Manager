@@ -67,8 +67,13 @@ async function _doSaveToCloud() {
       delete dataObj.settings._sidebarCollapsed;
       delete dataObj.settings.lastPage;
     }
-    // Don't save users to cloud — roles/permissions come from Firebase profiles
-    delete dataObj.users;
+    // Strip role/permissions from users (comes from Firebase profiles)
+    // Keep only id, email, photo, signature for shared access
+    if (dataObj.users) {
+      dataObj.users = dataObj.users.map(function(u) {
+        return { id: u.id, email: u.email, name: u.name, photo: u.photo, signature: u.signature };
+      });
+    }
 
     // Extract images separately
     var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};

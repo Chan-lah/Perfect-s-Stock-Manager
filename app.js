@@ -5867,9 +5867,9 @@ async function saveUserModal(userId) {
         if(sig) u.signature = sig;
         u._version = (u._version||1) + 1;
       }
-      // Update Supabase profile
+      // Update Firebase profile (including photo/signature)
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
-        try { await _adminUpdateProfile(email, name, role, permissions, true); } catch(e) { console.warn('[PSM] profile update:', e); }
+        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, sig); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
     } else {
       // ── CREATE new user ──
