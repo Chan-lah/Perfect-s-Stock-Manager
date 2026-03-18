@@ -237,37 +237,50 @@ async function _handleLogin(e) {
       }
     }
 
-    // 4. Set session
+    // 4. Set session (don't saveDB yet — load cloud first)
     sessionStorage.setItem('psm_user', localUser.id);
-    if (typeof saveDB === 'function') saveDB();
 
-    // 5. Preserve local theme + users, then load cloud data
+    // 5. Load cloud data, compare with localStorage, pick the newest
     var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
-    try { if (typeof _loadFromCloud === 'function') await _loadFromCloud(); } catch(ex) {}
-
-    // If localStorage has newer data than cloud, use localStorage for business data
-    if (_localTs > 0 && (!APP._ts || _localTs > APP._ts)) {
-      console.log('[PSM] localStorage is newer (' + _localTs + ' > ' + (APP._ts||0) + '), restoring local data');
-      try {
-        var lsData = localStorage.getItem('psm_pro_db');
-        if (lsData) {
-          var parsed = JSON.parse(lsData);
-          if (parsed && parsed._ts === _localTs) {
-            // Restore business data from localStorage
-            var keysToRestore = ['articles','bons','mouvements','commerciaux','zones','secteurs','pdv','commandesFourn','fournisseurs','dispatch','dispatchHistory'];
-            keysToRestore.forEach(function(k) { if (parsed[k] !== undefined) APP[k] = parsed[k]; });
-            APP._ts = parsed._ts;
-            // Push to cloud immediately
-            if (typeof _doSaveToCloud === 'function') _doSaveToCloud();
-          }
+    // Load cloud data into a temp variable (don't overwrite APP yet)
+    var _cloudTs = 0;
+    var _cloudData = null;
+    var _cloudImages = {};
+    try {
+      if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+        var snap = await _firebaseDB.ref('app_data').once('value');
+        if (snap.exists()) {
+          var entry = snap.val();
+          _cloudData = entry.data || null;
+          _cloudImages = entry.images || {};
+          _cloudTs = (_cloudData && _cloudData._ts) || 0;
         }
-      } catch(ex) { console.warn('[PSM] localStorage restore:', ex); }
+      }
+    } catch(ex) { console.warn('[PSM] cloud load:', ex); }
+
+    console.log('[PSM] Timestamps — local: ' + _localTs + ', cloud: ' + _cloudTs);
+
+    // Pick the newest version
+    if (_cloudData && _cloudTs > _localTs) {
+      // Cloud is newer → use cloud data
+      console.log('[PSM] Using CLOUD data (newer)');
+      var _usersBackup = APP.users ? APP.users.slice() : [];
+      Object.assign(APP, _cloudData);
+      APP.users = _usersBackup; // preserve users
+      if (typeof _restoreImages === 'function') _restoreImages(APP, _cloudImages);
+    } else if (_localTs > 0) {
+      // Local is newer or equal → keep localStorage (already loaded in initApp)
+      console.log('[PSM] Using LOCAL data (newer or equal)');
+      // Push local data to cloud so it's up to date
+      if (typeof _doSaveToCloud === 'function') {
+        try { await _doSaveToCloud(); } catch(ex) {}
+      }
     }
 
-    // Restore users (not from cloud)
+    // Restore local-only settings
     APP.users = _savedUsers;
     if (!APP.settings) APP.settings = {};
     APP.settings.theme = _savedTheme;
