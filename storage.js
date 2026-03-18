@@ -93,18 +93,12 @@ async function _loadFromCloud() {
     var cloudImages = cloudEntry.images || {};
 
     if (cloudData) {
-      // Use cloud data if newer than local (strict: cloud must be strictly newer)
-      if (cloudData._ts && (!APP._ts || cloudData._ts > APP._ts)) {
-        Object.assign(APP, cloudData);
-        if (typeof _restoreImages === 'function') {
-          _restoreImages(APP, cloudImages);
-        }
-        console.log('[PSM] Cloud data loaded (cloud _ts=' + cloudData._ts + ', local _ts=' + APP._ts + ')');
-      } else {
-        console.log('[PSM] Local data is newer or equal, keeping local (cloud _ts=' + (cloudData._ts||0) + ', local _ts=' + (APP._ts||0) + ')');
-        // Push local data to cloud since it's newer
-        _doSaveToCloud();
+      // Cloud is authoritative — always use cloud data
+      Object.assign(APP, cloudData);
+      if (typeof _restoreImages === 'function') {
+        _restoreImages(APP, cloudImages);
       }
+      console.log('[PSM] Cloud data loaded (_ts=' + (cloudData._ts||'none') + ')');
     }
     return cloudData;
   } catch(e) {
