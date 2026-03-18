@@ -3897,418 +3897,437 @@ function openCmdFromArticle(artId) {
 // ============================================================
 // FOURNISSEUR DASHBOARD + COMMANDES (FIXED multi-article)
 // ============================================================
+// ============================================================
+// SUIVI DES LIVRAISONS — REFONTE COMPLÈTE
+// ============================================================
+
+var _fournStatusFilter = 'all'; // all, pending, partial, complete, late
+
 function calcCmdPct(cmd) {
-  const totalCmd=(cmd.lignes||[]).reduce((s,l)=>s+(l.qteCommandee||0),0);
-  const totalRecu=(cmd.lignes||[]).reduce((s,l)=>s+(l.qteRecue||0),0);
-  return totalCmd>0?Math.round(totalRecu/totalCmd*100):0;
+  var totalCmd = (cmd.lignes||[]).reduce(function(s,l){ return s + (l.qteCommandee||0); }, 0);
+  var totalRecu = (cmd.lignes||[]).reduce(function(s,l){ return s + (l.qteRecue||0); }, 0);
+  return totalCmd > 0 ? Math.round(totalRecu / totalCmd * 100) : 0;
 }
+
 function calcCmdStatus(cmd) {
-  const pct=calcCmdPct(cmd);
-  if(pct===0)return'pending';if(pct===100)return'complete';if(cmd.status==='cancelled')return'cancelled';return'partial';
+  var pct = calcCmdPct(cmd);
+  if (cmd.status === 'cancelled') return 'cancelled';
+  if (pct === 0) return 'pending';
+  if (pct >= 100) return 'complete';
+  return 'partial';
 }
-function getCmdStatusLabel(s){return{pending:'En attente',partial:'Partielle',complete:'Complète',cancelled:'Annulée'}[s]||s;}
-function getCmdStatusClass(s){return{pending:'order-status-pending',partial:'order-status-partial',complete:'order-status-complete',cancelled:'order-status-cancelled'}[s]||'order-status-pending';}
-function getCmdProgressColor(pct){if(pct===100)return'var(--success)';if(pct>=60)return'var(--accent)';if(pct>=30)return'var(--warning)';return'var(--accent3)';}
+
+function isCmdLate(cmd) {
+  if (cmd.status === 'complete' || cmd.status === 'cancelled') return false;
+  if (!cmd.dateLivraisonPrevue) return false;
+  return Date.now() > cmd.dateLivraisonPrevue;
+}
+
+function getCmdStatusLabel(s) {
+  return { pending: 'En attente', partial: 'Partielle', complete: 'Compl\u00e8te', cancelled: 'Annul\u00e9e', late: 'En retard' }[s] || s;
+}
+function getCmdStatusClass(s) {
+  return { pending: 'order-status-pending', partial: 'order-status-partial', complete: 'order-status-complete', cancelled: 'order-status-cancelled', late: 'order-status-pending' }[s] || 'order-status-pending';
+}
+function getCmdProgressColor(pct) {
+  if (pct >= 100) return 'var(--success)';
+  if (pct >= 60) return 'var(--accent)';
+  if (pct >= 30) return 'var(--warning)';
+  return 'var(--accent3)';
+}
+
+function calcCmdTotal(cmd) {
+  return (cmd.lignes||[]).reduce(function(s,l) { return s + (l.qteCommandee||0) * (l.prixUnitaire||0); }, 0);
+}
+
+// ── Dashboard principal ─────────────────────────────────────
 
 function renderFournDashboard() {
-  const cmds=APP.commandesFourn||[];
-  const pending=cmds.filter(c=>c.status==='pending').length;
-  const partial=cmds.filter(c=>c.status==='partial').length;
-  const complete=cmds.filter(c=>c.status==='complete').length;
-  const totalValue=cmds.reduce((s,c)=>s+(c.lignes||[]).reduce((ls,l)=>ls+(l.qteCommandee||0)*(l.prixUnitaire||0),0),0);
+  var cmds = APP.commandesFourn || [];
+  // Update statuses
+  cmds.forEach(function(c) { c.status = calcCmdStatus(c); });
 
-  document.getElementById('content').innerHTML=`
-  <div class="page-header">
-    <div><div class="page-title">Suivi des livraisons</div><div class="page-sub">Commandes fournisseurs & réceptions</div></div>
-    <button class="btn btn-primary" onclick="openNewCmdModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouvelle commande</button>
-  </div>
-  <div class="grid-4 mb-16">
-    <div class="card"><div class="card-header"><span class="card-title">En attente</span></div><div class="kpi-value" style="color:var(--warning)">${pending}</div><div class="kpi-change">commandes</div></div>
-    <div class="card"><div class="card-header"><span class="card-title">En cours</span></div><div class="kpi-value" style="color:var(--accent)">${partial}</div><div class="kpi-change">livraisons partielles</div></div>
-    <div class="card"><div class="card-header"><span class="card-title">Complètes</span></div><div class="kpi-value" style="color:var(--success)">${complete}</div><div class="kpi-change">commandes</div></div>
-    <div class="card"><div class="card-header"><span class="card-title">Valeur totale</span></div><div class="kpi-value" style="color:var(--accent2);font-size:18px">${fmtCurrency(totalValue)}</div><div class="kpi-change">en commande</div></div>
-  </div>
-  <div id="fourn-cards-grid">
-    ${APP.fournisseurs.length===0?'<div class="empty-state"><p>Aucun fournisseur — <button class="btn btn-sm btn-primary" onclick="showPage(\'fournisseurs\')">Ajouter</button></p></div>':
-    APP.fournisseurs.map(f=>{
-      const fCmds=cmds.filter(c=>c.fournisseurId===f.id);
-      const fPending=fCmds.filter(c=>c.status==='pending'||c.status==='partial').length;
-      const totalRecu=fCmds.reduce((s,c)=>s+calcCmdPct(c),0);
-      const avgPct=fCmds.length?Math.round(totalRecu/fCmds.length):0;
-      const circum=2*Math.PI*30;
-      const dashOffset=circum*(1-avgPct/100);
-      const focused=window._fournFocus===f.id;
-      return `<div class="fourn-card${focused?' active':''}" id="fc-${f.id}" onclick="toggleFournOrders('${f.id}')">
-        <div class="fourn-card-header">
-          <div style="display:flex;align-items:center;gap:12px">
-            <div class="fourn-avatar">${(f.nom||'?').charAt(0).toUpperCase()}</div>
-            <div><div class="fourn-name">${f.nom}</div><div class="fourn-sub" style="color:var(--accent);font-weight:600">${f.entreprise||''}</div><div class="fourn-sub">${f.contact||f.adresse||''}</div></div>
-          </div>
-          <div style="display:flex;gap:6px">
-            ${fPending>0?`<span class="badge badge-orange">⚡ ${fPending} en cours</span>`:''}
-            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openNewCmdModal('${f.id}')">+</button>
-          </div>
-        </div>
-        <div class="gauge-wrap">
-          <div class="gauge-circle">
-            <svg viewBox="0 0 72 72" width="72" height="72">
-              <circle class="gauge-circle-bg" cx="36" cy="36" r="30"/>
-              <circle class="gauge-circle-fill" cx="36" cy="36" r="30" stroke="${getCmdProgressColor(avgPct)}" stroke-dasharray="${circum}" stroke-dashoffset="${dashOffset}"/>
-            </svg>
-            <div class="gauge-pct">${avgPct}%</div>
-          </div>
-          <div class="gauge-stats">
-            ${['pending','partial','complete'].map(st=>`<div class="gauge-stat-row"><span class="gauge-stat-label">${getCmdStatusLabel(st)}</span><span class="gauge-stat-val">${fCmds.filter(c=>c.status===st).length}</span></div>`).join('')}
-          </div>
-        </div>
-        <div id="forders-${f.id}" style="display:${focused?'block':'none'};margin-top:12px"></div>
-      </div>`;
-    }).join('')}
-  </div>`;
-  window._fournFocus=null;
-  if(window._fournFocus) toggleFournOrders(window._fournFocus);
-  // Auto-open if focused
-  const focusId=APP.fournisseurs[0]?.id;
+  var pending = cmds.filter(function(c){ return c.status==='pending'; }).length;
+  var partial = cmds.filter(function(c){ return c.status==='partial'; }).length;
+  var complete = cmds.filter(function(c){ return c.status==='complete'; }).length;
+  var late = cmds.filter(function(c){ return isCmdLate(c); }).length;
+  var totalValue = cmds.reduce(function(s,c){ return s + calcCmdTotal(c); }, 0);
+
+  var filterBtns = ['all','pending','partial','complete','late'].map(function(f) {
+    var label = f === 'all' ? 'Toutes' : getCmdStatusLabel(f);
+    var count = f === 'all' ? cmds.length : (f === 'late' ? late : cmds.filter(function(c){ return c.status === f; }).length);
+    var active = _fournStatusFilter === f ? 'btn-primary' : 'btn-secondary';
+    return '<button class="btn btn-sm ' + active + '" onclick="_fournStatusFilter=\'' + f + '\';renderFournDashboard()">' + label + ' (' + count + ')</button>';
+  }).join('');
+
+  document.getElementById('content').innerHTML = '<div class="page-header">'
+    + '<div><div class="page-title">Suivi des livraisons</div><div class="page-sub">Commandes fournisseurs & r\u00e9ceptions</div></div>'
+    + '<button class="btn btn-primary" onclick="openNewCmdModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouvelle commande</button>'
+    + '</div>'
+    + '<div class="grid-4 mb-16">'
+    + '<div class="card"><div class="card-header"><span class="card-title">En attente</span></div><div class="kpi-value" style="color:var(--warning)">' + pending + '</div><div class="kpi-change">commandes</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">En cours</span></div><div class="kpi-value" style="color:var(--accent)">' + partial + '</div><div class="kpi-change">livraisons partielles</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Compl\u00e8tes</span></div><div class="kpi-value" style="color:var(--success)">' + complete + '</div><div class="kpi-change">commandes</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">' + (late > 0 ? '\u26a0 En retard' : 'Valeur totale') + '</span></div><div class="kpi-value" style="color:' + (late > 0 ? 'var(--danger)' : 'var(--accent2)') + ';font-size:18px">' + (late > 0 ? late + ' cmd' : fmtCurrency(totalValue)) + '</div><div class="kpi-change">' + (late > 0 ? 'date d\u00e9pass\u00e9e' : 'en commande') + '</div></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">' + filterBtns + '</div>'
+    + '<div id="fourn-cards-grid">' + _renderFournCards(cmds) + '</div>';
 }
+
+function _renderFournCards(cmds) {
+  if (!APP.fournisseurs || APP.fournisseurs.length === 0) {
+    return '<div class="empty-state"><p>Aucun fournisseur \u2014 <button class="btn btn-sm btn-primary" onclick="showPage(\'fournisseurs\')">Ajouter</button></p></div>';
+  }
+  return APP.fournisseurs.map(function(f) {
+    var fCmds = cmds.filter(function(c) { return c.fournisseurId === f.id; });
+    // Apply filter
+    var filteredCmds = fCmds;
+    if (_fournStatusFilter !== 'all') {
+      if (_fournStatusFilter === 'late') {
+        filteredCmds = fCmds.filter(function(c) { return isCmdLate(c); });
+      } else {
+        filteredCmds = fCmds.filter(function(c) { return c.status === _fournStatusFilter; });
+      }
+    }
+    if (_fournStatusFilter !== 'all' && filteredCmds.length === 0) return '';
+
+    var fPending = fCmds.filter(function(c){ return c.status==='pending' || c.status==='partial'; }).length;
+    var fLate = fCmds.filter(function(c){ return isCmdLate(c); }).length;
+    var totalRecu = fCmds.reduce(function(s,c){ return s + calcCmdPct(c); }, 0);
+    var avgPct = fCmds.length ? Math.round(totalRecu / fCmds.length) : 0;
+    var circum = 2 * Math.PI * 30;
+    var dashOffset = circum * (1 - avgPct / 100);
+
+    return '<div class="fourn-card" id="fc-' + f.id + '" onclick="toggleFournOrders(\'' + f.id + '\')">'
+      + '<div class="fourn-card-header">'
+      + '<div style="display:flex;align-items:center;gap:12px">'
+      + '<div class="fourn-avatar">' + (f.nom||'?').charAt(0).toUpperCase() + '</div>'
+      + '<div><div class="fourn-name">' + f.nom + '</div><div class="fourn-sub" style="color:var(--accent);font-weight:600">' + (f.entreprise||'') + '</div><div class="fourn-sub">' + (f.contact||f.adresse||'') + '</div></div>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + (fLate > 0 ? '<span class="badge" style="background:var(--danger);color:#fff">\u26a0 ' + fLate + ' en retard</span>' : '')
+      + (fPending > 0 ? '<span class="badge badge-orange">\u26a1 ' + fPending + ' en cours</span>' : '')
+      + '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openNewCmdModal(\'' + f.id + '\')">+</button>'
+      + '</div></div>'
+      + '<div class="gauge-wrap">'
+      + '<div class="gauge-circle"><svg viewBox="0 0 72 72" width="72" height="72"><circle class="gauge-circle-bg" cx="36" cy="36" r="30"/><circle class="gauge-circle-fill" cx="36" cy="36" r="30" stroke="' + getCmdProgressColor(avgPct) + '" stroke-dasharray="' + circum + '" stroke-dashoffset="' + dashOffset + '"/></svg><div class="gauge-pct">' + avgPct + '%</div></div>'
+      + '<div class="gauge-stats">' + ['pending','partial','complete'].map(function(st){ return '<div class="gauge-stat-row"><span class="gauge-stat-label">' + getCmdStatusLabel(st) + '</span><span class="gauge-stat-val">' + fCmds.filter(function(c){return c.status===st;}).length + '</span></div>'; }).join('') + '</div>'
+      + '</div>'
+      + '<div id="forders-' + f.id + '" style="display:none;margin-top:12px" onclick="event.stopPropagation()"></div>'
+      + '</div>';
+  }).join('');
+}
+
+// ── Toggle fournisseur ─────────────────────────────────────
 
 function toggleFournOrders(fournId) {
-  const container=document.getElementById('forders-'+fournId);
-  if(!container) return;
-  const isOpen=container.style.display==='block';
-  // Close all
-  APP.fournisseurs.forEach(f=>{ const c=document.getElementById('forders-'+f.id); if(c)c.style.display='none'; });
-  if(!isOpen) {
-    container.style.display='block';
-    const fCmds=(APP.commandesFourn||[]).filter(c=>c.fournisseurId===fournId).sort((a,b)=>b.createdAt-a.createdAt);
-    if(!fCmds.length){container.innerHTML='<div class="empty-state" style="padding:16px"><p>Aucune commande pour ce fournisseur</p></div>';return;}
-    container.innerHTML=fCmds.map(c=>{
-      const pct=calcCmdPct(c);
-      return renderOrderCard(c, pct);
-    }).join('');
-    // Attach inline save handlers after render
-    fCmds.forEach(c=>attachOrderInlineEditors(c));
-  }
-}
-
-function renderOrderCard(c, pct) {
-  if(pct===undefined) pct=calcCmdPct(c);
-  return `<div class="order-card" id="order-card-${c.id}">
-    <div class="order-card-header">
-      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-        <span class="order-num" title="Double-cliquer pour modifier" id="onum-${c.id}" style="cursor:text">${c.numero}</span>
-        <span class="order-status-badge ${getCmdStatusClass(c.status)}">${getCmdStatusLabel(c.status)}</span>
-        ${c.dateLivraisonPrevue?`<span style="font-size:11px;color:var(--text-2)">📅 ${fmtDate(c.dateLivraisonPrevue)}</span>`:''}
-      </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-        <button class="btn btn-sm btn-secondary" onclick="openReceptionModal('${c.id}')">📥 Réceptionner</button>
-        <button class="btn btn-sm btn-secondary" onclick="openFragLivModal('${c.id}')" title="Planifier livraisons fragmentées">📅 Planifier</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteCmd('${c.id}')">🗑</button>
-      </div>
-    </div>
-    <div style="font-size:11px;color:var(--text-2);margin-bottom:6px;padding:0 2px">✏️ Cliquez directement sur les valeurs pour les modifier</div>
-    <div class="order-progress-wrap">
-      <div class="order-progress-track"><div class="order-progress-fill" style="width:${pct}%;background:${getCmdProgressColor(pct)}"></div></div>
-      <div class="order-progress-labels">
-        <span>Commandé: ${(c.lignes||[]).reduce((s,l)=>s+(l.qteCommandee||0),0)} u.</span>
-        <span style="color:var(--warning);font-weight:600">Restant: ${(c.lignes||[]).reduce((s,l)=>s+Math.max(0,(l.qteCommandee||0)-(l.qteRecue||0)),0)} u.</span>
-        <span>${pct}% reçu</span>
-      </div>
-    </div>
-    ${(c.livraisonsFragmentees&&c.livraisonsFragmentees.length)?`<div style="margin:8px 0;padding:8px 10px;background:rgba(61,127,255,0.08);border-radius:6px;border-left:3px solid var(--accent)"><div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:4px">📅 Plan de livraisons fragmentées</div>${c.livraisonsFragmentees.map(lf=>`<div style="font-size:11px;color:var(--text-1);display:flex;justify-content:space-between;padding:2px 0"><span>${fmtDate(lf.date)}</span><span style="font-weight:600">${lf.qty} unités</span><span style="color:var(--text-2)">${lf.note||''}</span></div>`).join('')}</div>`:''} 
-    <table class="order-lignes-table" style="table-layout:fixed">
-      <thead><tr><th>Article</th><th style="width:100px">Commandé</th><th style="width:100px">Reçu</th><th style="width:90px">Restant</th><th style="width:90px">Prix unit.</th><th style="width:70px">Statut</th></tr></thead>
-      <tbody>${(c.lignes||[]).map((l,i)=>`<tr id="ligne-tr-${c.id}-${i}">
-        <td style="font-weight:500">${l.articleName}</td>
-        <td><input class="inline-qty-cmd" type="number" min="0" value="${l.qteCommandee}" data-cmdid="${c.id}" data-idx="${i}" style="width:80px;padding:4px 8px;font-size:13px;font-weight:600;text-align:center"></td>
-        <td><input class="inline-qty-rec" type="number" min="0" value="${l.qteRecue||0}" data-cmdid="${c.id}" data-idx="${i}" style="width:80px;padding:4px 8px;font-size:13px;font-weight:600;text-align:center;color:${(l.qteRecue||0)>=(l.qteCommandee||1)?'var(--success)':'var(--accent3)'}"></td>
-        <td style="font-size:13px;font-weight:700;text-align:center;color:${(l.qteCommandee||0)-(l.qteRecue||0)>0?'var(--warning)':'var(--success)'}">${Math.max(0,(l.qteCommandee||0)-(l.qteRecue||0))}</td>
-        <td><input class="inline-prix" type="number" min="0" step="0.01" value="${l.prixUnitaire||0}" data-cmdid="${c.id}" data-idx="${i}" style="width:70px;padding:4px 8px;font-size:12px;color:var(--text-2)"></td>
-        <td style="text-align:center;font-size:11px">${(l.qteRecue||0)>=(l.qteCommandee||1)?'<span style="color:var(--success)">✓</span>':'<span style="color:var(--warning)">⏳</span>'}</td>
-      </tr>`).join('')}</tbody>
-    </table>
-    ${c.note?`<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">📝 ${c.note}</div>`:''}
-  </div>`;
-}
-
-function attachOrderInlineEditors(c) {
-  // Inline edit: order number on dblclick
-  const numEl = document.getElementById('onum-'+c.id);
-  if(numEl) {
-    numEl.ondblclick = () => {
-      makeEditable(numEl, c.numero, 'text', null, (v)=>{
-        if(v) { c.numero=v; auditLog('edit','commandeFourn',c.id,null,{numero:v}); saveDB(); refreshOrderCard(c); }
-      });
-    };
-  }
-  // Inline edit: quantities and price on change
-  document.querySelectorAll(`.inline-qty-cmd[data-cmdid="${c.id}"]`).forEach(inp=>{
-    inp.onchange = () => {
-      const i=parseInt(inp.dataset.idx);
-      const old=c.lignes[i].qteCommandee;
-      c.lignes[i].qteCommandee=Math.max(0,parseInt(inp.value)||0);
-      if(c.lignes[i].qteRecue>c.lignes[i].qteCommandee) c.lignes[i].qteRecue=c.lignes[i].qteCommandee;
-      auditLog('edit','commandeFourn',c.id,{qteCommandee:old},{qteCommandee:c.lignes[i].qteCommandee});
-      saveDB(); refreshOrderCard(c);
-    };
+  var container = document.getElementById('forders-' + fournId);
+  if (!container) return;
+  var isOpen = container.style.display === 'block';
+  APP.fournisseurs.forEach(function(f) {
+    var c = document.getElementById('forders-' + f.id);
+    if (c) c.style.display = 'none';
+    var fc = document.getElementById('fc-' + f.id);
+    if (fc) fc.classList.remove('active');
   });
-  document.querySelectorAll(`.inline-qty-rec[data-cmdid="${c.id}"]`).forEach(inp=>{
-    inp.onchange = () => {
-      const i=parseInt(inp.dataset.idx);
-      const old=c.lignes[i].qteRecue||0;
-      const newQte=Math.min(Math.max(0,parseInt(inp.value)||0), c.lignes[i].qteCommandee);
-      const diff=newQte-old;
-      if(diff>0){
-        const art=APP.articles.find(a=>a.id===c.lignes[i].articleId);
-        if(art){art.stock+=diff;APP.mouvements.push({id:generateId(),type:'entree',articleId:art.id,articleName:art.name,qty:diff,ts:Date.now(),fournisseurId:c.fournisseurId,note:'Inline réception '+c.numero});}
+  if (!isOpen) {
+    container.style.display = 'block';
+    var fc = document.getElementById('fc-' + fournId);
+    if (fc) fc.classList.add('active');
+    var fCmds = (APP.commandesFourn||[]).filter(function(c){ return c.fournisseurId === fournId; }).sort(function(a,b){ return b.createdAt - a.createdAt; });
+    // Apply filter
+    if (_fournStatusFilter !== 'all') {
+      if (_fournStatusFilter === 'late') {
+        fCmds = fCmds.filter(function(c){ return isCmdLate(c); });
+      } else {
+        fCmds = fCmds.filter(function(c){ return c.status === _fournStatusFilter; });
       }
-      c.lignes[i].qteRecue=newQte;
-      c.status=calcCmdStatus(c);
-      auditLog('edit','commandeFourn',c.id,{qteRecue:old},{qteRecue:newQte});
-      saveDB(); refreshOrderCard(c); updateAlertBadge();
-      if(diff>0) notify(`+${diff} réceptionné pour "${c.lignes[i].articleName}"`, 'success');
-    };
-  });
-  document.querySelectorAll(`.inline-prix[data-cmdid="${c.id}"]`).forEach(inp=>{
-    inp.onchange = () => {
-      const i=parseInt(inp.dataset.idx);
-      c.lignes[i].prixUnitaire=parseFloat(inp.value)||0;
-      saveDB();
-    };
-  });
+    }
+    if (!fCmds.length) {
+      container.innerHTML = '<div class="empty-state" style="padding:16px"><p>Aucune commande' + (_fournStatusFilter !== 'all' ? ' avec ce filtre' : '') + '</p></div>';
+      return;
+    }
+    container.innerHTML = fCmds.map(function(c) { return renderOrderCard(c); }).join('');
+  }
 }
 
-function refreshOrderCard(c) {
-  const card=document.getElementById('order-card-'+c.id);
-  if(!card) return;
-  card.outerHTML=renderOrderCard(c);
-  attachOrderInlineEditors(c);
+// ── Carte commande détaillée ────────────────────────────────
+
+function renderOrderCard(c) {
+  var pct = calcCmdPct(c);
+  var late = isCmdLate(c);
+  var total = calcCmdTotal(c);
+
+  var lignesHtml = (c.lignes||[]).map(function(l, i) {
+    var restant = Math.max(0, (l.qteCommandee||0) - (l.qteRecue||0));
+    var lineTotal = (l.qteCommandee||0) * (l.prixUnitaire||0);
+    var receptions = l.receptions || [];
+
+    // Timeline des réceptions
+    var timelineHtml = '';
+    if (receptions.length > 0) {
+      timelineHtml = '<tr><td colspan="6" style="padding:4px 8px 8px"><div style="background:var(--bg-3);border-radius:6px;padding:8px 10px">'
+        + '<div style="font-size:10px;font-weight:700;color:var(--accent);margin-bottom:4px">\ud83d\udce6 Historique des r\u00e9ceptions</div>'
+        + receptions.map(function(r) {
+          return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;border-bottom:1px solid var(--border)">'
+            + '<span style="color:var(--text-2)">' + fmtDate(r.date) + '</span>'
+            + '<span style="font-weight:600;color:var(--success)">+' + r.qty + ' u.</span>'
+            + (r.note ? '<span style="color:var(--text-3);font-style:italic">' + r.note + '</span>' : '<span></span>')
+            + '</div>';
+        }).join('')
+        + '</div></td></tr>';
+    }
+
+    return '<tr>'
+      + '<td style="font-weight:500">' + l.articleName + '</td>'
+      + '<td style="text-align:center;font-weight:600">' + (l.qteCommandee||0) + '</td>'
+      + '<td style="text-align:center;font-weight:600;color:var(--success)">' + (l.qteRecue||0) + '</td>'
+      + '<td style="text-align:center;font-weight:700;color:' + (restant > 0 ? 'var(--warning)' : 'var(--success)') + '">' + restant + '</td>'
+      + '<td style="text-align:right;font-size:12px;color:var(--text-2)">' + fmtCurrency(lineTotal) + '</td>'
+      + '<td style="text-align:center;font-size:11px">' + (restant === 0 ? '<span style="color:var(--success)">\u2713</span>' : '<span style="color:var(--warning)">\u23f3</span>') + '</td>'
+      + '</tr>' + timelineHtml;
+  }).join('');
+
+  return '<div class="order-card" id="order-card-' + c.id + '" style="' + (late ? 'border-left:3px solid var(--danger)' : '') + '">'
+    + '<div class="order-card-header">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">'
+    + '<span class="order-num" style="font-weight:700">' + c.numero + '</span>'
+    + '<span class="order-status-badge ' + getCmdStatusClass(c.status) + '">' + getCmdStatusLabel(c.status) + '</span>'
+    + (late ? '<span class="badge" style="background:var(--danger);color:#fff;font-size:10px">\u26a0 En retard</span>' : '')
+    + (c.dateLivraisonPrevue ? '<span style="font-size:11px;color:var(--text-2)">\ud83d\udcc5 ' + fmtDate(c.dateLivraisonPrevue) + '</span>' : '')
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+    + '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openReceptionModal(\'' + c.id + '\')">\ud83d\udce5 R\u00e9ceptionner</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();openEditCmdModal(\'' + c.id + '\')">\u270f Modifier</button>'
+    + '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCmd(\'' + c.id + '\')">\ud83d\uddd1</button>'
+    + '</div></div>'
+    + '<div class="order-progress-wrap">'
+    + '<div class="order-progress-track"><div class="order-progress-fill" style="width:' + pct + '%;background:' + getCmdProgressColor(pct) + '"></div></div>'
+    + '<div class="order-progress-labels">'
+    + '<span>Command\u00e9: ' + (c.lignes||[]).reduce(function(s,l){return s+(l.qteCommandee||0);},0) + ' u.</span>'
+    + '<span style="font-weight:600;color:var(--success)">Re\u00e7u: ' + (c.lignes||[]).reduce(function(s,l){return s+(l.qteRecue||0);},0) + ' u.</span>'
+    + '<span style="color:var(--warning);font-weight:600">Restant: ' + (c.lignes||[]).reduce(function(s,l){return s+Math.max(0,(l.qteCommandee||0)-(l.qteRecue||0));},0) + ' u.</span>'
+    + '<span>' + pct + '%</span>'
+    + '</div></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;padding:0 2px;font-size:12px">'
+    + '<span style="color:var(--text-2)">Date: ' + fmtDate(c.dateCommande) + '</span>'
+    + '<span style="font-weight:700;color:var(--accent2)">Total: ' + fmtCurrency(total) + '</span>'
+    + '</div>'
+    + '<table class="order-lignes-table" style="table-layout:fixed">'
+    + '<thead><tr><th>Article</th><th style="width:80px;text-align:center">Command\u00e9</th><th style="width:70px;text-align:center">Re\u00e7u</th><th style="width:70px;text-align:center">Restant</th><th style="width:90px;text-align:right">Montant</th><th style="width:50px;text-align:center">Statut</th></tr></thead>'
+    + '<tbody>' + lignesHtml + '</tbody>'
+    + '</table>'
+    + (c.note ? '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">\ud83d\udcdd ' + c.note + '</div>' : '')
+    + '</div>';
 }
 
-function openNewCmdModal(prefFournId, preselectedArts) {
-  const fOptions=APP.fournisseurs.map(f=>`<option value="${f.id}" ${f.id===prefFournId?'selected':''}>${f.nom}${f.entreprise&&f.entreprise!==f.nom?' ('+f.entreprise+')':''}</option>`).join('');
-  if(!APP.fournisseurs.length){notify('Ajoutez d\'abord un fournisseur','warning');return;}
-  // Store artOptions globally for addCmdLigne
-  window._artOptionsForCmd = [...APP.articles].sort((x,y)=>x.name.localeCompare(y.name,'fr')).map(a=>`<option value="${a.id}">${a.code&&a.code!=='—'?a.code+' — ':''}${a.name}${a.stock!==undefined?' (Stock: '+a.stock+')':''}</option>`).join('');
-  const initialLines = (preselectedArts||[{artId:'',name:''}]).map(p=>`
-    <div class="nc-ligne">
-      <select class="nc-art">${window._artOptionsForCmd.replace(`value="${p.artId}"`,`value="${p.artId}" selected`)}</select>
-      <input class="nc-qty" type="number" value="1" min="1" placeholder="Qté" title="Quantité">
-      <input class="nc-prix" type="number" value="0" min="0" placeholder="Prix" title="Prix unitaire">
-      <button class="btn btn-sm btn-danger" onclick="this.closest('.nc-ligne').remove()" title="Supprimer">✕</button>
-    </div>`).join('');
-  const body=`
-  <div class="form-row">
-    <div class="form-group"><label>Fournisseur *</label><select id="nc-fourn">${fOptions}</select></div>
-    <div class="form-group"><label>N° Commande</label><input id="nc-num" value="${cmdOrderNum()}"></div>
-  </div>
-  <div class="form-row">
-    <div class="form-group"><label>Date commande</label><input type="date" id="nc-date" value="${new Date().toISOString().split('T')[0]}"></div>
-    <div class="form-group"><label>Livraison prévue</label><input type="date" id="nc-dliv"></div>
-  </div>
-  <div class="form-group">
-    <label>Gadgets commandés (vous pouvez en ajouter plusieurs)</label>
-    <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Colonnes: Article · Quantité · Prix unitaire</div>
-    <div id="nc-lignes">${initialLines}</div>
-    <button class="add-ligne-btn" onclick="addCmdLigne()">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-      Ajouter un article
-    </button>
-  </div>
-  <div class="form-group"><label>Note</label><textarea id="nc-note" style="min-height:60px"></textarea></div>`;
-  openModal('new-cmd','Nouvelle commande fournisseur',body,()=>{
-    const fournId=document.getElementById('nc-fourn').value;
-    const fourn=APP.fournisseurs.find(f=>f.id===fournId);
-    const lignes=[];
-    document.querySelectorAll('#nc-lignes .nc-ligne').forEach(row=>{
-      const artId=row.querySelector('.nc-art')?.value;
-      const qty=parseInt(row.querySelector('.nc-qty')?.value)||1;
-      const prix=parseFloat(row.querySelector('.nc-prix')?.value)||0;
-      const art=APP.articles.find(a=>a.id===artId);
-      if(art) lignes.push({articleId:art.id,articleName:art.name,qteCommandee:qty,qteRecue:0,prixUnitaire:prix});
-    });
-    if(!lignes.length){notify('Ajoutez au moins un gadget','danger');return;}
-    const dateVal=document.getElementById('nc-date').value;
-    const dlivVal=document.getElementById('nc-dliv').value;
-    const cmd={id:generateId(),numero:document.getElementById('nc-num').value||cmdOrderNum(),fournisseurId:fournId,fournisseurNom:fourn?.nom||'',lignes,status:'pending',note:document.getElementById('nc-note').value,dateCommande:dateVal?new Date(dateVal).getTime():Date.now(),dateLivraisonPrevue:dlivVal?new Date(dlivVal).getTime():null,createdAt:Date.now()};
-    if(!APP.commandesFourn) APP.commandesFourn=[];
-    APP.commandesFourn.push(cmd);
-    auditLog('create','commandeFourn',cmd.id,null,cmd);
-    saveDB();closeModal();renderFournDashboard();updateAlertBadge();
-    notify(`Commande créée avec ${lignes.length} gadget(s) ✓`,'success');
-  },'modal-lg');
-}
-
-function addCmdLigne() {
-  // Uses global _artOptionsForCmd set in openNewCmdModal
-  const opts = window._artOptionsForCmd || APP.articles.map(a=>`<option value="${a.id}">${a.name}</option>`).join('');
-  const div=document.createElement('div');
-  div.className='nc-ligne';
-  div.innerHTML=`<select class="nc-art">${opts}</select><input class="nc-qty" type="number" value="1" min="1" placeholder="Qté" title="Quantité"><input class="nc-prix" type="number" value="0" min="0" placeholder="Prix" title="Prix unitaire"><button class="btn btn-sm btn-danger" onclick="this.closest('.nc-ligne').remove()" title="Supprimer">✕</button>`;
-  const container=document.getElementById('nc-lignes');
-  if(container) container.appendChild(div);
-}
+// ── Modal réception (refonte) ───────────────────────────────
 
 function openReceptionModal(cmdId) {
-  const c=(APP.commandesFourn||[]).find(x=>x.id===cmdId); if(!c) return;
-  const pct=calcCmdPct(c);
-  const body=`
-  <div style="margin-bottom:16px">
-    <div style="font-size:13px;font-weight:600;margin-bottom:4px">${c.numero} — ${c.fournisseurNom}</div><div style="font-size:11px;color:var(--accent);margin-bottom:4px">${(APP.fournisseurs.find(f=>f.id===c.fournisseurId)||{}).entreprise||''}</div>
-    <div style="height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden;margin:8px 0"><div style="height:100%;width:${pct}%;background:${getCmdProgressColor(pct)};border-radius:3px"></div></div>
-    <div style="font-size:11px;color:var(--text-2)">${pct}% reçu actuellement</div>
-  </div>
-  <div id="rec-lignes">
-    ${(c.lignes||[]).map((l,i)=>`
-    <div style="background:var(--bg-2);border-radius:var(--radius);padding:12px;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px">${l.articleName}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:12px">
-        <div><label style="font-size:10px">Commandé</label><input type="number" value="${l.qteCommandee}" disabled style="opacity:.6"></div>
-        <div><label style="font-size:10px">Déjà reçu</label><input type="number" value="${l.qteRecue||0}" disabled style="opacity:.6"></div>
-        <div><label style="font-size:10px">Total reçu maintenant ✏️</label><input class="rec-qty" type="number" value="${l.qteRecue||0}" min="0" max="${l.qteCommandee}" data-idx="${i}" data-max="${l.qteCommandee}"></div>
-      </div>
-    </div>`).join('')}
-  </div>
-  <div style="font-size:11px;color:var(--text-2);margin-top:8px">⚡ Entrez le total reçu. La différence sera ajoutée au stock automatiquement.</div>`;
-  openModal('reception',`Réceptionner — ${c.numero}`,body,()=>{
-    let anyChange=false;
-    document.querySelectorAll('.rec-qty').forEach(inp=>{
-      const idx=parseInt(inp.dataset.idx);
-      const newQte=Math.min(parseInt(inp.value)||0,parseInt(inp.dataset.max)||0);
-      const ligne=c.lignes[idx];
-      const diff=newQte-(ligne.qteRecue||0);
-      if(diff>0){
-        const art=APP.articles.find(a=>a.id===ligne.articleId);
-        if(art){art.stock+=diff;APP.mouvements.push({id:generateId(),type:'entree',articleId:art.id,articleName:art.name,qty:diff,ts:Date.now(),fournisseurId:c.fournisseurId,note:`Réception ${c.numero}`});}
-        anyChange=true;
-      }
-      ligne.qteRecue=newQte;
-    });
-    c.status=calcCmdStatus(c);
-    auditLog('edit','commandeFourn',c.id,null,{status:c.status});
-    saveDB();closeModal();renderFournDashboard();updateAlertBadge();
-    notify(anyChange?'Réception enregistrée, stock mis à jour ✓':'Aucun changement','success');
-  });
-}
+  var c = (APP.commandesFourn||[]).find(function(x){ return x.id === cmdId; });
+  if (!c) return;
+  var pct = calcCmdPct(c);
 
-function openFragLivModal(cmdId) {
-  const cmd = (APP.commandesFourn||[]).find(c=>c.id===cmdId); if(!cmd) return;
-  // Per-article delivery planner
-  const rows = (cmd.articles||cmd.lignes||[]).map((a,i) => {
-    const art = APP.articles.find(x=>x.id===a.articleId);
-    const dDate = a.deliveryDate || cmd.dateLivraison || '';
-    const dStatus = a.deliveryStatus || 'en_attente';
-    const dQteRecue = a.qteRecue || 0;
-    return '<tr><td style="font-weight:600">'+(art?art.name:a.name||'Article')+'</td><td style="text-align:center">'+a.qty+'</td><td style="text-align:center"><input type="number" class="frag-qte-recue" data-idx="'+i+'" value="'+dQteRecue+'" min="0" max="'+a.qty+'" style="width:70px;text-align:center"></td><td><input type="date" class="frag-date" data-idx="'+i+'" value="'+dDate+'" style="width:100%"></td><td><select class="frag-status" data-idx="'+i+'"><option value="en_attente" '+(dStatus==='en_attente'?'selected':'')+'>En attente</option><option value="en_cours" '+(dStatus==='en_cours'?'selected':'')+'>En cours</option><option value="livre" '+(dStatus==='livre'?'selected':'')+'>Livré</option><option value="annule" '+(dStatus==='annule'?'selected':'')+'>Annulé</option></select></td></tr>';
+  var lignesHtml = (c.lignes||[]).map(function(l, i) {
+    var restant = Math.max(0, (l.qteCommandee||0) - (l.qteRecue||0));
+    return '<div style="background:var(--bg-2);border-radius:var(--radius);padding:12px;margin-bottom:8px">'
+      + '<div style="font-size:13px;font-weight:600;margin-bottom:8px">' + l.articleName + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;font-size:12px">'
+      + '<div><label style="font-size:10px;color:var(--text-3)">QTE Command\u00e9</label><div style="font-weight:700;font-size:14px;padding:6px 0">' + (l.qteCommandee||0) + '</div></div>'
+      + '<div><label style="font-size:10px;color:var(--success)">QTE Re\u00e7u</label><div style="font-weight:700;font-size:14px;padding:6px 0;color:var(--success)">' + (l.qteRecue||0) + '</div></div>'
+      + '<div><label style="font-size:10px;color:var(--warning)">QTE Restant</label><div style="font-weight:700;font-size:14px;padding:6px 0;color:var(--warning)">' + restant + '</div></div>'
+      + '<div><label style="font-size:10px;color:var(--accent)">\u00c0 enregistrer \u270f</label><input class="rec-qty-new" type="number" value="0" min="0" max="' + restant + '" data-idx="' + i + '" data-max="' + restant + '" style="font-weight:700;font-size:14px;text-align:center;width:100%;padding:4px"></div>'
+      + '</div>'
+      + '<div style="margin-top:6px"><label style="font-size:10px;color:var(--text-3)">Note (optionnel)</label><input class="rec-note" data-idx="' + i + '" placeholder="Ex: Palette endommag\u00e9e, lot #123..." style="width:100%;font-size:11px;padding:4px 8px;box-sizing:border-box"></div>'
+      + '</div>';
   }).join('');
-  openModal('frag-liv','Planification livraison par article',`
-    <div style="font-size:12px;color:var(--text-2);margin-bottom:8px">Commande: <strong>${cmd.ref||'CMD-'+cmd.id.slice(0,6)}</strong></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Article</th><th style="text-align:center">${t('qty_ordered')}</th><th style="text-align:center">${t('qty_received')}</th><th>${t('delivery_date')}</th><th>${t('delivery_status')}</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-  `, () => saveFragLiv(cmdId), 'modal-lg');
-}
-function saveFragLiv(cmdId) {
-  const cmd = (APP.commandesFourn||[]).find(c=>c.id===cmdId); if(!cmd) return;
-  const arts = cmd.articles||cmd.lignes||[];
-  document.querySelectorAll('.frag-qte-recue').forEach(el => {
-    const i = parseInt(el.dataset.idx);
-    if(arts[i]) arts[i].qteRecue = parseInt(el.value) || 0;
-  });
-  document.querySelectorAll('.frag-date').forEach(el => {
-    const i = parseInt(el.dataset.idx);
-    if(arts[i]) arts[i].deliveryDate = el.value;
-  });
-  document.querySelectorAll('.frag-status').forEach(el => {
-    const i = parseInt(el.dataset.idx);
-    if(arts[i]) arts[i].deliveryStatus = el.value;
-  });
-  saveDB(); closeModal();
-  notify('Livraisons planifiées ✓','success');
-  renderFournDashboard();
-}
-function _ORIGINAL_openFragLivModal(cmdId) {
-  const c=(APP.commandesFourn||[]).find(x=>x.id===cmdId); if(!c) return;
-  if(!c.livraisonsFragmentees) c.livraisonsFragmentees=[];
-  const totalRestant=(c.lignes||[]).reduce((s,l)=>s+Math.max(0,(l.qteCommandee||0)-(l.qteRecue||0)),0);
-  const existingRows=c.livraisonsFragmentees.map((lf,i)=>`
-    <div style="display:grid;grid-template-columns:1fr 80px 1fr auto;gap:8px;margin-bottom:6px;align-items:center">
-      <input type="date" class="frag-date" data-idx="${i}" value="${lf.date?new Date(lf.date).toISOString().split('T')[0]:''}">
-      <input type="number" class="frag-qty" data-idx="${i}" value="${lf.qty}" min="1" placeholder="Qté">
-      <input class="frag-note" data-idx="${i}" value="${lf.note||''}" placeholder="Note">
-      <button class="btn btn-sm btn-danger" onclick="this.closest('[style]').remove()">✕</button>
-    </div>`).join('');
-  const body=`
-    <div style="margin-bottom:12px;font-size:13px;color:var(--text-1)">Commande: <strong>${c.numero}</strong> — Restant à recevoir: <strong style="color:var(--warning)">${totalRestant} unités</strong></div>
-    <div id="frag-list">${existingRows}</div>
-    <button class="btn btn-secondary btn-sm" onclick="addFragRow()" style="margin-top:4px">+ Ajouter livraison</button>
-    <div style="font-size:11px;color:var(--text-2);margin-top:8px">💡 Planifiez les livraisons partielles avec dates et quantités</div>`;
-  openModal('frag-liv','📅 Planifier livraisons fragmentées — '+c.numero,body,()=>{
-    c.livraisonsFragmentees=[];
-    document.querySelectorAll('#frag-list > div').forEach(row=>{
-      const dateVal=row.querySelector('.frag-date')?.value;
-      const qty=parseInt(row.querySelector('.frag-qty')?.value)||0;
-      const note=row.querySelector('.frag-note')?.value||'';
-      if(dateVal&&qty>0) c.livraisonsFragmentees.push({date:new Date(dateVal).getTime(),qty,note});
+
+  var body = '<div style="margin-bottom:16px">'
+    + '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + c.numero + ' \u2014 ' + c.fournisseurNom + '</div>'
+    + '<div style="height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden;margin:8px 0"><div style="height:100%;width:' + pct + '%;background:' + getCmdProgressColor(pct) + ';border-radius:3px"></div></div>'
+    + '<div style="font-size:11px;color:var(--text-2)">' + pct + '% re\u00e7u actuellement</div>'
+    + '</div>'
+    + '<div class="form-group" style="margin-bottom:12px"><label style="font-size:11px">Date de r\u00e9ception</label><input type="date" id="rec-date" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+    + '<div id="rec-lignes">' + lignesHtml + '</div>'
+    + '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:8px 10px;border-radius:6px">\u26a1 Entrez la quantit\u00e9 re\u00e7ue <strong>aujourd\'hui</strong> pour chaque article. Elle sera ajout\u00e9e au stock et \u00e0 l\'historique.</div>';
+
+  openModal('reception', '\ud83d\udce5 R\u00e9ceptionner \u2014 ' + c.numero, body, function() {
+    var recDate = document.getElementById('rec-date');
+    var dateTs = recDate && recDate.value ? new Date(recDate.value).getTime() : Date.now();
+    var anyChange = false;
+
+    document.querySelectorAll('.rec-qty-new').forEach(function(inp) {
+      var idx = parseInt(inp.dataset.idx);
+      var qtyToAdd = Math.min(Math.max(0, parseInt(inp.value) || 0), parseInt(inp.dataset.max) || 0);
+      if (qtyToAdd <= 0) return;
+
+      var ligne = c.lignes[idx];
+      var noteEl = document.querySelector('.rec-note[data-idx="' + idx + '"]');
+      var note = noteEl ? noteEl.value.trim() : '';
+
+      // Add to reception history
+      if (!ligne.receptions) ligne.receptions = [];
+      ligne.receptions.push({ date: dateTs, qty: qtyToAdd, note: note, by: (typeof _currentUser === 'function' && _currentUser()) ? _currentUser().name : '' });
+
+      // Update stock
+      var art = APP.articles.find(function(a){ return a.id === ligne.articleId; });
+      if (art) {
+        art.stock += qtyToAdd;
+        APP.mouvements.push({ id: generateId(), type: 'entree', articleId: art.id, articleName: art.name, qty: qtyToAdd, ts: dateTs, fournisseurId: c.fournisseurId, note: 'R\u00e9ception ' + c.numero + (note ? ' - ' + note : '') });
+      }
+
+      ligne.qteRecue = (ligne.qteRecue || 0) + qtyToAdd;
+      anyChange = true;
     });
-    c.livraisonsFragmentees.sort((a,b)=>a.date-b.date);
-    saveDB(); closeModal(); renderFournDashboard();
-    notify('Plan de livraison enregistré ✓','success');
-  },'modal-lg');
+
+    c.status = calcCmdStatus(c);
+    auditLog('edit', 'commandeFourn', c.id, null, { status: c.status });
+    saveDB(); closeModal();
+    // Re-render the fournisseur orders
+    var container = document.getElementById('forders-' + c.fournisseurId);
+    if (container && container.style.display === 'block') {
+      var fCmds = (APP.commandesFourn||[]).filter(function(x){ return x.fournisseurId === c.fournisseurId; }).sort(function(a,b){ return b.createdAt - a.createdAt; });
+      container.innerHTML = fCmds.map(function(x){ return renderOrderCard(x); }).join('');
+    }
+    updateAlertBadge();
+    notify(anyChange ? 'R\u00e9ception enregistr\u00e9e, stock mis \u00e0 jour \u2713' : 'Aucun changement', anyChange ? 'success' : 'info');
+  }, 'modal-lg');
 }
 
-function addFragRow() {
-  const div=document.createElement('div');
-  div.style.cssText='display:grid;grid-template-columns:1fr 80px 1fr auto;gap:8px;margin-bottom:6px;align-items:center';
-  div.innerHTML=`<input type="date" class="frag-date"><input type="number" class="frag-qty" min="1" placeholder="Qté"><input class="frag-note" placeholder="Note"><button class="btn btn-sm btn-danger" onclick="this.closest('[style]').remove()">✕</button>`;
-  document.getElementById('frag-list')?.appendChild(div);
-}
+// ── Modal édition complète ──────────────────────────────────
 
 function openEditCmdModal(cmdId) {
-  const c=(APP.commandesFourn||[]).find(x=>x.id===cmdId); if(!c) return;
-  const body=`
-  <div class="form-row">
-    <div class="form-group"><label>N° Commande</label><input id="ec-num" value="${c.numero}"></div>
-    <div class="form-group"><label>Statut</label><select id="ec-status"><option value="pending" ${c.status==='pending'?'selected':''}>En attente</option><option value="partial" ${c.status==='partial'?'selected':''}>Partielle</option><option value="complete" ${c.status==='complete'?'selected':''}>Complète</option><option value="cancelled" ${c.status==='cancelled'?'selected':''}>Annulée</option></select></div>
-  </div>
-  <div class="form-row">
-    <div class="form-group"><label>Date commande</label><input id="ec-date" type="date" value="${new Date(c.dateCommande).toISOString().split('T')[0]}"></div>
-    <div class="form-group"><label>Livraison prévue</label><input id="ec-dliv" type="date" value="${c.dateLivraisonPrevue?new Date(c.dateLivraisonPrevue).toISOString().split('T')[0]:''}"></div>
-  </div>
-  <div id="ec-lignes">${(c.lignes||[]).map((l,i)=>`
-    <div style="background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
-      <div style="display:grid;grid-template-columns:2.5fr 1fr 1fr 1fr;gap:10px;align-items:end">
-        <div><label style="font-size:10px">Article</label><input value="${l.articleName}" disabled style="opacity:.7"></div>
-        <div><label style="font-size:10px">Qté commandée</label><input class="ec-qteCmd" type="number" value="${l.qteCommandee}" data-idx="${i}" min="1"></div>
-        <div><label style="font-size:10px">Qté reçue</label><input class="ec-qteRecu" type="number" value="${l.qteRecue||0}" data-idx="${i}" min="0"></div>
-        <div><label style="font-size:10px">Prix unit.</label><input class="ec-prix" type="number" value="${l.prixUnitaire||0}" data-idx="${i}" min="0"></div>
-      </div>
-    </div>`).join('')}</div>
-  <div class="form-group"><label>Note</label><textarea id="ec-note" style="min-height:60px">${c.note||''}</textarea></div>`;
-  openModal('edit-cmd',`Modifier — ${c.numero}`,body,()=>{
-    const old={...c};
-    c.numero=document.getElementById('ec-num').value||c.numero;
-    c.status=document.getElementById('ec-status').value;
-    const dateVal=document.getElementById('ec-date').value; if(dateVal) c.dateCommande=new Date(dateVal).getTime();
-    const dlivVal=document.getElementById('ec-dliv').value; c.dateLivraisonPrevue=dlivVal?new Date(dlivVal).getTime():null;
-    c.note=document.getElementById('ec-note').value;
-    document.querySelectorAll('.ec-qteCmd').forEach(inp=>{const i=parseInt(inp.dataset.idx);c.lignes[i].qteCommandee=parseInt(inp.value)||c.lignes[i].qteCommandee;});
-    document.querySelectorAll('.ec-qteRecu').forEach(inp=>{const i=parseInt(inp.dataset.idx);c.lignes[i].qteRecue=Math.min(parseInt(inp.value)||0,c.lignes[i].qteCommandee);});
-    document.querySelectorAll('.ec-prix').forEach(inp=>{const i=parseInt(inp.dataset.idx);c.lignes[i].prixUnitaire=parseFloat(inp.value)||0;});
-    auditLog('edit','commandeFourn',c.id,old,c);
-    saveDB();closeModal();renderFournDashboard();updateAlertBadge();
-    notify('Commande modifiée','success');
-  },'modal-lg');
+  var c = (APP.commandesFourn||[]).find(function(x){ return x.id === cmdId; });
+  if (!c) return;
+
+  var lignesHtml = (c.lignes||[]).map(function(l, i) {
+    return '<div class="ec-ligne-row" data-idx="' + i + '" style="background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">'
+      + '<div style="display:grid;grid-template-columns:2.5fr 1fr 1fr 1fr auto;gap:8px;align-items:end">'
+      + '<div><label style="font-size:10px">Article</label><input value="' + l.articleName + '" disabled style="opacity:.7"></div>'
+      + '<div><label style="font-size:10px">Qt\u00e9 command\u00e9e</label><input class="ec-qteCmd" type="number" value="' + (l.qteCommandee||0) + '" data-idx="' + i + '" min="1"></div>'
+      + '<div><label style="font-size:10px">Qt\u00e9 re\u00e7ue</label><div style="font-weight:700;padding:8px 0;color:var(--success)">' + (l.qteRecue||0) + '</div></div>'
+      + '<div><label style="font-size:10px">Prix unit.</label><input class="ec-prix" type="number" value="' + (l.prixUnitaire||0) + '" data-idx="' + i + '" min="0" step="0.01"></div>'
+      + '<button class="btn btn-sm btn-danger" onclick="this.closest(\'.ec-ligne-row\').remove()" style="margin-bottom:2px">\u2716</button>'
+      + '</div></div>';
+  }).join('');
+
+  // Article options for adding new lines
+  var artOpts = (APP.articles||[]).map(function(a) {
+    return '<option value="' + a.id + '">' + a.name + '</option>';
+  }).join('');
+
+  var body = '<div class="form-row">'
+    + '<div class="form-group"><label>N\u00b0 Commande</label><input id="ec-num" value="' + c.numero + '"></div>'
+    + '<div class="form-group"><label>Statut</label><select id="ec-status"><option value="pending" ' + (c.status==='pending'?'selected':'') + '>En attente</option><option value="partial" ' + (c.status==='partial'?'selected':'') + '>Partielle</option><option value="complete" ' + (c.status==='complete'?'selected':'') + '>Compl\u00e8te</option><option value="cancelled" ' + (c.status==='cancelled'?'selected':'') + '>Annul\u00e9e</option></select></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    + '<div class="form-group"><label>Date commande</label><input id="ec-date" type="date" value="' + new Date(c.dateCommande).toISOString().split('T')[0] + '"></div>'
+    + '<div class="form-group"><label>Livraison pr\u00e9vue</label><input id="ec-dliv" type="date" value="' + (c.dateLivraisonPrevue ? new Date(c.dateLivraisonPrevue).toISOString().split('T')[0] : '') + '"></div>'
+    + '</div>'
+    + '<div style="font-size:12px;font-weight:700;margin:12px 0 6px">Articles de la commande</div>'
+    + '<div id="ec-lignes">' + lignesHtml + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:end;margin:8px 0;background:var(--bg-3);padding:10px;border-radius:8px">'
+    + '<div style="flex:2"><label style="font-size:10px">Ajouter un article</label><select id="ec-new-art"><option value="">-- Choisir --</option>' + artOpts + '</select></div>'
+    + '<div style="flex:1"><label style="font-size:10px">Qt\u00e9</label><input id="ec-new-qty" type="number" value="1" min="1"></div>'
+    + '<div style="flex:1"><label style="font-size:10px">Prix unit.</label><input id="ec-new-prix" type="number" value="0" min="0"></div>'
+    + '<button class="btn btn-sm btn-primary" onclick="_addEditCmdLine()">+ Ajouter</button>'
+    + '</div>'
+    + '<div class="form-group"><label>Note</label><textarea id="ec-note" style="min-height:60px">' + (c.note||'') + '</textarea></div>';
+
+  openModal('edit-cmd', '\u270f Modifier \u2014 ' + c.numero, body, function() {
+    c.numero = document.getElementById('ec-num').value || c.numero;
+    c.status = document.getElementById('ec-status').value;
+    var dateVal = document.getElementById('ec-date').value;
+    if (dateVal) c.dateCommande = new Date(dateVal).getTime();
+    var dlivVal = document.getElementById('ec-dliv').value;
+    c.dateLivraisonPrevue = dlivVal ? new Date(dlivVal).getTime() : null;
+    c.note = document.getElementById('ec-note').value;
+
+    // Update existing lines
+    document.querySelectorAll('.ec-qteCmd').forEach(function(inp) {
+      var i = parseInt(inp.dataset.idx);
+      if (c.lignes[i]) c.lignes[i].qteCommandee = parseInt(inp.value) || c.lignes[i].qteCommandee;
+    });
+    document.querySelectorAll('.ec-prix').forEach(function(inp) {
+      var i = parseInt(inp.dataset.idx);
+      if (c.lignes[i]) c.lignes[i].prixUnitaire = parseFloat(inp.value) || 0;
+    });
+
+    // Remove deleted lines (check which data-idx still exist in DOM)
+    var remaining = [];
+    document.querySelectorAll('.ec-ligne-row').forEach(function(row) {
+      var idx = parseInt(row.dataset.idx);
+      if (!isNaN(idx) && c.lignes[idx]) remaining.push(c.lignes[idx]);
+    });
+    // Also add any new lines
+    document.querySelectorAll('.ec-new-ligne-row').forEach(function(row) {
+      var artId = row.dataset.artid;
+      var artName = row.dataset.artname;
+      var qty = parseInt(row.querySelector('.ec-new-ligne-qty').value) || 1;
+      var prix = parseFloat(row.querySelector('.ec-new-ligne-prix').value) || 0;
+      remaining.push({ articleId: artId, articleName: artName, qteCommandee: qty, qteRecue: 0, prixUnitaire: prix, receptions: [] });
+    });
+    if (remaining.length > 0) c.lignes = remaining;
+
+    c.status = calcCmdStatus(c);
+    auditLog('edit', 'commandeFourn', c.id, null, c);
+    saveDB(); closeModal(); renderFournDashboard(); updateAlertBadge();
+    notify('Commande modifi\u00e9e', 'success');
+  }, 'modal-lg');
 }
 
-function deleteCmd(cmdId) {
-  if(!confirm('Supprimer cette commande ?')) return;
-  const idx=(APP.commandesFourn||[]).findIndex(c=>c.id===cmdId); if(idx<0) return;
-  auditLog('delete','commandeFourn',cmdId,APP.commandesFourn[idx],null);
-  APP.commandesFourn.splice(idx,1);
-  saveDB();renderFournDashboard();updateAlertBadge();
-  notify('Commande supprimée','success');
+function _addEditCmdLine() {
+  var sel = document.getElementById('ec-new-art');
+  var qty = document.getElementById('ec-new-qty');
+  var prix = document.getElementById('ec-new-prix');
+  if (!sel || !sel.value) { notify('Choisissez un article', 'warning'); return; }
+  var art = APP.articles.find(function(a){ return a.id === sel.value; });
+  if (!art) return;
+
+  var row = document.createElement('div');
+  row.className = 'ec-new-ligne-row';
+  row.dataset.artid = art.id;
+  row.dataset.artname = art.name;
+  row.style.cssText = 'background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--accent);border-style:dashed';
+  row.innerHTML = '<div style="display:grid;grid-template-columns:2.5fr 1fr 1fr auto;gap:8px;align-items:end">'
+    + '<div><label style="font-size:10px;color:var(--accent)">Nouvel article</label><input value="' + art.name + '" disabled style="color:var(--accent)"></div>'
+    + '<div><label style="font-size:10px">Qt\u00e9</label><input class="ec-new-ligne-qty" type="number" value="' + (parseInt(qty.value)||1) + '" min="1"></div>'
+    + '<div><label style="font-size:10px">Prix unit.</label><input class="ec-new-ligne-prix" type="number" value="' + (parseFloat(prix.value)||0) + '" min="0"></div>'
+    + '<button class="btn btn-sm btn-danger" onclick="this.closest(\'.ec-new-ligne-row\').remove()" style="margin-bottom:2px">\u2716</button>'
+    + '</div>';
+  document.getElementById('ec-lignes').appendChild(row);
+  sel.value = '';
+  qty.value = '1';
+  prix.value = '0';
 }
+
+// ── Supprimer commande ──────────────────────────────────────
+
+function deleteCmd(cmdId) {
+  if (!confirm('Supprimer cette commande ?')) return;
+  var idx = (APP.commandesFourn||[]).findIndex(function(c){ return c.id === cmdId; });
+  if (idx < 0) return;
+  auditLog('delete', 'commandeFourn', cmdId, APP.commandesFourn[idx], null);
+  APP.commandesFourn.splice(idx, 1);
+  saveDB(); renderFournDashboard(); updateAlertBadge();
+  notify('Commande supprim\u00e9e', 'success');
+}
+
+// ── Refresh card ────────────────────────────────────────────
+
+function refreshOrderCard(c) {
+  var card = document.getElementById('order-card-' + c.id);
+  if (!card) return;
+  card.outerHTML = renderOrderCard(c);
+}
+
+// Legacy compat
+function attachOrderInlineEditors() {}
+function openFragLivModal() {}
+function saveFragLiv() {}
+function _ORIGINAL_openFragLivModal() {}
+function addFragRow() {}
+
 
 // ============================================================
 // ANALYTICS IA
