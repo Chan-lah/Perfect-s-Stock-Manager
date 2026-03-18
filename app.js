@@ -5946,7 +5946,13 @@ async function deleteUser(userId) {
     if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
   }
 
-  saveDB();
+  // Save locally + force immediate cloud save and WAIT for it
+  APP._ts = Date.now();
+  _invalidatePageCache();
+  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  if(typeof _doSaveToCloud === 'function') {
+    try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after delete:', e); }
+  }
   notify('Utilisateur supprim\u00e9', 'success');
   if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
   else { renderSettings(); }

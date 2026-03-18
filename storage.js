@@ -45,8 +45,11 @@ async function _saveToCloud() {
   _cloudSaveTimer = setTimeout(_doSaveToCloud, 5000);
 }
 
+var _cloudSaving = false;
+
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
+  _cloudSaving = true;
   try {
     // Track local save timestamp to prevent realtime echo
     _lastLocalSaveTs = APP._ts || Date.now();
@@ -71,6 +74,8 @@ async function _doSaveToCloud() {
     console.log('[PSM] Cloud save OK');
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
+  } finally {
+    _cloudSaving = false;
   }
 }
 
@@ -121,11 +126,13 @@ function startRealtimeSync() {
     // Skip the initial snapshot (we already loaded data)
     if (_firstSnapshot) { _firstSnapshot = false; return; }
     if (!snap.exists()) return;
+    // Skip if we're currently saving (prevents race conditions)
+    if (_cloudSaving) return;
     var cloudData = snap.val();
     if (!cloudData || !cloudData._ts) return;
 
-    // Skip if this is our own save echoing back (within 3 seconds)
-    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 3000) return;
+    // Skip if this is our own save echoing back (within 5 seconds)
+    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 5000) return;
 
     // Only update if cloud data is strictly newer
     if (cloudData._ts > (APP._ts || 0)) {
