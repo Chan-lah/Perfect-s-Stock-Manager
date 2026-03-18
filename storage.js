@@ -242,19 +242,33 @@ function _invalidatePageCache(pageId) { if(pageId) delete _pageCache[pageId]; el
 // ============================================================
 // PERSISTENCE
 // ============================================================
+var _cloudSavePending = null; // track pending cloud save promise
+
 function saveDB() {
   APP._ts = Date.now();
   _invalidatePageCache();
-  if(_dirHandle) saveToFile();
-  else {
-    // Fallback localStorage seulement si pas de fichier local
-    try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
-  }
-  // Cloud sync: immediate save (no debounce)
+  // ALWAYS save to localStorage as backup (instant, reliable)
+  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  // Also save to file if available
+  if (_dirHandle) { try { saveToFile(); } catch(e) {} }
+  // Cloud sync: immediate
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
-    _doSaveToCloud();
+    _cloudSavePending = _doSaveToCloud().then(function() {
+      _cloudSavePending = null;
+    }).catch(function(e) {
+      console.warn('[PSM] Cloud save failed:', e);
+      _cloudSavePending = null;
+    });
   }
 }
+
+// Block page unload if cloud save is pending
+window.addEventListener('beforeunload', function(e) {
+  if (_cloudSavePending) {
+    e.preventDefault();
+    e.returnValue = 'Sauvegarde en cours...';
+  }
+});
 function loadDB() {
   /* Migration legacy : appelée uniquement si le navigateur ne supporte pas showDirectoryPicker.
      Les données viennent désormais du fichier PSm Saves (Do Not Delete)/psm_data.json */

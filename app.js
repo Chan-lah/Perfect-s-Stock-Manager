@@ -458,16 +458,25 @@ async function initApp() {
   try {
     if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
 
-    // 1. Sign out any previous session — force fresh login every time
+    // 1. Load localStorage data first (instant backup)
+    try {
+      var lsData = localStorage.getItem('psm_pro_db');
+      if (lsData) {
+        var parsed = JSON.parse(lsData);
+        if (parsed && typeof parsed === 'object') {
+          Object.assign(APP, parsed);
+          console.log('[PSM] localStorage loaded (_ts=' + (APP._ts||0) + ')');
+        }
+      }
+    } catch(e) { console.warn('[PSM] localStorage load:', e); }
+
+    // 2. Sign out any previous session — force fresh login every time
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
       try { await _firebaseAuth.signOut(); } catch(e) {}
     }
     sessionStorage.removeItem('psm_user');
 
     if (typeof _splashSetProgress === 'function') _splashSetProgress(60, 'Serveur pr\u00eat');
-
-    // 2. No cloud data loaded yet — user must login first
-    // _handleLogin in auth.js will load cloud data after successful auth
 
     if (typeof _splashSetProgress === 'function') _splashSetProgress(90, 'Pr\u00e9paration\u2026');
 

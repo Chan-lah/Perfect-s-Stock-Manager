@@ -241,9 +241,34 @@ async function _handleLogin(e) {
     sessionStorage.setItem('psm_user', localUser.id);
     if (typeof saveDB === 'function') saveDB();
 
-    // 5. Preserve local theme, then load cloud data
+    // 5. Preserve local theme + users, then load cloud data
     var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
+    var _savedUsers = APP.users ? APP.users.slice() : [];
+    var _localTs = APP._ts || 0;
+
     try { if (typeof _loadFromCloud === 'function') await _loadFromCloud(); } catch(ex) {}
+
+    // If localStorage has newer data than cloud, use localStorage for business data
+    if (_localTs > 0 && (!APP._ts || _localTs > APP._ts)) {
+      console.log('[PSM] localStorage is newer (' + _localTs + ' > ' + (APP._ts||0) + '), restoring local data');
+      try {
+        var lsData = localStorage.getItem('psm_pro_db');
+        if (lsData) {
+          var parsed = JSON.parse(lsData);
+          if (parsed && parsed._ts === _localTs) {
+            // Restore business data from localStorage
+            var keysToRestore = ['articles','bons','mouvements','commerciaux','zones','secteurs','pdv','commandesFourn','fournisseurs','dispatch','dispatchHistory'];
+            keysToRestore.forEach(function(k) { if (parsed[k] !== undefined) APP[k] = parsed[k]; });
+            APP._ts = parsed._ts;
+            // Push to cloud immediately
+            if (typeof _doSaveToCloud === 'function') _doSaveToCloud();
+          }
+        }
+      } catch(ex) { console.warn('[PSM] localStorage restore:', ex); }
+    }
+
+    // Restore users (not from cloud)
+    APP.users = _savedUsers;
     if (!APP.settings) APP.settings = {};
     APP.settings.theme = _savedTheme;
 
