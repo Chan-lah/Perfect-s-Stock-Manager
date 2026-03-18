@@ -480,19 +480,20 @@ async function initApp() {
     // 1. Always load local data first
     await initFileStorage();
 
-    // 2. Check if user has an existing Supabase session (page refresh)
-    if (typeof _supabase !== 'undefined' && _supabase && navigator.onLine) {
+    // 2. Check if user has an existing Firebase session (page refresh)
+    if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth && navigator.onLine) {
       try {
-        var session = await _checkSupabaseSession();
+        var session = await _checkSession();
         if (session) {
           _onlineMode = true;
-          _supabaseUser = session.user;
+          _cloudUser = session.user;
+          _supabaseUser = _cloudUser; // backward compat
           await _loadUserProfile();
           try { await _loadFromCloud(); } catch(ex) {}
 
-          // Auto-restore local session from Supabase user
+          // Auto-restore local session
           if (!APP.users) APP.users = [];
-          var localUser = APP.users.find(function(u) { return u.email === _supabaseUser.email; });
+          var localUser = APP.users.find(function(u) { return u.email === _cloudUser.email; });
           if (localUser) {
             sessionStorage.setItem('psm_user', localUser.id);
           }
@@ -5720,7 +5721,7 @@ function openUserModal(userId) {
       <div class="form-group"><label>Email</label><input id="um-email" value="${u?.email||''}" type="email"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Mot de passe ${userId ? '<span style="font-size:10px;color:var(--text-3)">(laisser vide = inchang\u00e9)</span>' : '<span style="font-size:10px;color:var(--danger)">* obligatoire</span>'}</label><input id="um-pass" type="text" placeholder="${userId ? 'Laisser vide = inchang\u00e9' : 'Min. 6 caract\u00e8res'}" value="" autocomplete="off">${userId && u ? '<div style="font-size:10px;color:var(--text-3);margin-top:2px">\u2705 Mot de passe d\u00e9j\u00e0 d\u00e9fini dans Supabase</div>' : ''}</div>
+      <div class="form-group"><label>Mot de passe ${userId ? '<span style="font-size:10px;color:var(--text-3)">(laisser vide = inchang\u00e9)</span>' : '<span style="font-size:10px;color:var(--danger)">* obligatoire</span>'}</label><input id="um-pass" type="text" placeholder="${userId ? 'Laisser vide = inchang\u00e9' : 'Min. 6 caract\u00e8res'}" value="" autocomplete="off">${userId && u ? '<div style="font-size:10px;color:var(--text-3);margin-top:2px">\u2705 Mot de passe d\u00e9j\u00e0 d\u00e9fini</div>' : ''}</div>
       <div class="form-group"><label>R\u00f4le</label><select id="um-role" onchange="_onRoleChange(this.value)">
         ${typeof ROLE_TEMPLATES!=='undefined' ? Object.keys(ROLE_TEMPLATES).map(function(k){ return '<option value="'+k+'" '+(u&&u.role===k?'selected':'')+'>'+ROLE_TEMPLATES[k].label+'</option>'; }).join('') : '<option value="user">Utilisateur</option><option value="admin">Administrateur</option>'}
       </select></div>
@@ -5890,14 +5891,14 @@ async function saveUserModal(userId) {
         u._version = (u._version||1) + 1;
       }
       // Update Supabase profile
-      if(typeof _adminUpdateProfile === 'function' && _supabase && _supabaseUser) {
+      if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
         try { await _adminUpdateProfile(email, name, role, permissions, true); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
     } else {
       // ── CREATE new user ──
       // 1. Create Supabase Auth account + profile
-      if(typeof _adminCreateSupabaseUser === 'function' && _supabase && _supabaseUser) {
-        notify('Cr\u00e9ation du compte Supabase...', 'info');
+      if(typeof _adminCreateSupabaseUser === 'function' && _firebaseAuth && _cloudUser) {
+        notify('Cr\u00e9ation du compte...', 'info');
         await _adminCreateSupabaseUser(email, pass, name, role, permissions);
       }
       // 2. Create local entry
@@ -5914,7 +5915,7 @@ async function saveUserModal(userId) {
     else { renderSettings(); }
   } catch(err) {
     var msg = err.message || String(err);
-    if(msg.includes('already registered')) msg = 'Cet email a d\u00e9j\u00e0 un compte Supabase';
+    if(msg.includes('EMAIL_EXISTS')) msg = 'Cet email a d\u00e9j\u00e0 un compte';
     notify('\u274c ' + msg, 'error');
   }
 }
@@ -5967,8 +5968,8 @@ function renderAdminPage() {
   if (!u || u.role !== 'admin') return '<div class="empty-state"><p>\u26d4 R\u00e9serv\u00e9 aux administrateurs</p></div>';
 
   var users = APP.users || [];
-  var onlineStatus = (typeof _supabaseUser !== 'undefined' && _supabaseUser)
-    ? '<span style="color:#22c55e">\u25cf En ligne</span> (' + _supabaseUser.email + ')'
+  var onlineStatus = (typeof _cloudUser !== 'undefined' && _cloudUser)
+    ? '<span style="color:#22c55e">\u25cf En ligne</span> (' + _cloudUser.email + ')'
     : '<span style="color:#f59e0b">\u25cf Mode hors ligne</span>';
 
   var userCards = users.map(function(uu) {
@@ -6031,7 +6032,7 @@ function renderAdminPage() {
 }
 
 function _initAdminPage() {
-  if (typeof _supabase !== 'undefined' && _supabase && typeof _supabaseUser !== 'undefined' && _supabaseUser && typeof _adminGetAllProfiles === 'function') {
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser && typeof _adminGetAllProfiles === 'function') {
     _adminGetAllProfiles().then(function(profiles) {
       if (profiles && profiles.length > 0) {
         profiles.forEach(function(p) { if (typeof _syncProfileToLocal === 'function') _syncProfileToLocal(p); });
@@ -6041,11 +6042,11 @@ function _initAdminPage() {
 }
 
 function _adminCreateSupabaseAccount() {
-  if (typeof _supabase === 'undefined' || !_supabase) {
-    notify('Connexion Supabase requise.', 'warning');
+  if (typeof _firebaseAuth === 'undefined' || !_firebaseAuth) {
+    notify('Connexion Firebase requise.', 'warning');
     return;
   }
-  if (typeof _supabaseUser === 'undefined' || !_supabaseUser) {
+  if (typeof _cloudUser === 'undefined' || !_cloudUser) {
     notify('Vous devez \u00eatre connect\u00e9 pour cr\u00e9er des comptes.', 'warning');
     return;
   }
@@ -6168,7 +6169,7 @@ function _showActivityLog() {
     { label: 'Fermer', cls: 'btn-secondary', onclick: 'closeModal()' }
   ]);
 
-  if (typeof _supabase !== 'undefined' && _supabase && typeof _supabaseUser !== 'undefined' && _supabaseUser && typeof _adminGetActivityLog === 'function') {
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser && typeof _adminGetActivityLog === 'function') {
     _adminGetActivityLog(100).then(function(cloudLogs) {
       if (cloudLogs && cloudLogs.length > 0) {
         var tbody = document.querySelector('#modal .modal-body tbody');

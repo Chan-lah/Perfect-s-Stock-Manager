@@ -5,7 +5,7 @@
 // ============================================================
 
 // ── Online / Offline Mode ──────────────────────────────────
-let _onlineMode = false; // false = local (current), true = cloud (Supabase future)
+let _onlineMode = false; // false = local, true = cloud (Firebase)
 let _isConnected = navigator.onLine;
 
 window.addEventListener('online',  function() { _isConnected = true;  _onOnlineStatusChange(); });
@@ -28,7 +28,7 @@ function setOnlineMode(enabled) {
     APP.settings._onlineMode = _onlineMode;
   }
   if (_onlineMode && _isConnected) {
-    // Future: sync with Supabase
+    // Sync with Firebase
     _saveToCloud();
   }
   if (typeof notify === 'function') {
@@ -36,7 +36,7 @@ function setOnlineMode(enabled) {
   }
 }
 
-// ── Cloud placeholders (Supabase) ───────────────────────
+// ── Cloud sync (Firebase Realtime Database) ─────────────
 var _cloudSaveTimer = null;
 
 async function _saveToCloud() {
@@ -46,7 +46,7 @@ async function _saveToCloud() {
 }
 
 async function _doSaveToCloud() {
-  if (!_supabase || !_supabaseUser) return;
+  if (!_firebaseDB || !_cloudUser) return;
   try {
     // Strip images for compact JSON
     var refs = (typeof _stripImages === 'function') ? _stripImages(APP) : null;
@@ -58,68 +58,49 @@ async function _doSaveToCloud() {
     // Extract images separately
     var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
 
-    var result = await _supabase
-      .from('app_data')
-      .upsert({
-        user_id: _supabaseUser.id,
-        data: dataObj,
-        images: imgs,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
+    // Save to Firebase Realtime Database (shared — all users see the same data)
+    await _firebaseDB.ref('app_data').set({
+      data: dataObj,
+      images: imgs,
+      updated_at: new Date().toISOString()
+    });
 
-    if (result.error) {
-      console.warn('[PSM] Cloud save error:', result.error.message);
-    } else {
-      console.log('[PSM] Cloud save OK');
-    }
+    console.log('[PSM] Cloud save OK');
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
   }
 }
 
 async function _loadFromCloud() {
-  if (!_supabase || !_supabaseUser) return null;
+  if (!_firebaseDB || !_cloudUser) return null;
   try {
-    var result = await _supabase
-      .from('app_data')
-      .select('data, images, updated_at')
-      .eq('user_id', _supabaseUser.id)
-      .single();
-
-    if (result.error) {
-      if (result.error.code === 'PGRST116') {
-        // No data yet for this user — first time
-        console.log('[PSM] No cloud data yet, will create on first save');
-        return null;
-      }
-      console.warn('[PSM] Cloud load error:', result.error.message);
+    var snap = await _firebaseDB.ref('app_data').once('value');
+    if (!snap.exists()) {
+      console.log('[PSM] No cloud data yet, will create on first save');
       return null;
     }
 
-    if (result.data && result.data.data) {
-      var cloudData = result.data.data;
-      var cloudImages = result.data.images || {};
+    var cloudEntry = snap.val();
+    var cloudData = cloudEntry.data || null;
+    var cloudImages = cloudEntry.images || {};
 
+    if (cloudData) {
       // Use cloud data if newer than local
       if (!APP._ts || (cloudData._ts && cloudData._ts >= APP._ts)) {
         Object.assign(APP, cloudData);
-        // Restore images from cloud
         if (typeof _restoreImages === 'function') {
           _restoreImages(APP, cloudImages);
         }
-        // Also update local images cache
-        Object.assign(_imagesCache, cloudImages);
-        _savedDataLoaded = true;
         console.log('[PSM] Cloud data loaded');
       } else {
         console.log('[PSM] Local data is newer, keeping local');
       }
-      return cloudData;
     }
+    return cloudData;
   } catch(e) {
     console.warn('[PSM] _loadFromCloud:', e);
+    return null;
   }
-  return null;
 }
 
 // ── Data Validation / Standardization ───────────────────
