@@ -67,6 +67,8 @@ async function _doSaveToCloud() {
       delete dataObj.settings._sidebarCollapsed;
       delete dataObj.settings.lastPage;
     }
+    // Don't save users to cloud — roles/permissions come from Firebase profiles
+    delete dataObj.users;
 
     // Extract images separately
     var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
@@ -731,3 +733,21 @@ window.addEventListener('beforeunload', function(e) {
     }
   };
 })();
+
+
+// ── Ctrl+S: Save to Firebase cloud ──────────────────────
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
+      APP._ts = Date.now();
+      _doSaveToCloud().then(function() {
+        if (typeof notify === 'function') notify('\u2601 Sauvegard\u00e9 dans le cloud', 'success');
+      }).catch(function(err) {
+        if (typeof notify === 'function') notify('\u274c Erreur de sauvegarde: ' + err.message, 'error');
+      });
+    } else {
+      if (typeof notify === 'function') notify('\u26a0 Non connect\u00e9 — impossible de sauvegarder', 'warning');
+    }
+  }
+});

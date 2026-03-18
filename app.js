@@ -5966,7 +5966,8 @@ function _getDefaultPerms(role) {
 
 function renderAdminPage() {
   var u = _currentUser();
-  if (!u || u.role !== 'admin') return '<div class="empty-state"><p>\u26d4 R\u00e9serv\u00e9 aux administrateurs</p></div>';
+  var role = (typeof _userProfile !== 'undefined' && _userProfile && _userProfile.role) || (u && u.role);
+  if (!u || role !== 'admin') return '<div class="empty-state"><p>\u26d4 R\u00e9serv\u00e9 aux administrateurs</p></div>';
 
   var users = APP.users || [];
   var onlineStatus = (typeof _cloudUser !== 'undefined' && _cloudUser)

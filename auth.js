@@ -76,8 +76,8 @@ function _syncProfileToLocal(profile) {
   var existing = APP.users.find(function(u) { return u.email === email; });
   if (existing) {
     existing.name = profile.display_name || existing.name;
-    existing.role = profile.role || existing.role;
-    if (profile.permissions) existing.permissions = profile.permissions;
+    existing.role = profile.role || 'viewer';  // Always use Firebase role
+    existing.permissions = profile.permissions || existing.permissions;
   } else {
     APP.users.push({
       id: 'u_' + Date.now(),
@@ -387,13 +387,13 @@ function _currentUser() {
 function hasPermission(pageId, action) {
   var u = _currentUser();
   if (!u) return false;
-  if (u.role === 'admin') return true;
-  if (_userProfile && _userProfile.permissions) {
-    var pp = _userProfile.permissions[pageId];
-    if (pp) return pp[action] === true;
-  }
-  if (!u.permissions) return false;
-  var perm = u.permissions[pageId];
+  // Firebase profile is the source of truth for role/permissions
+  var role = (_userProfile && _userProfile.role) || u.role;
+  if (role === 'admin') return true;
+  // Check Firebase profile permissions first
+  var perms = (_userProfile && _userProfile.permissions) || u.permissions;
+  if (!perms) return false;
+  var perm = perms[pageId];
   if (!perm) return false;
   return perm[action] === true;
 }
