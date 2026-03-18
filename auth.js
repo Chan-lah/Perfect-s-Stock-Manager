@@ -195,10 +195,24 @@ async function _handleLogin(e) {
     // 2. Load profile (role, permissions)
     await _loadUserProfile();
 
+    // 2b. Check if user is active
+    if (_userProfile && _userProfile.is_active === false) {
+      await _signOut();
+      throw new Error('Compte d\u00e9sactiv\u00e9. Contactez l\u2019administrateur.');
+    }
+
+    // 2c. Start real-time sync
+    if (typeof startRealtimeSync === 'function') startRealtimeSync();
+
     // 3. Sync local user
     if (!APP.users) APP.users = [];
     var localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
     if (!localUser) {
+      // If no profile in Firebase, user was not created by admin
+      if (!_userProfile) {
+        await _signOut();
+        throw new Error('Compte non autoris\u00e9. Demandez \u00e0 l\u2019administrateur de cr\u00e9er votre acc\u00e8s.');
+      }
       localUser = {
         id: 'u_' + Date.now(),
         name: (_userProfile && _userProfile.display_name) || email.split('@')[0],
@@ -379,6 +393,7 @@ function canEdit(pageId) { return hasPermission(pageId, 'edit'); }
 // ── Logout ─────────────────────────────────────────────────
 
 function logoutUser() {
+  if (typeof stopRealtimeSync === 'function') stopRealtimeSync();
   logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
   _cloudUser = null;

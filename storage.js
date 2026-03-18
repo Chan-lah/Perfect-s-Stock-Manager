@@ -103,6 +103,54 @@ async function _loadFromCloud() {
   }
 }
 
+// ── Real-time sync listener ──────────────────────────────
+var _realtimeListenerActive = false;
+
+function startRealtimeSync() {
+  if (!_firebaseDB || _realtimeListenerActive) return;
+  _realtimeListenerActive = true;
+
+  _firebaseDB.ref('app_data/data').on('value', function(snap) {
+    if (!snap.exists()) return;
+    var cloudData = snap.val();
+    if (!cloudData || !cloudData._ts) return;
+
+    // Only update if cloud data is newer than local
+    if (cloudData._ts > (APP._ts || 0)) {
+      // Don't overwrite if we just saved (prevent echo)
+      if (Math.abs(cloudData._ts - (APP._ts || 0)) < 2000) return;
+
+      console.log('[PSM] Real-time update received');
+      var currentUser = sessionStorage.getItem('psm_user');
+      Object.assign(APP, cloudData);
+
+      // Also load images
+      _firebaseDB.ref('app_data/images').once('value').then(function(imgSnap) {
+        if (imgSnap.exists()) {
+          var imgs = imgSnap.val();
+          if (typeof _restoreImages === 'function') _restoreImages(APP, imgs);
+        }
+        // Re-render current page
+        if (typeof showPage === 'function' && typeof currentPage !== 'undefined') {
+          showPage(currentPage);
+        }
+        if (typeof updateUserBadge === 'function') updateUserBadge();
+        if (typeof notify === 'function') notify('\u2601 Donn\u00e9es mises \u00e0 jour', 'info');
+      });
+    }
+  });
+
+  console.log('[PSM] Real-time sync active');
+}
+
+function stopRealtimeSync() {
+  if (!_firebaseDB || !_realtimeListenerActive) return;
+  _firebaseDB.ref('app_data/data').off('value');
+  _realtimeListenerActive = false;
+  console.log('[PSM] Real-time sync stopped');
+}
+
+
 // ── Data Validation / Standardization ───────────────────
 function validateAppStructure() {
   if (typeof APP === 'undefined') return;

@@ -497,6 +497,8 @@ async function initApp() {
           if (localUser) {
             sessionStorage.setItem('psm_user', localUser.id);
           }
+          // Start real-time sync
+          if (typeof startRealtimeSync === 'function') startRealtimeSync();
         }
       } catch(e) { console.warn('[PSM] session restore:', e); }
     }
@@ -5920,14 +5922,32 @@ async function saveUserModal(userId) {
   }
 }
 
-function deleteUser(userId) {
+async function deleteUser(userId) {
   if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
   if(!confirm('Supprimer cet utilisateur ?')) return;
+  var user = (APP.users||[]).find(u => u.id === userId);
+  var userEmail = user ? user.email : null;
   APP.users = (APP.users||[]).filter(u => u.id !== userId);
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
+
+  // Delete profile from Firebase
+  if(userEmail && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+    try {
+      var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
+      if(snap.exists()) {
+        var updates = {};
+        Object.keys(snap.val()).forEach(function(uid) { updates[uid] = null; });
+        await _firebaseDB.ref('profiles').update(updates);
+        console.log('[PSM] Firebase profile deleted:', userEmail);
+      }
+    } catch(e) { console.warn('[PSM] Firebase profile delete error:', e); }
+    if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
+  }
+
   saveDB();
   notify('Utilisateur supprim\u00e9', 'success');
-  renderSettings();
+  if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
+  else { renderSettings(); }
 }
 
 
