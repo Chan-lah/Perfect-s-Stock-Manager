@@ -485,10 +485,21 @@ async function initApp() {
           _onlineMode = true;
           _cloudUser = session.user;
           _supabaseUser = _cloudUser;
-          await _loadUserProfile();
+
+          // Preserve local theme preference before cloud overwrite
+          var _savedTheme = (APP.settings && APP.settings.theme) || localStorage.getItem('psm_theme') || 'dark';
+
+          // Load cloud data FIRST (sets APP.users etc.)
           try { await _loadFromCloud(); } catch(ex) {}
 
-          // Auto-restore local session
+          // Restore local theme (not synced)
+          if (!APP.settings) APP.settings = {};
+          APP.settings.theme = _savedTheme;
+
+          // THEN sync current user's profile (adds/updates in APP.users)
+          await _loadUserProfile();
+
+          // Restore local session
           if (!APP.users) APP.users = [];
           var localUser = APP.users.find(function(u) { return u.email === _cloudUser.email; });
           if (localUser) {
@@ -716,6 +727,7 @@ const THEME_META = {
 
 function applyTheme(t) {
   document.documentElement.dataset.theme = t || 'dark';
+  try { localStorage.setItem('psm_theme', t || 'dark'); } catch(e) {}
   if(t === 'picture') {
     const img = APP.settings.bgImage || '';
     document.body.style.setProperty('--bg-image', img ? 'url('+img+')' : 'none');

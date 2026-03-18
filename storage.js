@@ -61,6 +61,13 @@ async function _doSaveToCloud() {
 
     var dataObj = JSON.parse(dataStr);
 
+    // Remove session-local settings from cloud data
+    if (dataObj.settings) {
+      delete dataObj.settings.theme;
+      delete dataObj.settings._sidebarCollapsed;
+      delete dataObj.settings.lastPage;
+    }
+
     // Extract images separately
     var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
 
