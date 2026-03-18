@@ -107,8 +107,12 @@ async function _loadFromCloud() {
     var cloudImages = cloudEntry.images || {};
 
     if (cloudData) {
-      // Cloud is authoritative — always use cloud data
+      // Preserve current users before cloud overwrite (roles come from Firebase profiles)
+      var _savedUsers = APP.users ? APP.users.slice() : [];
+      // Cloud is authoritative for business data
       Object.assign(APP, cloudData);
+      // Restore users (not synced via cloud)
+      APP.users = _savedUsers;
       if (typeof _restoreImages === 'function') {
         _restoreImages(APP, cloudImages);
       }
@@ -145,7 +149,21 @@ function startRealtimeSync() {
     // Only update if cloud data is strictly newer
     if (cloudData._ts > (APP._ts || 0)) {
       console.log('[PSM] Real-time update received from another user');
+
+      // Preserve current user session & local settings before overwrite
+      var _savedUsers = APP.users ? APP.users.slice() : [];
+      var _savedTheme = APP.settings ? APP.settings.theme : 'dark';
+      var _savedSidebar = APP.settings ? APP.settings._sidebarCollapsed : false;
+      var _savedLastPage = APP.settings ? APP.settings.lastPage : 'dashboard';
+
       Object.assign(APP, cloudData);
+
+      // Restore local-only data (users come from Firebase profiles, not cloud)
+      APP.users = _savedUsers;
+      if (!APP.settings) APP.settings = {};
+      APP.settings.theme = _savedTheme;
+      APP.settings._sidebarCollapsed = _savedSidebar;
+      APP.settings.lastPage = _savedLastPage;
 
       // Also load images
       _firebaseDB.ref('app_data/images').once('value').then(function(imgSnap) {
