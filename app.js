@@ -5071,7 +5071,7 @@ function renderSettings() {
         <button class="btn btn-secondary btn-sm" onclick="pickSaveDirectory()">📍 Utiliser un dossier existant (clé USB, OneDrive...)</button>
       </div>
     </div>
-    ${_currentUser()?.role==='admin'?'<div class="card" id="user-mgmt-card"><div id="user-mgmt-content"></div></div>':''}
+
     <div class="card">
       <div class="card-header"><span class="card-title">🏷️ Catégories de gadgets</span><button class="btn btn-sm btn-primary" onclick="openAddCategoryModal()">+ Nouvelle catégorie</button></div>
       <div id="cat-list-settings" style="padding:4px 0"></div>
@@ -5118,7 +5118,7 @@ function renderSettings() {
       </div>
     </div>
   </div>`;
-  setTimeout(()=>{ const ld=document.getElementById('set-logo-data'); if(ld) ld.value=APP.settings.companyLogo||''; const zl=document.getElementById('zones-list'); if(zl) zl.innerHTML=renderZonesList(); renderCatListSettings(); const um=document.getElementById('user-mgmt-content'); if(um) um.innerHTML=renderUserManagement(); },10);
+  setTimeout(()=>{ const ld=document.getElementById('set-logo-data'); if(ld) ld.value=APP.settings.companyLogo||''; const zl=document.getElementById('zones-list'); if(zl) zl.innerHTML=renderZonesList(); renderCatListSettings(); },10);
 }
 
 
@@ -6010,7 +6010,7 @@ function renderAdminPage() {
     + '</div></div>'
     + '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'
     + '<button class="btn btn-primary" onclick="openUserModal()">+ Nouvel utilisateur</button>'
-    + '<button class="btn btn-secondary" onclick="_adminCreateSupabaseAccount()">\u2601 Cr\u00e9er compte en ligne</button>'
+
     + '<button class="btn btn-secondary" onclick="_showActivityLog()">\ud83d\udccb Journal d\'activit\u00e9</button>'
     + '</div>'
     + '<div class="card" style="padding:16px;margin-bottom:16px">'
@@ -6136,15 +6136,53 @@ async function _doCreateSupabaseAccount() {
   }
 }
 
-function _confirmDeleteUser(uid) {
+async function _confirmDeleteUser(uid) {
   var user = (APP.users || []).find(function(u) { return u.id === uid; });
   if (!user) return;
-  if (confirm('Supprimer "' + user.name + '" ? Cette action est irr\u00e9versible.')) {
-    APP.users = APP.users.filter(function(u) { return u.id !== uid; });
-    saveDB();
-    notify('Utilisateur supprim\u00e9', 'success');
-    showPage('administration');
+  if (!confirm('Supprimer "' + user.name + '" ? Cette action est irr\u00e9versible.')) return;
+  var userEmail = user.email;
+
+  // Remove from local
+  APP.users = APP.users.filter(function(u) { return u.id !== uid; });
+
+  // Update UI immediately (no full page re-render)
+  var cardEl = document.querySelector('[onclick*="' + uid + '"]');
+  if (cardEl) {
+    var card = cardEl.closest('.card');
+    if (card) {
+      card.style.transition = 'opacity 0.3s, transform 0.3s';
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(20px)';
+      setTimeout(function() { card.remove(); }, 300);
+    }
   }
+  // Update count
+  var countEl = document.querySelector('.card-title');
+  if (countEl && countEl.textContent.includes('Comptes')) {
+    countEl.textContent = '\uD83D\uDC65 Comptes (' + (APP.users||[]).length + ')';
+  }
+
+  // Delete from Firebase profile
+  if (userEmail && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+    try {
+      var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
+      if (snap.exists()) {
+        var updates = {};
+        Object.keys(snap.val()).forEach(function(k) { updates[k] = null; });
+        await _firebaseDB.ref('profiles').update(updates);
+      }
+    } catch(e) { console.warn('[PSM] Firebase profile delete:', e); }
+  }
+
+  // Save to cloud and wait
+  APP._ts = Date.now();
+  _invalidatePageCache();
+  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  if (typeof _doSaveToCloud === 'function') {
+    try { await _doSaveToCloud(); } catch(e) {}
+  }
+  if (typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
+  notify('Utilisateur supprim\u00e9', 'success');
 }
 
 function _showActivityLog() {

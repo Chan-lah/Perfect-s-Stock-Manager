@@ -261,6 +261,8 @@ async function _handleLogin(e) {
 
     // 8. Re-render full UI
     if (typeof _finishAppInit === 'function') await _finishAppInit();
+    // Force badge update (in case _finishAppInit missed it)
+    if (typeof updateUserBadge === 'function') updateUserBadge();
     if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + (localUser ? localUser.name : email) + ' !', 'success');
 
   } catch(err) {
