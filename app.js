@@ -3971,7 +3971,10 @@ function renderFournDashboard() {
 
   document.getElementById('content').innerHTML = '<div class="page-header">'
     + '<div><div class="page-title">Suivi des livraisons</div><div class="page-sub">Commandes fournisseurs & r\u00e9ceptions</div></div>'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-secondary" onclick="_importLowStockCmd()" title="Pr\u00e9-remplir avec les articles en rupture ou stock bas">\u26a0 Stock bas</button>'
     + '<button class="btn btn-primary" onclick="openNewCmdModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouvelle commande</button>'
+    + '</div>'
     + '</div>'
     + '<div class="grid-4 mb-16">'
     + '<div class="card"><div class="card-header"><span class="card-title">En attente</span></div><div class="kpi-value" style="color:var(--warning)">' + pending + '</div><div class="kpi-change">commandes</div></div>'
@@ -4060,28 +4063,37 @@ function toggleFournOrders(fournId) {
   }
 }
 
-// ── Carte commande détaillée ────────────────────────────────
+// ── Carte commande détaillée (améliorée) ────────────────────
 
 function renderOrderCard(c) {
   var pct = calcCmdPct(c);
   var late = isCmdLate(c);
   var total = calcCmdTotal(c);
+  var totalRecu = (c.lignes||[]).reduce(function(s,l){return s+(l.qteRecue||0);},0);
+  var totalCmd = (c.lignes||[]).reduce(function(s,l){return s+(l.qteCommandee||0);},0);
+  var totalRestant = totalCmd - totalRecu;
+  var latedays = late && c.dateLivraisonPrevue ? Math.ceil((Date.now()-c.dateLivraisonPrevue)/86400000) : 0;
 
   var lignesHtml = (c.lignes||[]).map(function(l, i) {
     var restant = Math.max(0, (l.qteCommandee||0) - (l.qteRecue||0));
     var lineTotal = (l.qteCommandee||0) * (l.prixUnitaire||0);
-    var receptions = l.receptions || [];
+    var linePct = (l.qteCommandee||0) > 0 ? Math.round((l.qteRecue||0) / (l.qteCommandee||0) * 100) : 0;
+    var receptions = Array.isArray(l.receptions) ? l.receptions : Object.values(l.receptions||{});
 
-    // Timeline des réceptions
+    // Collapsible timeline
     var timelineHtml = '';
     if (receptions.length > 0) {
-      timelineHtml = '<tr><td colspan="6" style="padding:4px 8px 8px"><div style="background:var(--bg-3);border-radius:6px;padding:8px 10px">'
-        + '<div style="font-size:10px;font-weight:700;color:var(--accent);margin-bottom:4px">\ud83d\udce6 Historique des r\u00e9ceptions</div>'
+      var tlId = 'tl-' + c.id + '-' + i;
+      timelineHtml = '<tr><td colspan="7" style="padding:0 8px 8px">'
+        + '<div style="cursor:pointer;font-size:10px;font-weight:700;color:var(--accent);padding:4px 0" onclick="var el=document.getElementById(\'' + tlId + '\');el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' + '\u25b6 ' + receptions.length + ' r\u00e9ception(s) \u2014 cliquer pour d\u00e9plier</div>'
+        + '<div id="' + tlId + '" style="display:none;background:var(--bg-3);border-radius:6px;padding:8px 10px">'
         + receptions.map(function(r) {
-          return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;border-bottom:1px solid var(--border)">'
+          var byName = r.by || '';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)">'
             + '<span style="color:var(--text-2)">' + fmtDate(r.date) + '</span>'
             + '<span style="font-weight:600;color:var(--success)">+' + r.qty + ' u.</span>'
-            + (r.note ? '<span style="color:var(--text-3);font-style:italic">' + r.note + '</span>' : '<span></span>')
+            + (byName ? '<span style="color:var(--accent);font-size:10px">' + byName + '</span>' : '')
+            + (r.note ? '<span style="color:var(--text-3);font-style:italic;font-size:10px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.note||'').replace(/"/g,'&quot;') + '">' + r.note + '</span>' : '')
             + '</div>';
         }).join('')
         + '</div></td></tr>';
@@ -4093,37 +4105,39 @@ function renderOrderCard(c) {
       + '<td style="text-align:center;font-weight:600;color:var(--success)">' + (l.qteRecue||0) + '</td>'
       + '<td style="text-align:center;font-weight:700;color:' + (restant > 0 ? 'var(--warning)' : 'var(--success)') + '">' + restant + '</td>'
       + '<td style="text-align:right;font-size:12px;color:var(--text-2)">' + fmtCurrency(lineTotal) + '</td>'
+      + '<td style="width:90px"><div style="height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden"><div style="height:100%;width:' + linePct + '%;background:' + getCmdProgressColor(linePct) + ';border-radius:3px"></div></div><div style="font-size:9px;text-align:center;color:var(--text-3)">' + linePct + '%</div></td>'
       + '<td style="text-align:center;font-size:11px">' + (restant === 0 ? '<span style="color:var(--success)">\u2713</span>' : '<span style="color:var(--warning)">\u23f3</span>') + '</td>'
       + '</tr>' + timelineHtml;
   }).join('');
 
   return '<div class="order-card" id="order-card-' + c.id + '" style="' + (late ? 'border-left:3px solid var(--danger)' : '') + '">'
     + '<div class="order-card-header">'
-    + '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap">'
     + '<span class="order-num" style="font-weight:700">' + c.numero + '</span>'
     + '<span class="order-status-badge ' + getCmdStatusClass(c.status) + '">' + getCmdStatusLabel(c.status) + '</span>'
-    + (late ? '<span class="badge" style="background:var(--danger);color:#fff;font-size:10px">\u26a0 En retard</span>' : '')
+    + (late ? '<span class="badge" style="background:var(--danger);color:#fff;font-size:10px">\u26a0 ' + latedays + 'j de retard</span>' : '')
     + (c.dateLivraisonPrevue ? '<span style="font-size:11px;color:var(--text-2)">\ud83d\udcc5 ' + fmtDate(c.dateLivraisonPrevue) + '</span>' : '')
     + '</div>'
-    + '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
-    + '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openReceptionModal(\'' + c.id + '\')">\ud83d\udce5 R\u00e9ceptionner</button>'
-    + '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();openEditCmdModal(\'' + c.id + '\')">\u270f Modifier</button>'
-    + '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCmd(\'' + c.id + '\')">\ud83d\uddd1</button>'
+    + '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;flex-wrap:wrap">'
+    + '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openReceptionModal(\'' + c.id + '\')" title="R\u00e9ceptionner">\ud83d\udce5 R\u00e9ceptionner</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();openEditCmdModal(\'' + c.id + '\')" title="Modifier">\u270f</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();duplicateCmd(\'' + c.id + '\')" title="Dupliquer">\ud83d\udccb</button>'
+    + '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteCmd(\'' + c.id + '\')" title="Supprimer">\ud83d\uddd1</button>'
     + '</div></div>'
     + '<div class="order-progress-wrap">'
     + '<div class="order-progress-track"><div class="order-progress-fill" style="width:' + pct + '%;background:' + getCmdProgressColor(pct) + '"></div></div>'
     + '<div class="order-progress-labels">'
-    + '<span>Command\u00e9: ' + (c.lignes||[]).reduce(function(s,l){return s+(l.qteCommandee||0);},0) + ' u.</span>'
-    + '<span style="font-weight:600;color:var(--success)">Re\u00e7u: ' + (c.lignes||[]).reduce(function(s,l){return s+(l.qteRecue||0);},0) + ' u.</span>'
-    + '<span style="color:var(--warning);font-weight:600">Restant: ' + (c.lignes||[]).reduce(function(s,l){return s+Math.max(0,(l.qteCommandee||0)-(l.qteRecue||0));},0) + ' u.</span>'
-    + '<span>' + pct + '%</span>'
+    + '<span>Command\u00e9: ' + totalCmd + ' u.</span>'
+    + '<span style="font-weight:600;color:var(--success)">Re\u00e7u: ' + totalRecu + ' u.</span>'
+    + '<span style="color:var(--warning);font-weight:600">Restant: ' + totalRestant + ' u.</span>'
+    + '<span style="font-weight:700">' + pct + '%</span>'
     + '</div></div>'
     + '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;padding:0 2px;font-size:12px">'
     + '<span style="color:var(--text-2)">Date: ' + fmtDate(c.dateCommande) + '</span>'
     + '<span style="font-weight:700;color:var(--accent2)">Total: ' + fmtCurrency(total) + '</span>'
     + '</div>'
     + '<table class="order-lignes-table" style="table-layout:fixed">'
-    + '<thead><tr><th>Article</th><th style="width:80px;text-align:center">Command\u00e9</th><th style="width:70px;text-align:center">Re\u00e7u</th><th style="width:70px;text-align:center">Restant</th><th style="width:90px;text-align:right">Montant</th><th style="width:50px;text-align:center">Statut</th></tr></thead>'
+    + '<thead><tr><th>Article</th><th style="width:75px;text-align:center">Command\u00e9</th><th style="width:60px;text-align:center">Re\u00e7u</th><th style="width:65px;text-align:center">Restant</th><th style="width:85px;text-align:right">Montant</th><th style="width:90px;text-align:center">Progression</th><th style="width:40px;text-align:center">\u2713</th></tr></thead>'
     + '<tbody>' + lignesHtml + '</tbody>'
     + '</table>'
     + (c.note ? '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">\ud83d\udcdd ' + c.note + '</div>' : '')
@@ -4320,6 +4334,27 @@ function deleteCmd(cmdId) {
   notify('Commande supprim\u00e9e', 'success');
 }
 
+// ── Dupliquer commande ───────────────────────────────────────
+
+function duplicateCmd(cmdId) {
+  var orig = (APP.commandesFourn||[]).find(function(c) { return c.id === cmdId; });
+  if (!orig) return;
+  if (!confirm('Dupliquer la commande ' + orig.numero + ' ?')) return;
+  var dup = JSON.parse(JSON.stringify(orig));
+  dup.id = generateId();
+  dup.numero = cmdOrderNum();
+  dup.status = 'pending';
+  dup.dateCommande = Date.now();
+  dup.createdAt = Date.now();
+  // Reset receptions
+  (dup.lignes||[]).forEach(function(l) { l.qteRecue = 0; l.receptions = []; });
+  if (!APP.commandesFourn) APP.commandesFourn = [];
+  APP.commandesFourn.push(dup);
+  auditLog('create', 'commandeFourn', dup.id, null, dup);
+  saveDB(); renderFournDashboard(); updateAlertBadge();
+  notify('Commande dupliqu\u00e9e: ' + dup.numero, 'success');
+}
+
 // ── Refresh card ────────────────────────────────────────────
 
 function refreshOrderCard(c) {
@@ -4329,6 +4364,18 @@ function refreshOrderCard(c) {
 }
 
 // ── Créer une nouvelle commande ─────────────────────────────
+
+function _importLowStockCmd() {
+  var lowStock = (APP.articles||[]).filter(function(a) {
+    var threshold = a.stockMin || a.seuilAlerte || 10;
+    return (a.stock||0) <= threshold;
+  });
+  if (lowStock.length === 0) { notify('Aucun article en stock bas', 'info'); return; }
+  var preselected = lowStock.map(function(a) {
+    return { artId: a.id, name: a.name };
+  });
+  openNewCmdModal(null, preselected);
+}
 
 function openNewCmdModal(prefFournId, preselectedArts) {
   var fournOpts = (APP.fournisseurs||[]).map(function(f) {
