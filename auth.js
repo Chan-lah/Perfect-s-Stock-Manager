@@ -73,7 +73,7 @@ function _syncProfileToLocal(profile) {
   if (!APP.users) APP.users = [];
   var email = profile.email || (_cloudUser && _cloudUser.email);
   if (!email) return;
-  var existing = APP.users.find(function(u) { return u.email === email; });
+  var existing = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
   if (existing) {
     existing.name = profile.display_name || existing.name;
     existing.role = profile.role || 'viewer';  // Always use Firebase role
@@ -267,6 +267,8 @@ async function _handleLogin(e) {
     if (_cloudData && _cloudTs > _localTs) {
       // Cloud is newer → use cloud data
       console.log('[PSM] Using CLOUD data (newer)');
+      // Fix Firebase arrays-as-objects before merging
+      if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
       APP.users = _usersBackup; // preserve users
@@ -290,7 +292,13 @@ async function _handleLogin(e) {
     // Deduplicate users (cloud + local may have created duplicates)
     if (typeof _deduplicateUsers === 'function') _deduplicateUsers();
     localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
-    if (localUser) sessionStorage.setItem('psm_user', localUser.id);
+    if (localUser) {
+      sessionStorage.setItem('psm_user', localUser.id);
+      console.log('[PSM] Session set for: ' + localUser.name + ' (' + localUser.email + ') role=' + localUser.role + ' id=' + localUser.id);
+    } else {
+      console.error('[PSM] No local user found for email: ' + email);
+      console.log('[PSM] APP.users:', APP.users.map(function(u) { return u.email + '/' + u.name; }));
+    }
 
     // 5c. Start real-time sync
     if (typeof startRealtimeSync === 'function') startRealtimeSync();

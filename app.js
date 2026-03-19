@@ -1700,7 +1700,7 @@ function refreshDashboard(showNotif) {
   const dpv = document.getElementById('dash-dispatch-preview');
   if(dpv) {
     const activeArts = APP.articles.filter(a => a.stock > 0);
-    const rules = APP.dispatch?.rules || [];
+    const rules = Array.isArray(APP.dispatch?.rules) ? APP.dispatch.rules : Object.values(APP.dispatch?.rules || {});
     const totalDispatched = rules.reduce((s, r) => s + (r.totalQty || 0), 0);
     dpv.innerHTML = [
       `<span class="chip">${APP.commerciaux.length} commerciaux</span>`,

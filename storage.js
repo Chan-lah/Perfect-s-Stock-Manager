@@ -8,6 +8,29 @@
 let _onlineMode = false; // false = local, true = cloud (Firebase)
 let _isConnected = navigator.onLine;
 
+// Firebase Realtime DB converts arrays to objects {0:..., 1:..., 2:...}
+// This function recursively restores them back to arrays
+function _fixFirebaseArrays(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    for (var i = 0; i < obj.length; i++) obj[i] = _fixFirebaseArrays(obj[i]);
+    return obj;
+  }
+  var keys = Object.keys(obj);
+  // Check if all keys are consecutive integers starting from 0
+  var isArray = keys.length > 0 && keys.every(function(k, i) { return String(i) === k; });
+  if (isArray) {
+    var arr = [];
+    for (var j = 0; j < keys.length; j++) arr.push(_fixFirebaseArrays(obj[j]));
+    return arr;
+  }
+  // Recurse into object properties
+  for (var k in obj) {
+    if (obj.hasOwnProperty(k)) obj[k] = _fixFirebaseArrays(obj[k]);
+  }
+  return obj;
+}
+
 window.addEventListener('online',  function() { _isConnected = true;  _onOnlineStatusChange(); });
 window.addEventListener('offline', function() { _isConnected = false; _onOnlineStatusChange(); });
 
@@ -149,6 +172,9 @@ function startRealtimeSync() {
     // Only update if cloud data is strictly newer
     if (cloudData._ts > (APP._ts || 0)) {
       console.log('[PSM] Real-time update received from another user');
+
+      // Fix Firebase arrays-as-objects
+      if (typeof _fixFirebaseArrays === 'function') cloudData = _fixFirebaseArrays(cloudData);
 
       // Preserve current user session & local settings before overwrite
       var _savedUsers = APP.users ? APP.users.slice() : [];
