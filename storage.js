@@ -69,10 +69,16 @@ async function _saveToCloud() {
 }
 
 var _cloudSaving = false;
+var _cloudSaveQueue = null; // pending save promise
 
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
   _cloudSaving = true;
+  // Pause real-time listener during save to prevent echo/race
+  if (_realtimeListenerActive) {
+    try { _firebaseDB.ref('app_data/data').off('value'); } catch(e) {}
+    _realtimeListenerActive = false;
+  }
   try {
     // Track local save timestamp to prevent realtime echo
     _lastLocalSaveTs = APP._ts || Date.now();
@@ -108,11 +114,17 @@ async function _doSaveToCloud() {
       updated_at: new Date().toISOString()
     });
 
-    console.log('[PSM] Cloud save OK');
+    console.log('[PSM] Cloud save OK (_ts=' + _lastLocalSaveTs + ')');
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
   } finally {
     _cloudSaving = false;
+    // Re-enable real-time listener after a short delay to skip our own echo
+    setTimeout(function() {
+      if (typeof startRealtimeSync === 'function' && !_realtimeListenerActive) {
+        startRealtimeSync();
+      }
+    }, 2000);
   }
 }
 
