@@ -310,6 +310,17 @@ async function _handleLogin(e) {
     var overlay = document.getElementById('login-overlay');
     if (overlay) overlay.remove();
 
+    // 7b. Load user-specific preferences (theme, background)
+    try {
+      var _prefs = await _loadUserPrefs();
+      if (_prefs) {
+        if (_prefs.theme) { APP.settings.theme = _prefs.theme; if(typeof applyTheme==='function') applyTheme(_prefs.theme); }
+        if (_prefs._dynamicBg !== undefined) APP.settings._dynamicBg = _prefs._dynamicBg;
+        if (_prefs._dynamicBgIntensity !== undefined) APP.settings._dynamicBgIntensity = _prefs._dynamicBgIntensity;
+        if (_prefs._hiddenPages !== undefined) APP.settings._hiddenPages = _prefs._hiddenPages;
+      }
+    } catch(ex) { console.warn('[PSM] load prefs:', ex); }
+
     // 8. Re-render full UI
     if (typeof _finishAppInit === 'function') await _finishAppInit();
     // Force badge update (in case _finishAppInit missed it)
@@ -430,6 +441,29 @@ async function _adminGetActivityLog(limit) {
 }
 
 // ── Local session helpers ──────────────────────────────────
+
+
+// ── Per-user preferences (theme, background, etc.) ──
+async function _saveUserPrefs(prefs) {
+  if (!_firebaseDB || !_cloudUser) return;
+  try {
+    await _firebaseDB.ref('profiles/' + _cloudUser.uid + '/prefs').set(prefs);
+    console.log('[PSM] User prefs saved');
+  } catch(e) { console.warn('[PSM] _saveUserPrefs:', e); }
+}
+
+async function _loadUserPrefs() {
+  if (!_firebaseDB || !_cloudUser) return null;
+  try {
+    var snap = await _firebaseDB.ref('profiles/' + _cloudUser.uid + '/prefs').once('value');
+    if (snap.exists()) {
+      var prefs = snap.val();
+      console.log('[PSM] User prefs loaded:', prefs);
+      return prefs;
+    }
+  } catch(e) { console.warn('[PSM] _loadUserPrefs:', e); }
+  return null;
+}
 
 function _currentUser() {
   // Primary source: Firebase profile (stable, not affected by cloud sync)

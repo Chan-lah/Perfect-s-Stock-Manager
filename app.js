@@ -4192,12 +4192,10 @@ function openReceptionModal(cmdId) {
     c.status = calcCmdStatus(c);
     auditLog('edit', 'commandeFourn', c.id, null, { status: c.status });
     saveDB(); closeModal();
-    // Re-render the fournisseur orders
-    var container = document.getElementById('forders-' + c.fournisseurId);
-    if (container && container.style.display === 'block') {
-      var fCmds = (APP.commandesFourn||[]).filter(function(x){ return x.fournisseurId === c.fournisseurId; }).sort(function(a,b){ return b.createdAt - a.createdAt; });
-      container.innerHTML = fCmds.map(function(x){ return renderOrderCard(x); }).join('');
-    }
+    // Re-render full dashboard (including supplier gauge-circles)
+    renderFournDashboard();
+    // Re-open the supplier's order list
+    setTimeout(function() { toggleFournOrders(c.fournisseurId); }, 100);
     updateAlertBadge();
     notify(anyChange ? 'R\u00e9ception enregistr\u00e9e, stock mis \u00e0 jour \u2713' : 'Aucun changement', anyChange ? 'success' : 'info');
   }, 'modal-lg');
@@ -5463,13 +5461,44 @@ function resetDefaultLogo() {
   renderSettings();
 }
 
+
+// Disable shared settings inputs for non-admin users
+function _restrictSettingsForNonAdmin() {
+  var _cu = typeof _currentUser === 'function' ? _currentUser() : null;
+  if(_cu && _cu.role === 'admin') return; // admin sees everything
+  // Disable shared settings inputs
+  var sharedIds = ['set-company','set-tel','set-fax','set-email','set-address','set-logo-data','set-currency','set-backup-interval'];
+  sharedIds.forEach(function(id) {
+    var el = document.getElementById(id);
+    if(el) { el.disabled = true; el.style.opacity = '0.6'; }
+  });
+  // Hide logo upload button
+  document.querySelectorAll('[onclick*="set-logo-input"]').forEach(function(b) { b.style.display = 'none'; });
+  // Add notice
+  var companyCard = document.querySelector('.card-title');
+  if(companyCard && companyCard.textContent.includes('Entreprise')) {
+    var notice = document.createElement('div');
+    notice.style.cssText = 'font-size:11px;color:var(--warning);padding:4px 8px;margin-bottom:8px;background:var(--warning)11;border-radius:var(--radius)';
+    notice.textContent = '\ud83d\udd12 Seul l\u2019administrateur peut modifier ces param\u00e8tres';
+    companyCard.parentElement.after(notice);
+  }
+}
+
 function saveSettings() {
+  var _cu = typeof _currentUser === 'function' ? _currentUser() : null;
+  var _isAdmin = _cu && _cu.role === 'admin';
+
+  // Shared settings (admin only)
+  if(_isAdmin) {
   APP.settings.companyName=document.getElementById('set-company').value;
   APP.settings.companyTel=document.getElementById('set-tel')?.value||APP.settings.companyTel||'';
   APP.settings.companyFax=document.getElementById('set-fax')?.value||APP.settings.companyFax||'';
   APP.settings.companyEmail=document.getElementById('set-email')?.value||APP.settings.companyEmail||'';
   APP.settings.companyAddress=document.getElementById('set-address')?.value||APP.settings.companyAddress||'';
   const logo=document.getElementById('set-logo-data').value; if(logo) { APP.settings.companyLogo=logo; _imagesDirty=true; }
+  } // end admin-only shared settings
+
+  // Personal settings (all users)
   APP.settings.theme=document.getElementById('set-theme').value;
   var _dbgEl = document.getElementById('set-dynbg');
   if(_dbgEl) APP.settings._dynamicBg = _dbgEl.value;
@@ -5488,8 +5517,20 @@ function saveSettings() {
   APP.settings.backupInterval=newInterval;
   saveDB(); updateCompanyPanel();
   if(intervalChanged) startBackupScheduler();
+  // Re-init dynamic background with new settings
+  if(typeof initDynamicBg === 'function') initDynamicBg();
   notify('Paramètres enregistrés ✓','success');
   auditLog('UPDATE','settings',null,null,{...APP.settings,companyLogo:'[omitted]'});
+
+  // Save personal preferences (theme, background) to Firebase profile
+  if(typeof _saveUserPrefs === 'function') {
+    _saveUserPrefs({
+      theme: APP.settings.theme,
+      _dynamicBg: APP.settings._dynamicBg,
+      _dynamicBgIntensity: APP.settings._dynamicBgIntensity,
+      _hiddenPages: APP.settings._hiddenPages
+    });
+  }
 }
 
 function exportAllJSON() {
