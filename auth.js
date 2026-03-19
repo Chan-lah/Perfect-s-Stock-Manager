@@ -432,6 +432,19 @@ async function _adminGetActivityLog(limit) {
 // ── Local session helpers ──────────────────────────────────
 
 function _currentUser() {
+  // Primary source: Firebase profile (stable, not affected by cloud sync)
+  if (_userProfile && _userProfile.email) {
+    return {
+      id: _cloudUser ? _cloudUser.uid : sessionStorage.getItem('psm_user'),
+      name: _userProfile.display_name || _userProfile.email.split('@')[0],
+      email: _userProfile.email,
+      role: _userProfile.role || 'viewer',
+      permissions: _userProfile.permissions || null,
+      photo: _userProfile.photo || null,
+      signature: _userProfile.signature || null
+    };
+  }
+  // Fallback: local APP.users (offline mode)
   var id = sessionStorage.getItem('psm_user');
   if (!id) return null;
   return (APP.users || []).find(function(u) { return u.id === id; }) || null;
