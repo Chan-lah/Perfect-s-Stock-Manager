@@ -104,13 +104,19 @@ async function _doSaveToCloud() {
       });
     }
 
-    // Extract images separately
-    var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
+    // Images stay in localStorage only (Firebase Realtime DB has 16MB write limit)
+    // Save images to localStorage cache for local restore
+    try {
+      var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
+      if (Object.keys(imgs).length > 0) {
+        localStorage.setItem('psm_images_cache', JSON.stringify(imgs));
+      }
+    } catch(e) { console.warn('[PSM] images cache:', e); }
 
     // Save to Firebase Realtime Database (shared — all users see the same data)
+    // Only business data — no images
     await _firebaseDB.ref('app_data').set({
       data: dataObj,
-      images: imgs,
       updated_at: new Date().toISOString()
     });
 
@@ -139,7 +145,6 @@ async function _loadFromCloud() {
 
     var cloudEntry = snap.val();
     var cloudData = cloudEntry.data || null;
-    var cloudImages = cloudEntry.images || {};
 
     if (cloudData) {
       // Preserve current users before cloud overwrite (roles come from Firebase profiles)
@@ -148,9 +153,13 @@ async function _loadFromCloud() {
       Object.assign(APP, cloudData);
       // Restore users (not synced via cloud)
       APP.users = _savedUsers;
-      if (typeof _restoreImages === 'function') {
-        _restoreImages(APP, cloudImages);
-      }
+      // Restore images from localStorage cache (not from cloud)
+      try {
+        var cachedImgs = localStorage.getItem('psm_images_cache');
+        if (cachedImgs && typeof _restoreImages === 'function') {
+          _restoreImages(APP, JSON.parse(cachedImgs));
+        }
+      } catch(e) {}
       console.log('[PSM] Cloud data loaded (_ts=' + (cloudData._ts||'none') + ')');
     }
     return cloudData;
@@ -203,19 +212,19 @@ function startRealtimeSync() {
       APP.settings._sidebarCollapsed = _savedSidebar;
       APP.settings.lastPage = _savedLastPage;
 
-      // Also load images
-      _firebaseDB.ref('app_data/images').once('value').then(function(imgSnap) {
-        if (imgSnap.exists()) {
-          var imgs = imgSnap.val();
-          if (typeof _restoreImages === 'function') _restoreImages(APP, imgs);
+      // Restore images from localStorage cache (not from cloud)
+      try {
+        var cachedImgs = localStorage.getItem('psm_images_cache');
+        if (cachedImgs && typeof _restoreImages === 'function') {
+          _restoreImages(APP, JSON.parse(cachedImgs));
         }
-        // Re-render current page
-        if (typeof showPage === 'function' && typeof currentPage !== 'undefined') {
-          showPage(currentPage);
-        }
-        if (typeof updateUserBadge === 'function') updateUserBadge();
-        if (typeof notify === 'function') notify('\u2601 Donn\u00e9es mises \u00e0 jour', 'info');
-      });
+      } catch(e) {}
+      // Re-render current page
+      if (typeof showPage === 'function' && typeof currentPage !== 'undefined') {
+        showPage(currentPage);
+      }
+      if (typeof updateUserBadge === 'function') updateUserBadge();
+      if (typeof notify === 'function') notify('\u2601 Donn\u00e9es mises \u00e0 jour', 'info');
     }
   });
 

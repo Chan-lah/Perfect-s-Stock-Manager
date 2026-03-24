@@ -248,14 +248,12 @@ async function _handleLogin(e) {
     // Load cloud data into a temp variable (don't overwrite APP yet)
     var _cloudTs = 0;
     var _cloudData = null;
-    var _cloudImages = {};
     try {
       if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
         var snap = await _firebaseDB.ref('app_data').once('value');
         if (snap.exists()) {
           var entry = snap.val();
           _cloudData = entry.data || null;
-          _cloudImages = entry.images || {};
           _cloudTs = (_cloudData && _cloudData._ts) || 0;
         }
       }
@@ -272,7 +270,13 @@ async function _handleLogin(e) {
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
       APP.users = _usersBackup; // preserve users
-      if (typeof _restoreImages === 'function') _restoreImages(APP, _cloudImages);
+      // Restore images from localStorage cache (not from cloud)
+      try {
+        var cachedImgs = localStorage.getItem('psm_images_cache');
+        if (cachedImgs && typeof _restoreImages === 'function') {
+          _restoreImages(APP, JSON.parse(cachedImgs));
+        }
+      } catch(e) {}
     } else if (_localTs > 0) {
       // Local is newer or equal → keep localStorage (already loaded in initApp)
       console.log('[PSM] Using LOCAL data (newer or equal)');

@@ -217,11 +217,11 @@ let APP = {
     {id:'gma002',name:'Tabliers GMA (Marron & Orange)',         code:'MY0A005',category:'INSTITUTIONNELS',fournisseur:'2BPUB',        colors:'Marron, Orange',       description:'Tabliers aux couleurs GMA',        unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma003',name:'Seaux GMA',                              code:'MY0A125',category:'INSTITUTIONNELS',fournisseur:'2BPUB',        colors:'',                     description:'Seaux GMA',                        unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma004',name:'Pelons GMA',                             code:'MY0A058',category:'INSTITUTIONNELS',fournisseur:"POUVOIR D'ART",colors:'',                     description:'Pelons GMA',                       unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
-    {id:'gma005',name:'Cahiers GMA A4',                           code:'MY0A136',category:'INSTITUTIONNELS',fournisseur:'TAGPLAST',     colors:'',                     description:'Cahiers GMA format A4',             unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
-    {id:'gma020',name:'Cahiers GMA A5',                           code:'MY0A236',category:'INSTITUTIONNELS',fournisseur:'TAGPLAST',     colors:'',                     description:'Cahiers GMA format A5',             unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
+    {id:'gma005',name:'Cahiers GMA A4',                           code:'MY0A136',category:'INSTITUTIONNELS',fournisseur:'',            colors:'',                     description:'Cahiers GMA format A4',             unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
+    {id:'gma020',name:'Cahiers GMA A5',                           code:'MY0A236',category:'INSTITUTIONNELS',fournisseur:'',            colors:'',                     description:'Cahiers GMA format A5',             unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma006',name:'Pagnes GMA (Pièces)',               code:'MY0A-PGN',category:'INSTITUTIONNELS',fournisseur:'2BPUB',       colors:'',                     description:'Pagnes GMA à la pièce',  unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma007',name:'Parasols GMA',                           code:'MY0A-PAR',category:'INSTITUTIONNELS',fournisseur:'2BPUB',       colors:'',                     description:'Parasols GMA',                     unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
-    {id:'gma008',name:'Tee-Shirt GMA (Marron, Orange et Blanc)',code:'MY0A068',category:'INSTITUTIONNELS',fournisseur:'TAGPLAST',     colors:'Marron, Orange, Blanc',description:'Tee-shirts GMA tricolore',         unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
+    {id:'gma008',name:'Tee-Shirt GMA (Marron, Orange et Blanc)',code:'MY0A068',category:'INSTITUTIONNELS',fournisseur:'',            colors:'Marron, Orange, Blanc',description:'Tee-shirts GMA tricolore',         unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma009',name:'Casquette GMA (Beige & Blanc)',          code:'MY0A-CAS',category:'INSTITUTIONNELS',fournisseur:"POUVOIR D'ART",colors:'Beige, Blanc',        description:'Casquettes GMA bicolore',          unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     // ── SUPER-BEIGNETS ──
     {id:'gma010',name:'Tee-shirts Super-Beignets',              code:'MY0A157',category:'SUPER-BEIGNETS', fournisseur:'2BPUB',        colors:'',                     description:'Tee-shirts Super-Beignets',        unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
@@ -230,9 +230,9 @@ let APP = {
     {id:'gma013',name:'Bassines Super-Beignets',                code:'MY0A120',category:'SUPER-BEIGNETS', fournisseur:'2BPUB',        colors:'',                     description:'Bassines Super-Beignets',          unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma014',name:'Tabliers Super-Beignets Simple',         code:'MY0A121',category:'SUPER-BEIGNETS', fournisseur:'2BPUB',        colors:'',                     description:'Tabliers Super-Beignets Simple',   unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma015',name:'Tee-shirt Super-Beignets Plus',          code:'MY0A117',category:'SUPER-BEIGNETS', fournisseur:'2BPUB',        colors:'',                     description:'Tee-shirts Super-Beignets Plus',   unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
-    // ── 60 ANS ──
-    {id:'gma016',name:'Polos 60 ans',                           code:'MY0A201',category:'60 ANS',         fournisseur:'2BPUB',        colors:'',                     description:'Polos édition 60 ans',        unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
-    {id:'gma017',name:'Tee-shirt beige 60 ans',                 code:'MY0A-T60',category:'60 ANS',         fournisseur:'2BPUB',        colors:'Beige',                description:'Tee-shirts beige 60 ans',          unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
+    // ── EXCEPTIONNEL - DIVERS ──
+    {id:'gma016',name:'Polos 60 ans',                           code:'MY0A201',category:'EXCEPTIONNEL - DIVERS',fournisseur:'2BPUB',   colors:'',                     description:'Polos édition 60 ans',        unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
+    {id:'gma017',name:'Tee-shirt beige 60 ans',                 code:'MY0A-T60',category:'EXCEPTIONNEL - DIVERS',fournisseur:'2BPUB',  colors:'Beige',                description:'Tee-shirts beige 60 ans',          unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     // ── SOGO BALO PRO ──
     {id:'gma018',name:'Tee-shirt Sogo Balo Pro',                code:'MY0A066',category:'SOGO BALO PRO',  fournisseur:'2BPUB',        colors:'',                     description:'Tee-shirts Sogo Balo Pro',         unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
     {id:'gma019',name:'Seaux Sogo Balo Pro',                    code:'MY0A165',category:'SOGO BALO PRO',  fournisseur:'2BPUB',        colors:'',                     description:'Seaux Sogo Balo Pro',              unit:'pcs',stock:0,stockMin:5,price:0,image:'',dispatchAllocMax:0,actif:true,createdAt:0,_version:1,_gma:true},
@@ -264,12 +264,12 @@ let APP = {
   ],
   // ── FOURNISSEURS ─────────────────────────────────────────────
   fournisseurs: [
-    {id:'fiv1', nom:'IVA COM',       contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fs2m', nom:'S2ML',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'f2bp', nom:'2BPUB',         contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fpda', nom:"POUVOIR D'ART", contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'ftaj', nom:'TAJPLAST',      contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fiec', nom:'IECM',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0}
+    {id:'fiv1', nom:'Bleu',          entreprise:'IVA COM',       contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fs2m', nom:'S2ML',          entreprise:'S2ML',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'f2bp', nom:'Borro',         entreprise:'2BPUB',         contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fpda', nom:"POUVOIR D'ART", entreprise:"POUVOIR D'ART", contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'ftaj', nom:'TAJPLAST',      entreprise:'TAJPLAST',      contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fiec', nom:'IECM',          entreprise:'IECM',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0}
   ],
   commandesFourn: [],
   // ── ZONES ────────────────────────────────────────────────────
@@ -355,7 +355,7 @@ let APP = {
   backups: [],
   // ── DISPATCH ─────────────────────────────────────────────────
   dispatch: { besoins:{}, entities:[], weights:{pdv:50,zone:20,history:30}, zonePriority:{}, rules:{respectMin:true,respectMax:true}, history:[] },
-  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 5, companyAddress: 'Zone Industrielle de Vridi, 15 BP 917 Abidjan 15', companyTel: '+225 27 21 75 11 00', companyFax: '+225 27 21 75 11 01', companyEmail: 'gma@gma-ci.com', categories: [] }
+  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 5, companyAddress: 'Zone Portuaire, Quai no. 1. Treichville', companyTel: '+225 27 21 75 11 00', companyFax: '', companyEmail: 'marketing@gma.ci', categories: [] }
 };
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).substr(2,6); }
@@ -3681,9 +3681,8 @@ function viewFournDetail(fournId) {
 // GMA DATA — Articles & Fournisseurs (données permanentes)
 // ============================================================
 const GMA_FOURNISSEURS = [
-  { nom:'2BPUB',          contact:'',  tel:'27 21 35 84 93', adresse:'Côte d\'Ivoire' },
-  { nom:'POUVOIR D\'ART', contact:'',  tel:'07 57 50 99 28', adresse:'Côte d\'Ivoire' },
-  { nom:'TAGPLAST',        contact:'',  tel:'07 78 76 31 19', adresse:'Côte d\'Ivoire' },
+  { nom:'Borro',         entreprise:'2BPUB',          contact:'',  tel:'27 21 35 84 93', adresse:'Côte d\'Ivoire' },
+  { nom:"POUVOIR D'ART", entreprise:"POUVOIR D'ART",  contact:'',  tel:'07 57 50 99 28', adresse:'Côte d\'Ivoire' },
 ];
 const GMA_ARTICLES = [
   // INSTITUTIONNELS
@@ -3691,10 +3690,10 @@ const GMA_ARTICLES = [
   { name:'Tabliers GMA (Marron & Orange)',           code:'MY0A005', category:'INSTITUTIONNELS',  fournisseur:'2BPUB',          colors:'Marron, Orange',  description:'Tabliers aux couleurs GMA' },
   { name:'Seaux GMA',                                code:'MY0A125', category:'INSTITUTIONNELS',  fournisseur:'2BPUB',          colors:'',               description:'Seaux GMA' },
   { name:'Pelons GMA',                               code:'MY0A058', category:'INSTITUTIONNELS',  fournisseur:'POUVOIR D\'ART',  colors:'',               description:'Pelons GMA' },
-  { name:'Cahiers GMA',                              code:'MY0A136', category:'INSTITUTIONNELS',  fournisseur:'TAGPLAST',       colors:'',               description:'Cahiers GMA' },
+  { name:'Cahiers GMA',                              code:'MY0A136', category:'INSTITUTIONNELS',  fournisseur:'',              colors:'',               description:'Cahiers GMA' },
   { name:'Pagnes GMA (Pièces)',                      code:'—',       category:'INSTITUTIONNELS',  fournisseur:'2BPUB',          colors:'',               description:'Pagnes GMA à la pièce' },
   { name:'Parasols GMA',                             code:'—',       category:'INSTITUTIONNELS',  fournisseur:'2BPUB',          colors:'',               description:'Parasols GMA' },
-  { name:'Tee-Shirt GMA (Marron, Orange et Blanc)',  code:'MY0A068', category:'INSTITUTIONNELS',  fournisseur:'TAGPLAST',       colors:'Marron, Orange, Blanc', description:'Tee-shirts GMA tricolore' },
+  { name:'Tee-Shirt GMA (Marron, Orange et Blanc)',  code:'MY0A068', category:'INSTITUTIONNELS',  fournisseur:'',              colors:'Marron, Orange, Blanc', description:'Tee-shirts GMA tricolore' },
   { name:'Casquette GMA (Beige & Blanc)',            code:'—',       category:'INSTITUTIONNELS',  fournisseur:'POUVOIR D\'ART',  colors:'Beige, Blanc',   description:'Casquettes GMA bicolore' },
   // SUPER-BEIGNETS
   { name:'Tee-shirts Super-Beignets',                code:'MY0A157', category:'SUPER-BEIGNETS',   fournisseur:'2BPUB',          colors:'',               description:'Tee-shirts Super-Beignets' },
@@ -3703,9 +3702,9 @@ const GMA_ARTICLES = [
   { name:'Bassines Super-Beignets',                  code:'MY0A120', category:'SUPER-BEIGNETS',   fournisseur:'2BPUB',    colors:'',               description:'Bassines Super-Beignets' },
   { name:'Tabliers Super-Beignets Simple',           code:'MY0A121', category:'SUPER-BEIGNETS',   fournisseur:'2BPUB',    colors:'',               description:'Tabliers Super-Beignets Simple' },
   { name:'Tee-shirt Super-Beignets Plus',            code:'MY0A117', category:'SUPER-BEIGNETS',   fournisseur:'2BPUB',          colors:'',               description:'Tee-shirts Super-Beignets Plus' },
-  // 60 ANS
-  { name:'Polos 60 ans',                             code:'MY0A201', category:'60 ANS',            fournisseur:'2BPUB',          colors:'',               description:'Polos édition 60 ans' },
-  { name:'Tee-shirt beige 60 ans',                   code:'—',       category:'60 ANS',            fournisseur:'2BPUB',    colors:'Beige',          description:'Tee-shirts beige 60 ans' },
+  // EXCEPTIONNEL - DIVERS
+  { name:'Polos 60 ans',                             code:'MY0A201', category:'EXCEPTIONNEL - DIVERS', fournisseur:'2BPUB',    colors:'',               description:'Polos édition 60 ans' },
+  { name:'Tee-shirt beige 60 ans',                   code:'—',       category:'EXCEPTIONNEL - DIVERS', fournisseur:'2BPUB',    colors:'Beige',          description:'Tee-shirts beige 60 ans' },
   // SOGO BALO PRO
   { name:'Tee-shirt Sogo Balo Pro',                  code:'MY0A066', category:'SOGO BALO PRO',     fournisseur:'2BPUB',          colors:'',               description:'Tee-shirts Sogo Balo Pro' },
   { name:'Seaux Sogo Balo Pro',                      code:'MY0A165', category:'SOGO BALO PRO',     fournisseur:'2BPUB',          colors:'',               description:'Seaux Sogo Balo Pro' },
@@ -3725,7 +3724,24 @@ function initGMAData() {
     if(!APP.bons) APP.bons = [];
     if(!APP.mouvements) APP.mouvements = [];
     if(!APP.audit) APP.audit = [];
-    return; // STOP — la sauvegarde est la source de vérité, aucune modification
+
+    // ── Migrations permanentes (appliquées à chaque démarrage, même sur données sauvegardées) ──
+    // Supprimer définitivement TAGPLAST
+    APP.fournisseurs = APP.fournisseurs.filter(f => f.nom !== 'TAGPLAST' && f.entreprise !== 'TAGPLAST');
+    // Mettre à jour les articles qui référencent TAGPLAST
+    APP.articles.forEach(a => { if(a.fournisseur === 'TAGPLAST') { a.fournisseur = ''; a.fournisseurId = null; } });
+    // Renommer catégorie '60 ANS' → 'EXCEPTIONNEL - DIVERS' dans les articles existants
+    APP.articles.forEach(a => { if(a.category === '60 ANS') a.category = 'EXCEPTIONNEL - DIVERS'; });
+    // Corriger le champ entreprise pour les fournisseurs existants sans entreprise
+    APP.fournisseurs.forEach(f => { if(!f.entreprise && f.nom) f.entreprise = f.nom; });
+    // Corriger IVA COM : si nom='IVA COM', passer entreprise='IVA COM' et nom='Bleu'
+    const fivaCom = APP.fournisseurs.find(f => f.entreprise === 'IVA COM' || f.nom === 'IVA COM');
+    if(fivaCom) { fivaCom.entreprise = 'IVA COM'; if(fivaCom.nom === 'IVA COM') fivaCom.nom = 'Bleu'; }
+    // Corriger 2BPUB : si nom='2BPUB', passer entreprise='2BPUB' et nom='Borro'
+    const f2bpub = APP.fournisseurs.find(f => f.entreprise === '2BPUB' || f.nom === '2BPUB');
+    if(f2bpub) { f2bpub.entreprise = '2BPUB'; if(f2bpub.nom === '2BPUB') f2bpub.nom = 'Borro'; }
+
+    return; // STOP — la sauvegarde est la source de vérité
   }
 
   // ── Premier lancement (pas de sauvegarde) : seeder les données GMA ──
@@ -5168,10 +5184,10 @@ function renderSettings() {
       <div class="form-group"><label>Nom entreprise</label><input id="set-company" value="${s.companyName||'GMA - Les Grands Moulins d\'Abidjan'}"></div>
       <div class="form-row">
         <div class="form-group"><label>Téléphone</label><input id="set-tel" value="${s.companyTel||'+225 27 21 75 11 00'}"></div>
-        <div class="form-group"><label>Fax</label><input id="set-fax" value="${s.companyFax||'+225 27 21 75 11 01'}"></div>
+        <div class="form-group"><label>Fax</label><input id="set-fax" value="${s.companyFax||''}"></div>
       </div>
-      <div class="form-group"><label>Email</label><input id="set-email" value="${s.companyEmail||'gma@gma-ci.com'}"></div>
-      <div class="form-group"><label>Adresse</label><input id="set-address" value="${s.companyAddress||'Zone Industrielle de Vridi, 15 BP 917 Abidjan 15'}"></div>
+      <div class="form-group"><label>Email</label><input id="set-email" value="${s.companyEmail||'marketing@gma.ci'}"></div>
+      <div class="form-group"><label>Adresse</label><input id="set-address" value="${s.companyAddress||'Zone Portuaire, Quai no. 1. Treichville'}"></div>
       <div class="form-group">
         <label>Logo entreprise</label>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
@@ -5341,11 +5357,16 @@ function renderSettings() {
 
 
 // ─── Category management ────────────────────────────────────────────────────
-const GMA_BUILTIN_CATS = ['INSTITUTIONNELS', 'SUPER-BEIGNETS', '60 ANS', 'SOGO BALO PRO'];
+const GMA_BUILTIN_CATS = ['INSTITUTIONNELS', 'SUPER-BEIGNETS', 'EXCEPTIONNEL - DIVERS', 'SOGO BALO PRO'];
 
 function getAllCategories() {
   const custom = APP.settings.categories || [];
-  return [...new Set([...GMA_BUILTIN_CATS, ...custom])];
+  const hidden = APP.settings.hiddenCategories || [];
+  const renames = APP.settings.categoryRenames || {};
+  const builtins = GMA_BUILTIN_CATS
+    .filter(c => !hidden.includes(c))
+    .map(c => renames[c] || c);
+  return [...new Set([...builtins, ...custom])];
 }
 
 function renderCatListSettings() {
@@ -5364,7 +5385,7 @@ function renderCatListSettings() {
         ${isBuiltin ? '<span style="font-size:10px;color:var(--accent);background:var(--bg-2);padding:1px 6px;border-radius:99px">système</span>' : ''}
       </div>
       <div style="display:flex;gap:6px">
-        ${!isBuiltin ? `<button class="btn btn-sm btn-secondary" onclick="deleteCategoryUI('${c}')">🗑️</button>` : ''}
+        <button class="btn btn-sm btn-secondary" onclick="deleteCategoryUI('${c}')">🗑️</button>
         <button class="btn btn-sm btn-secondary" onclick="renameCategoryUI('${c}')">✏️</button>
       </div>
     </div>`;
@@ -5402,7 +5423,13 @@ function deleteCategoryUI(name) {
     ? `Supprimer la catégorie "${name}" ? ${count} gadget(s) auront leur catégorie effacée.`
     : `Supprimer la catégorie "${name}" ?`;
   if(!confirm(msg)) return;
-  APP.settings.categories = (APP.settings.categories||[]).filter(c => c !== name);
+  const isBuiltin = GMA_BUILTIN_CATS.includes(name);
+  if(isBuiltin) {
+    if(!APP.settings.hiddenCategories) APP.settings.hiddenCategories = [];
+    if(!APP.settings.hiddenCategories.includes(name)) APP.settings.hiddenCategories.push(name);
+  } else {
+    APP.settings.categories = (APP.settings.categories||[]).filter(c => c !== name);
+  }
   if(count > 0) APP.articles.forEach(a => { if(a.category === name) a.category = ''; });
   saveDB();
   notify('Catégorie supprimée', 'success');
@@ -5423,15 +5450,15 @@ function saveRenameCategory(oldName) {
   const newName = document.getElementById('rename-cat-name')?.value?.trim().toUpperCase();
   if(!newName || newName === oldName) { closeModal(); return; }
   if(getAllCategories().includes(newName)) { notify('Ce nom existe déjà', 'warning'); return; }
-  // Update custom list
-  if(!GMA_BUILTIN_CATS.includes(oldName)) {
-    APP.settings.categories = (APP.settings.categories||[]).map(c => c === oldName ? newName : c);
+  const isBuiltin = GMA_BUILTIN_CATS.includes(oldName);
+  if(isBuiltin) {
+    // Stocker le remplacement du nom builtin
+    if(!APP.settings.categoryRenames) APP.settings.categoryRenames = {};
+    APP.settings.categoryRenames[oldName] = newName;
   } else {
-    // Built-in: add new name to custom, we can't remove built-in
-    if(!APP.settings.categories) APP.settings.categories = [];
-    APP.settings.categories.push(newName);
+    APP.settings.categories = (APP.settings.categories||[]).map(c => c === oldName ? newName : c);
   }
-  // Update all articles using this category
+  // Mettre à jour tous les articles utilisant cette catégorie
   APP.articles.forEach(a => { if(a.category === oldName) a.category = newName; });
   saveDB();
   closeModal();
@@ -5539,9 +5566,9 @@ function saveSettings() {
   if(_isAdmin) {
   APP.settings.companyName=document.getElementById('set-company').value;
   APP.settings.companyTel=document.getElementById('set-tel')?.value||APP.settings.companyTel||'';
-  APP.settings.companyFax=document.getElementById('set-fax')?.value||APP.settings.companyFax||'';
-  APP.settings.companyEmail=document.getElementById('set-email')?.value||APP.settings.companyEmail||'';
-  APP.settings.companyAddress=document.getElementById('set-address')?.value||APP.settings.companyAddress||'';
+  const _faxEl=document.getElementById('set-fax'); APP.settings.companyFax=_faxEl?_faxEl.value:(APP.settings.companyFax||'');
+  const _emailEl=document.getElementById('set-email'); APP.settings.companyEmail=_emailEl?_emailEl.value:(APP.settings.companyEmail||'');
+  const _addrEl=document.getElementById('set-address'); APP.settings.companyAddress=_addrEl?_addrEl.value:(APP.settings.companyAddress||'');
   const logo=document.getElementById('set-logo-data').value; if(logo) { APP.settings.companyLogo=logo; _imagesDirty=true; }
   } // end admin-only shared settings
 
