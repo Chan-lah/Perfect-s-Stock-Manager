@@ -264,12 +264,12 @@ let APP = {
   ],
   // ── FOURNISSEURS ─────────────────────────────────────────────
   fournisseurs: [
-    {id:'fiv1', nom:'Bleu',          entreprise:'IVA COM',       contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fs2m', nom:'S2ML',          entreprise:'S2ML',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'f2bp', nom:'Borro',         entreprise:'2BPUB',         contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fpda', nom:"POUVOIR D'ART", entreprise:"POUVOIR D'ART", contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'ftaj', nom:'TAJPLAST',      entreprise:'TAJPLAST',      contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0},
-    {id:'fiec', nom:'IECM',          entreprise:'IECM',          contact:'', tel:'', email:'', adresse:'', actif:true, createdAt:0}
+    {id:'fiv1', nom:'IVA COM',       entreprise:'IVA COM',       contact:'Bleu', tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fs2m', nom:'S2ML',          entreprise:'S2ML',          contact:'',     tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'f2bp', nom:'2BPUB',         entreprise:'2BPUB',         contact:'Borro',tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fpda', nom:"POUVOIR D'ART", entreprise:"POUVOIR D'ART", contact:'',     tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'ftaj', nom:'TAJPLAST',      entreprise:'TAJPLAST',      contact:'',     tel:'', email:'', adresse:'', actif:true, createdAt:0},
+    {id:'fiec', nom:'IECM',          entreprise:'IECM',          contact:'',     tel:'', email:'', adresse:'', actif:true, createdAt:0}
   ],
   commandesFourn: [],
   // ── ZONES ────────────────────────────────────────────────────
@@ -3681,8 +3681,8 @@ function viewFournDetail(fournId) {
 // GMA DATA — Articles & Fournisseurs (données permanentes)
 // ============================================================
 const GMA_FOURNISSEURS = [
-  { nom:'Borro',         entreprise:'2BPUB',          contact:'',  tel:'27 21 35 84 93', adresse:'Côte d\'Ivoire' },
-  { nom:"POUVOIR D'ART", entreprise:"POUVOIR D'ART",  contact:'',  tel:'07 57 50 99 28', adresse:'Côte d\'Ivoire' },
+  { nom:'2BPUB',          entreprise:'2BPUB',          contact:'Borro', tel:'27 21 35 84 93', adresse:'Côte d\'Ivoire' },
+  { nom:"POUVOIR D'ART",  entreprise:"POUVOIR D'ART",  contact:'',      tel:'07 57 50 99 28', adresse:'Côte d\'Ivoire' },
 ];
 const GMA_ARTICLES = [
   // INSTITUTIONNELS
@@ -3734,12 +3734,16 @@ function initGMAData() {
     APP.articles.forEach(a => { if(a.category === '60 ANS') a.category = 'EXCEPTIONNEL - DIVERS'; });
     // Corriger le champ entreprise pour les fournisseurs existants sans entreprise
     APP.fournisseurs.forEach(f => { if(!f.entreprise && f.nom) f.entreprise = f.nom; });
-    // Corriger IVA COM : si nom='IVA COM', passer entreprise='IVA COM' et nom='Bleu'
-    const fivaCom = APP.fournisseurs.find(f => f.entreprise === 'IVA COM' || f.nom === 'IVA COM');
-    if(fivaCom) { fivaCom.entreprise = 'IVA COM'; if(fivaCom.nom === 'IVA COM') fivaCom.nom = 'Bleu'; }
-    // Corriger 2BPUB : si nom='2BPUB', passer entreprise='2BPUB' et nom='Borro'
-    const f2bpub = APP.fournisseurs.find(f => f.entreprise === '2BPUB' || f.nom === '2BPUB');
-    if(f2bpub) { f2bpub.entreprise = '2BPUB'; if(f2bpub.nom === '2BPUB') f2bpub.nom = 'Borro'; }
+    // Rétrograder les noms de contact mal placés dans 'nom' (erreur migration précédente)
+    APP.fournisseurs.forEach(f => {
+      if(f.nom === 'Bleu' && f.entreprise === 'IVA COM')  { f.nom = 'IVA COM'; f.contact = f.contact || 'Bleu'; }
+      if(f.nom === 'Borro' && f.entreprise === '2BPUB')   { f.nom = '2BPUB';   f.contact = f.contact || 'Borro'; }
+    });
+    // Affecter les contacts connus si manquants
+    const fivaCom = APP.fournisseurs.find(f => f.nom === 'IVA COM' || f.entreprise === 'IVA COM');
+    if(fivaCom) { fivaCom.entreprise = 'IVA COM'; if(!fivaCom.contact) fivaCom.contact = 'Bleu'; }
+    const f2bpub = APP.fournisseurs.find(f => f.nom === '2BPUB' || f.entreprise === '2BPUB');
+    if(f2bpub) { f2bpub.entreprise = '2BPUB'; if(!f2bpub.contact) f2bpub.contact = 'Borro'; }
 
     return; // STOP — la sauvegarde est la source de vérité
   }
@@ -5003,10 +5007,10 @@ function previewCompanyBon(coId) {
 let bonEditorState={
   name:'GMA \u2014 Les Grands Moulins d\'Abidjan',
   shortName:'GMA',
-  address:'Zone Industrielle de Vridi, 15 BP 917 Abidjan 15, C\u00f4te d\'Ivoire',
+  address:'Zone Portuaire, Quai no. 1. Treichville',
   tel:'+225 27 21 75 11 00',
-  fax:'+225 27 21 75 11 01',
-  email:'contact@gma-ci.com',
+  fax:'',
+  email:'marketing@gma.ci',
   colorPrimary:'#E8621A',
   colorSecondary:'#5C2E0A',
   colorAccent:'#FFFFFF',
@@ -5016,16 +5020,13 @@ let bonEditorState={
 };
 
 function renderBonEditor() {
-  const co=null;
-  if(co){
-    if(!bonEditorState.address&&co.address) bonEditorState.address=co.address;
-    if(!bonEditorState.tel&&co.tel) bonEditorState.tel=co.tel;
-    if(!bonEditorState.fax&&co.fax) bonEditorState.fax=co.fax;
-    if(!bonEditorState.email&&co.email) bonEditorState.email=co.email;
-    if(bonEditorState.colorPrimary==='#111111'&&co.colorPrimary) bonEditorState.colorPrimary=co.colorPrimary;
-    if(bonEditorState.colorSecondary==='#333333'&&co.colorSecondary) bonEditorState.colorSecondary=co.colorSecondary;
-    if(bonEditorState.colorAccent==='#999999'&&co.colorAccent) bonEditorState.colorAccent=co.colorAccent;
-    if(!bonEditorState.logo&&co.logo) bonEditorState.logo=co.logo;
+  // Synchroniser avec APP.settings à l'ouverture
+  if(APP && APP.settings) {
+    if(APP.settings.companyAddress) bonEditorState.address = APP.settings.companyAddress;
+    if(APP.settings.companyTel)     bonEditorState.tel     = APP.settings.companyTel;
+    bonEditorState.fax   = APP.settings.companyFax   || '';
+    bonEditorState.email = APP.settings.companyEmail  || bonEditorState.email;
+    if(APP.settings.companyLogo)    bonEditorState.logo    = bonEditorState.logo || APP.settings.companyLogo;
   }
   const s=bonEditorState;
   document.getElementById('content').innerHTML=`
