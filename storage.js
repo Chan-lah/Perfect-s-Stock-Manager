@@ -71,6 +71,46 @@ async function _saveToCloud() {
 var _cloudSaving = false;
 var _cloudSaveQueue = null; // pending save promise
 
+// ── Granular section tracking ────────────────────────────
+// Sections that are synced to Firebase (images excluded — too large)
+var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
+                      'commandesFourn','zones','secteurs','pdv','settings',
+                      'dispatch','companies','backups','audit','users'];
+
+// Fast djb2-style hash to detect changes per section
+function _strHash(str) {
+  var h = 5381;
+  for (var i = 0; i < str.length; i++) {
+    h = ((h << 5) + h) + str.charCodeAt(i);
+    h = h & h;
+  }
+  return h;
+}
+
+// Hashes from last successful cloud save { sectionName: number }
+var _sectionHashes = {};
+
+// Returns array of changed section names, or null if no previous snapshot (full save)
+function _getChangedSections(dataObj) {
+  if (!Object.keys(_sectionHashes).length) return null; // first save ever → full
+  var changed = [];
+  _SYNC_SECTIONS.forEach(function(s) {
+    try {
+      var h = _strHash(JSON.stringify(dataObj[s] !== undefined ? dataObj[s] : null));
+      if (h !== _sectionHashes[s]) changed.push(s);
+    } catch(e) { changed.push(s); }
+  });
+  return changed;
+}
+
+// Update hashes after successful save
+function _updateSectionHashes(dataObj) {
+  _SYNC_SECTIONS.forEach(function(s) {
+    try { _sectionHashes[s] = _strHash(JSON.stringify(dataObj[s] !== undefined ? dataObj[s] : null)); }
+    catch(e) { _sectionHashes[s] = 0; }
+  });
+}
+
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
   _cloudSaving = true;
@@ -113,14 +153,34 @@ async function _doSaveToCloud() {
       }
     } catch(e) { console.warn('[PSM] images cache:', e); }
 
-    // Save to Firebase Realtime Database (shared — all users see the same data)
-    // Only business data — no images
-    await _firebaseDB.ref('app_data').set({
-      data: dataObj,
-      updated_at: new Date().toISOString()
-    });
+    // ── Granular upload: only upload changed sections ──────
+    var changedSections = _getChangedSections(dataObj);
 
-    console.log('[PSM] Cloud save OK (_ts=' + _lastLocalSaveTs + ')');
+    if (changedSections !== null && changedSections.length === 0) {
+      // Nothing changed — skip upload entirely
+      console.log('[PSM] Cloud save skipped (no changes detected)');
+    } else if (changedSections === null || changedSections.length > 6) {
+      // First save or many sections changed → full upload (safe fallback)
+      await _firebaseDB.ref('app_data').set({
+        data: dataObj,
+        updated_at: new Date().toISOString()
+      });
+      console.log('[PSM] Cloud save FULL (_ts=' + _lastLocalSaveTs + ')');
+    } else {
+      // Partial upload: only changed sections via multi-location update
+      var updatePayload = {};
+      changedSections.forEach(function(s) {
+        updatePayload['data/' + s] = dataObj[s] !== undefined ? dataObj[s] : null;
+      });
+      updatePayload['data/_ts'] = dataObj._ts;
+      updatePayload['updated_at'] = new Date().toISOString();
+      await _firebaseDB.ref('app_data').update(updatePayload);
+      console.log('[PSM] Cloud save PARTIAL sections=[' + changedSections.join(',') + '] (_ts=' + _lastLocalSaveTs + ')');
+    }
+
+    // Update hashes for next diff
+    _updateSectionHashes(dataObj);
+
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
   } finally {
@@ -130,7 +190,7 @@ async function _doSaveToCloud() {
       if (typeof startRealtimeSync === 'function' && !_realtimeListenerActive) {
         startRealtimeSync();
       }
-    }, 2000);
+    }, 500);
   }
 }
 
@@ -187,8 +247,8 @@ function startRealtimeSync() {
     var cloudData = snap.val();
     if (!cloudData || !cloudData._ts) return;
 
-    // Skip if this is our own save echoing back (within 5 seconds)
-    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 5000) return;
+    // Skip if this is our own save echoing back (within 2 seconds)
+    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 2000) return;
 
     // Only update if cloud data is strictly newer
     if (cloudData._ts > (APP._ts || 0)) {
@@ -290,6 +350,7 @@ function _invalidatePageCache(pageId) { if(pageId) delete _pageCache[pageId]; el
 // PERSISTENCE
 // ============================================================
 var _cloudSavePending = null; // track pending cloud save promise
+var _cloudSaveDebounceTimer = null; // debounce timer for cloud saves
 
 function saveDB() {
   APP._ts = Date.now();
@@ -298,20 +359,24 @@ function saveDB() {
   try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   // Also save to file if available
   if (_dirHandle) { try { saveToFile(); } catch(e) {} }
-  // Cloud sync: immediate
+  // Cloud sync: debounced 1.5s (groups rapid successive changes into one upload)
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
-    _cloudSavePending = _doSaveToCloud().then(function() {
-      _cloudSavePending = null;
-    }).catch(function(e) {
-      console.warn('[PSM] Cloud save failed:', e);
-      _cloudSavePending = null;
-    });
+    clearTimeout(_cloudSaveDebounceTimer);
+    _cloudSaveDebounceTimer = setTimeout(function() {
+      _cloudSaveDebounceTimer = null;
+      _cloudSavePending = _doSaveToCloud().then(function() {
+        _cloudSavePending = null;
+      }).catch(function(e) {
+        console.warn('[PSM] Cloud save failed:', e);
+        _cloudSavePending = null;
+      });
+    }, 1500);
   }
 }
 
-// Block page unload if cloud save is pending
+// Block page unload if cloud save is pending or debounce still running
 window.addEventListener('beforeunload', function(e) {
-  if (_cloudSavePending) {
+  if (_cloudSavePending || _cloudSaveDebounceTimer) {
     e.preventDefault();
     e.returnValue = 'Sauvegarde en cours...';
   }
