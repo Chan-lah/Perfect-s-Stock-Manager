@@ -1701,8 +1701,9 @@ function refreshDashboard(showNotif) {
   if(dpv) {
     const activeArts = APP.articles.filter(a => a.stock > 0);
     const dispRules = APP.dispatch && APP.dispatch.rules ? APP.dispatch.rules : {};
-    const totalDispatched = (APP.dispatch && APP.dispatch.history ? APP.dispatch.history : [])
-      .reduce(function(s, h) { return s + ((h.lignes||[]).reduce(function(s2,l){ return s2+(l.qty||0); }, 0)); }, 0);
+    var _dh = APP.dispatch && APP.dispatch.history;
+    var _dhArr = Array.isArray(_dh) ? _dh : (_dh && typeof _dh === 'object' ? Object.values(_dh) : []);
+    const totalDispatched = _dhArr.reduce(function(s, h) { return s + ((Array.isArray(h.lignes)?h.lignes:Object.values(h.lignes||{})).reduce(function(s2,l){ return s2+(l.qty||0); }, 0)); }, 0);
     const activeRulesCount = Object.values(dispRules).filter(Boolean).length;
     dpv.innerHTML = [
       `<span class="chip">${APP.commerciaux.length} commerciaux</span>`,
