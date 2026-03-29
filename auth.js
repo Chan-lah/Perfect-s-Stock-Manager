@@ -203,9 +203,6 @@ async function _handleLogin(e) {
       throw new Error('Compte d\u00e9sactiv\u00e9. Contactez l\u2019administrateur.');
     }
 
-    // 2c. Start real-time sync
-    if (typeof startRealtimeSync === 'function') startRealtimeSync();
-
     // 3. Sync local user
     if (!APP.users) APP.users = [];
     var localUser = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
@@ -244,36 +241,40 @@ async function _handleLogin(e) {
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
-    // Compare local vs cloud timestamps and use the most recent data.
-    // Cloud read has a 5s timeout to prevent hanging on large/corrupt cloud data.
-    // If cloud read times out or fails, we fall back to local data and push it to cloud.
+    // Sync strategy:
+    // 1. Read ONLY the timestamp from cloud (tiny read, avoids downloading huge corrupt data)
+    // 2. If cloud is newer: fetch full data (safe once clean data has been pushed)
+    // 3. If local is newer or equal: push local clean data to cloud first, then sync runs on clean data
     var _cloudTs = 0;
     var _cloudData = null;
 
     try {
       if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-        var _snapP = _firebaseDB.ref('app_data').once('value');
-        var _toP = new Promise(function(_, rej) {
-          setTimeout(function() { rej(new Error('cloud-timeout')); }, 5000);
-        });
-        var snap = await Promise.race([_snapP, _toP]);
-        if (snap.exists()) {
-          var entry = snap.val();
-          // Only read the timestamp first (avoid parsing huge data if we don't need it)
-          _cloudTs = (entry.data && entry.data._ts) || 0;
-          if (_cloudTs > _localTs) {
-            // Cloud is newer: use full cloud data
-            _cloudData = entry.data || null;
-          }
-        }
+        // Read ONLY the timestamp — a single integer, not the full dataset
+        var _tsSnap = await _firebaseDB.ref('app_data/data/_ts').once('value');
+        _cloudTs = _tsSnap.exists() ? (_tsSnap.val() || 0) : 0;
       }
     } catch(ex) {
-      console.warn('[PSM] cloud load (will use local):', ex.message || ex);
+      console.warn('[PSM] cloud ts read:', ex.message || ex);
     }
 
-    // Pick the newest version
+    if (_cloudTs > _localTs) {
+      // Cloud is newer: fetch full data (with 8s timeout)
+      try {
+        var _snapP = _firebaseDB.ref('app_data/data').once('value');
+        var _toP = new Promise(function(_, rej) {
+          setTimeout(function() { rej(new Error('timeout')); }, 8000);
+        });
+        var _fullSnap = await Promise.race([_snapP, _toP]);
+        if (_fullSnap.exists()) _cloudData = _fullSnap.val();
+      } catch(ex) {
+        console.warn('[PSM] cloud full read:', ex.message || ex);
+        _cloudData = null; // fallback to local on timeout
+      }
+    }
+
     if (_cloudData && _cloudTs > _localTs) {
-      // Cloud is newer -- merge cloud data into APP
+      // Cloud is newer -- merge into APP
       if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
@@ -285,8 +286,7 @@ async function _handleLogin(e) {
         }
       } catch(e) {}
     } else {
-      // Local is newer, equal, or cloud read failed -- push local to cloud
-      // This also overwrites any corrupt/oversized old cloud data
+      // Local is newer or equal -- push clean local data to cloud (overwrites corrupt data)
       if (typeof _doSaveToCloud === 'function') {
         try { await _doSaveToCloud(); } catch(ex) { console.warn('[PSM] cloud push:', ex); }
       }
