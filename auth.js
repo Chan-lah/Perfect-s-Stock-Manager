@@ -286,9 +286,10 @@ async function _handleLogin(e) {
         }
       } catch(e) {}
     } else {
-      // Local is newer or equal -- push clean local data to cloud (overwrites corrupt data)
+      // Local is newer or equal: push to cloud in background (non-blocking)
+      // _doSaveToCloud starts real-time sync automatically when upload finishes
       if (typeof _doSaveToCloud === 'function') {
-        try { await _doSaveToCloud(); } catch(ex) { console.warn('[PSM] cloud push:', ex); }
+        _doSaveToCloud().catch(function(ex) { console.warn('[PSM] bg cloud push:', ex); });
       }
     }
 
@@ -310,8 +311,10 @@ async function _handleLogin(e) {
       console.log('[PSM] APP.users:', APP.users.map(function(u) { return u.email + '/' + u.name; }));
     }
 
-    // 5c. Start real-time sync
-    if (typeof startRealtimeSync === 'function') startRealtimeSync();
+    // 5c. Start real-time sync (only if cloud was newer — _doSaveToCloud handles it otherwise)
+    if (_cloudData && _cloudTs > _localTs) {
+      if (typeof startRealtimeSync === 'function') startRealtimeSync();
+    }
 
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
