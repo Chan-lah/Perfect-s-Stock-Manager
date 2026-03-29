@@ -310,9 +310,11 @@ async function _handleLogin(e) {
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
 
+    console.log('[LOGIN] Step 7: removing overlay');
     // 7. Remove overlay
     var overlay = document.getElementById('login-overlay');
     if (overlay) overlay.remove();
+    console.log('[LOGIN] Step 7b: overlay removed');
 
     // 7b. Load user-specific preferences (theme, background)
     try {
@@ -326,7 +328,9 @@ async function _handleLogin(e) {
     } catch(ex) { console.warn('[PSM] load prefs:', ex); }
 
     // 8. Re-render full UI
+    console.log('[LOGIN] Step 8: calling _finishAppInit');
     if (typeof _finishAppInit === 'function') await _finishAppInit();
+    console.log('[LOGIN] Step 8b: _finishAppInit done');
     // Force badge update (in case _finishAppInit missed it)
     if (typeof updateUserBadge === 'function') updateUserBadge();
     if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + (localUser ? localUser.name : email) + ' !', 'success');
