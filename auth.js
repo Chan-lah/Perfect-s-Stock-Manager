@@ -76,7 +76,7 @@ function _syncProfileToLocal(profile) {
   var existing = APP.users.find(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
   if (existing) {
     existing.name = profile.display_name || existing.name;
-    existing.role = profile.role || 'viewer';  // Always use Firebase role
+    existing.role = profile.role || existing.role || 'viewer';  // Firebase role wins, keep existing if missing
     existing.permissions = profile.permissions || existing.permissions;
     // Restore photo/signature from Firebase profile if available
     if (profile.photo) existing.photo = profile.photo;

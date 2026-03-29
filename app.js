@@ -1700,14 +1700,16 @@ function refreshDashboard(showNotif) {
   const dpv = document.getElementById('dash-dispatch-preview');
   if(dpv) {
     const activeArts = APP.articles.filter(a => a.stock > 0);
-    const rules = Array.isArray(APP.dispatch?.rules) ? APP.dispatch.rules : Object.values(APP.dispatch?.rules || {});
-    const totalDispatched = rules.reduce((s, r) => s + (r.totalQty || 0), 0);
+    const dispRules = APP.dispatch && APP.dispatch.rules ? APP.dispatch.rules : {};
+    const totalDispatched = (APP.dispatch && APP.dispatch.history ? APP.dispatch.history : [])
+      .reduce(function(s, h) { return s + ((h.lignes||[]).reduce(function(s2,l){ return s2+(l.qty||0); }, 0)); }, 0);
+    const activeRulesCount = Object.values(dispRules).filter(Boolean).length;
     dpv.innerHTML = [
       `<span class="chip">${APP.commerciaux.length} commerciaux</span>`,
       `<span class="chip">${(APP.zones||[]).length} zones</span>`,
       `<span class="chip">${activeArts.length} gadgets en stock</span>`,
-      `<span class="chip" style="color:var(--accent)">${totalDispatched} unités planifiées</span>`,
-      `<span class="chip" style="color:var(--text-2)">${rules.length} règles dispatch</span>`,
+      `<span class="chip" style="color:var(--accent)">${totalDispatched} unités distribuées</span>`,
+      `<span class="chip" style="color:var(--text-2)">${activeRulesCount} règles actives</span>`,
     ].join('');
   }
 }
@@ -6805,7 +6807,7 @@ function dispComputeAllocation(articleId, totalToDispatch) {
   // Pass 1: meet minimums
   let remaining = totalToDispatch;
   alloc.forEach(a => {
-    if (D.rules.respectMin && a.min > 0) {
+    if (D.rules && D.rules.respectMin && a.min > 0) {
       const give = Math.min(a.min, remaining);
       a.qty = give;
       remaining -= give;
