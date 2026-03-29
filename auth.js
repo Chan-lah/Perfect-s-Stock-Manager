@@ -186,17 +186,20 @@ async function _handleLogin(e) {
   btn.textContent = 'Connexion...';
 
   try {
+    console.log('[LOGIN] Step 1: starting auth');
     // 1. Authenticate via Firebase
     if (!_firebaseAuth) {
       throw new Error('Service de connexion indisponible. V\u00e9rifiez votre connexion internet.');
     }
-
     await _signIn(email, password);
+    console.log('[LOGIN] Step 1 OK - user:', _cloudUser && _cloudUser.email);
     _onlineMode = true;
     _supabaseUser = _cloudUser; // backward compat
 
     // 2. Load profile (role, permissions)
+    console.log('[LOGIN] Step 2: loading profile');
     await _loadUserProfile();
+    console.log('[LOGIN] Step 2 OK - profile:', JSON.stringify(_userProfile));
 
     // 2b. Check if user is active
     if (_userProfile && _userProfile.is_active === false) {
