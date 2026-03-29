@@ -244,33 +244,36 @@ async function _handleLogin(e) {
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
-    // Load cloud data only if no local data exists (new device scenario).
-    // If local data exists, skip cloud read to avoid hanging on large/corrupt data,
-    // then push local data to Firebase to overwrite any bad cloud data.
+    // Compare local vs cloud timestamps and use the most recent data.
+    // Cloud read has a 5s timeout to prevent hanging on large/corrupt cloud data.
+    // If cloud read times out or fails, we fall back to local data and push it to cloud.
     var _cloudTs = 0;
     var _cloudData = null;
 
-    if (_localTs === 0) {
-      // No local data: try to fetch from cloud (8s timeout prevents hanging)
-      try {
-        if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-          var _snapP = _firebaseDB.ref('app_data').once('value');
-          var _toP = new Promise(function(_, rej) {
-            setTimeout(function() { rej(new Error('timeout')); }, 8000);
-          });
-          var snap = await Promise.race([_snapP, _toP]);
-          if (snap.exists()) {
-            var entry = snap.val();
+    try {
+      if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+        var _snapP = _firebaseDB.ref('app_data').once('value');
+        var _toP = new Promise(function(_, rej) {
+          setTimeout(function() { rej(new Error('cloud-timeout')); }, 5000);
+        });
+        var snap = await Promise.race([_snapP, _toP]);
+        if (snap.exists()) {
+          var entry = snap.val();
+          // Only read the timestamp first (avoid parsing huge data if we don't need it)
+          _cloudTs = (entry.data && entry.data._ts) || 0;
+          if (_cloudTs > _localTs) {
+            // Cloud is newer: use full cloud data
             _cloudData = entry.data || null;
-            _cloudTs = (_cloudData && _cloudData._ts) || 0;
           }
         }
-      } catch(ex) { console.warn('[PSM] cloud load:', ex); }
+      }
+    } catch(ex) {
+      console.warn('[PSM] cloud load (will use local):', ex.message || ex);
     }
 
     // Pick the newest version
     if (_cloudData && _cloudTs > _localTs) {
-      // Cloud is newer (new device) -- use cloud data
+      // Cloud is newer -- merge cloud data into APP
       if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
@@ -281,8 +284,9 @@ async function _handleLogin(e) {
           _restoreImages(APP, JSON.parse(cachedImgs));
         }
       } catch(e) {}
-    } else if (_localTs > 0) {
-      // Have local data -- push to cloud (overwrites any corrupt/outdated cloud data)
+    } else {
+      // Local is newer, equal, or cloud read failed -- push local to cloud
+      // This also overwrites any corrupt/oversized old cloud data
       if (typeof _doSaveToCloud === 'function') {
         try { await _doSaveToCloud(); } catch(ex) { console.warn('[PSM] cloud push:', ex); }
       }
