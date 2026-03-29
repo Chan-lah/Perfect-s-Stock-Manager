@@ -244,32 +244,37 @@ async function _handleLogin(e) {
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
-    // Load cloud data into a temp variable (don't overwrite APP yet)
+    // Load cloud data only if no local data exists (new device scenario).
+    // If local data exists, skip cloud read to avoid hanging on large/corrupt data,
+    // then push local data to Firebase to overwrite any bad cloud data.
     var _cloudTs = 0;
     var _cloudData = null;
-    try {
-      if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-        var snap = await _firebaseDB.ref('app_data').once('value');
-        if (snap.exists()) {
-          var entry = snap.val();
-          _cloudData = entry.data || null;
-          _cloudTs = (_cloudData && _cloudData._ts) || 0;
-        }
-      }
-    } catch(ex) { console.warn('[PSM] cloud load:', ex); }
 
-    console.log('[PSM] Timestamps — local: ' + _localTs + ', cloud: ' + _cloudTs);
+    if (_localTs === 0) {
+      // No local data: try to fetch from cloud (8s timeout prevents hanging)
+      try {
+        if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+          var _snapP = _firebaseDB.ref('app_data').once('value');
+          var _toP = new Promise(function(_, rej) {
+            setTimeout(function() { rej(new Error('timeout')); }, 8000);
+          });
+          var snap = await Promise.race([_snapP, _toP]);
+          if (snap.exists()) {
+            var entry = snap.val();
+            _cloudData = entry.data || null;
+            _cloudTs = (_cloudData && _cloudData._ts) || 0;
+          }
+        }
+      } catch(ex) { console.warn('[PSM] cloud load:', ex); }
+    }
 
     // Pick the newest version
     if (_cloudData && _cloudTs > _localTs) {
-      // Cloud is newer → use cloud data
-      console.log('[PSM] Using CLOUD data (newer)');
-      // Fix Firebase arrays-as-objects before merging
+      // Cloud is newer (new device) -- use cloud data
       if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
-      APP.users = _usersBackup; // preserve users
-      // Restore images from localStorage cache (not from cloud)
+      APP.users = _usersBackup;
       try {
         var cachedImgs = localStorage.getItem('psm_images_cache');
         if (cachedImgs && typeof _restoreImages === 'function') {
@@ -277,11 +282,9 @@ async function _handleLogin(e) {
         }
       } catch(e) {}
     } else if (_localTs > 0) {
-      // Local is newer or equal → keep localStorage (already loaded in initApp)
-      console.log('[PSM] Using LOCAL data (newer or equal)');
-      // Push local data to cloud so it's up to date
+      // Have local data -- push to cloud (overwrites any corrupt/outdated cloud data)
       if (typeof _doSaveToCloud === 'function') {
-        try { await _doSaveToCloud(); } catch(ex) {}
+        try { await _doSaveToCloud(); } catch(ex) { console.warn('[PSM] cloud push:', ex); }
       }
     }
 
