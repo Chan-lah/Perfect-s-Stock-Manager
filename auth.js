@@ -186,20 +186,16 @@ async function _handleLogin(e) {
   btn.textContent = 'Connexion...';
 
   try {
-    console.log('[LOGIN] Step 1: starting auth');
     // 1. Authenticate via Firebase
     if (!_firebaseAuth) {
       throw new Error('Service de connexion indisponible. V\u00e9rifiez votre connexion internet.');
     }
     await _signIn(email, password);
-    console.log('[LOGIN] Step 1 OK - user:', _cloudUser && _cloudUser.email);
     _onlineMode = true;
     _supabaseUser = _cloudUser; // backward compat
 
     // 2. Load profile (role, permissions)
-    console.log('[LOGIN] Step 2: loading profile');
     await _loadUserProfile();
-    console.log('[LOGIN] Step 2 OK - profile:', JSON.stringify(_userProfile));
 
     // 2b. Check if user is active
     if (_userProfile && _userProfile.is_active === false) {
@@ -313,11 +309,9 @@ async function _handleLogin(e) {
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
 
-    console.log('[LOGIN] Step 7: removing overlay');
     // 7. Remove overlay
     var overlay = document.getElementById('login-overlay');
     if (overlay) overlay.remove();
-    console.log('[LOGIN] Step 7b: overlay removed');
 
     // 7b. Load user-specific preferences (theme, background)
     try {
@@ -331,9 +325,7 @@ async function _handleLogin(e) {
     } catch(ex) { console.warn('[PSM] load prefs:', ex); }
 
     // 8. Re-render full UI
-    console.log('[LOGIN] Step 8: calling _finishAppInit');
     if (typeof _finishAppInit === 'function') await _finishAppInit();
-    console.log('[LOGIN] Step 8b: _finishAppInit done');
     // Force badge update (in case _finishAppInit missed it)
     if (typeof updateUserBadge === 'function') updateUserBadge();
     if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + (localUser ? localUser.name : email) + ' !', 'success');
