@@ -791,3 +791,110 @@ kbd{background:var(--bg-3);border:1px solid var(--border);border-radius:4px;padd
 .dash-widget[draggable="true"]:hover{box-shadow:0 0 0 2px var(--accent-glow)}
 .dash-dragging{opacity:0.4!important;transform:scale(0.98)}
 .dash-drop-target{box-shadow:0 0 0 2px var(--accent)!important;transform:scale(1.01)}
+
+/* ===== F4 — Mobile Responsive Improvements ===== */
+
+/* Filters: horizontally scrollable on mobile */
+@media(max-width:600px) {
+  .filters {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+    gap: 6px !important;
+  }
+  .filters select,
+  .filters input[type="text"],
+  .filters input[type="search"] {
+    flex-shrink: 0;
+    min-width: 120px;
+  }
+}
+
+/* KPI cards — single column on very small screens */
+@media(max-width:480px) {
+  .grid-2 { grid-template-columns: 1fr !important; }
+  .kpi-value { font-size: 26px !important; }
+  .kpi-label { font-size: 11px !important; }
+  .kpi-card { padding: 12px 14px !important; }
+}
+
+/* Topbar sticky on mobile */
+@media(max-width:600px) {
+  #topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+}
+
+/* Table wrapper: horizontal scroll on mobile */
+@media(max-width:600px) {
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    min-width: 520px;
+  }
+}
+
+/* Touch-friendly buttons */
+@media(max-width:600px) {
+  .btn, button.btn {
+    min-height: 38px;
+    padding: 6px 14px;
+  }
+  .actions-cell .btn {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+}
+
+/* Modal full-screen on mobile */
+@media(max-width:600px) {
+  .modal-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  .modal-overlay {
+    padding: 0 !important;
+    align-items: flex-end !important;
+  }
+}
+
+/* Bottom padding so content isn't hidden behind browser nav */
+@media(max-width:600px) {
+  #content {
+    padding-bottom: 72px;
+  }
+}
+
+/* Card-list helpers (used by JS card view mode) */
+.m-card-row {
+  background: var(--bg-card, var(--bg-1));
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.m-card-row .m-card-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.m-card-row .m-card-meta {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.m-card-row .m-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+/* ===== End F4 ===== */

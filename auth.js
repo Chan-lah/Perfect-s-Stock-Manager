@@ -194,6 +194,37 @@ async function _handleLogin(e) {
     _onlineMode = true;
     _supabaseUser = _cloudUser; // backward compat
 
+    // F8: Set online presence
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
+      var _presenceRef = _firebaseDB.ref('profiles/' + _cloudUser.uid + '/online');
+      var _lastSeenRef = _firebaseDB.ref('profiles/' + _cloudUser.uid + '/lastSeen');
+      _presenceRef.onDisconnect().set(false);
+      _lastSeenRef.onDisconnect().set(firebase.database.ServerValue.TIMESTAMP);
+      _presenceRef.set(true);
+    }
+
+    // F9: Create login session record
+    var _psmSessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    window._psmSessionId = _psmSessionId;
+    window._psmLoginAt = Date.now();
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
+      try {
+        var _sessionRef = _firebaseDB.ref('sessions/' + _cloudUser.uid + '/' + _psmSessionId);
+        _sessionRef.onDisconnect().update({
+          logoutAt: firebase.database.ServerValue.TIMESTAMP,
+          status: 'disconnected'
+        });
+        _sessionRef.set({
+          email: _cloudUser.email || '',
+          userName: (_userProfile && _userProfile.display_name) || _cloudUser.email || '',
+          loginAt: Date.now(),
+          logoutAt: null,
+          status: 'active',
+          userAgent: navigator.userAgent.slice(0, 100)
+        }).catch(function() {});
+      } catch(e) {}
+    }
+
     // 2. Load profile (role, permissions)
     await _loadUserProfile();
 
@@ -523,6 +554,26 @@ function logoutUser() {
   _cloudUser = null;
   _supabaseUser = null;
   _userProfile = null;
+  // F8: Clear presence on logout
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
+    try {
+      _firebaseDB.ref('profiles/' + _cloudUser.uid + '/online').set(false);
+      _firebaseDB.ref('profiles/' + _cloudUser.uid + '/lastSeen').set(firebase.database.ServerValue.TIMESTAMP);
+    } catch(e) {}
+  }
+  // F9: Record logout in session journal
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser && window._psmSessionId) {
+    try {
+      var _dur = window._psmLoginAt ? Date.now() - window._psmLoginAt : 0;
+      _firebaseDB.ref('sessions/' + _cloudUser.uid + '/' + window._psmSessionId).update({
+        logoutAt: firebase.database.ServerValue.TIMESTAMP,
+        duration: _dur,
+        status: 'clean'
+      }).catch(function() {});
+      window._psmSessionId = null;
+      window._psmLoginAt = null;
+    } catch(e) {}
+  }
   if (_firebaseAuth) {
     _firebaseAuth.signOut().catch(function(){});
   }

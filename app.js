@@ -365,12 +365,28 @@ function fmtCurrency(v, cur) {
   cur = cur || APP.settings.currency || 'XOF';
   return new Intl.NumberFormat('fr-FR', { style:'currency', currency:cur, minimumFractionDigits:0 }).format(v||0);
 }
-function bonNumber() {
-  const year = new Date().getFullYear();
-  const yearBons = APP.bons.filter(b => b.numero && b.numero.startsWith('BS-' + year + '-')).length;
-  return 'BS-' + year + '-' + String(yearBons + 1).padStart(4, '0');
+async function bonNumber() {
+  var _yr = new Date().getFullYear();
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
+    try {
+      var _res = await _firebaseDB.ref('counters/bons/' + _yr).transaction(function(n) { return (n || 0) + 1; });
+      return 'BS-' + _yr + '-' + String(_res.snapshot.val()).padStart(4, '0');
+    } catch(e) { console.warn('[PSM] bonNumber tx:', e); }
+  }
+  var _n = (APP.bons || []).filter(function(b){ return b.numero && b.numero.startsWith('BS-' + _yr + '-'); }).length;
+  return 'BS-' + _yr + '-' + String(_n + 1).padStart(4, '0');
 }
-function cmdOrderNum() { return 'CF-' + new Date().getFullYear() + '-' + String((APP.commandesFourn||[]).length+1).padStart(3,'0'); }
+async function cmdOrderNum() {
+  var _yr = new Date().getFullYear();
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
+    try {
+      var _res = await _firebaseDB.ref('counters/cmds/' + _yr).transaction(function(n) { return (n || 0) + 1; });
+      return 'CF-' + _yr + '-' + String(_res.snapshot.val()).padStart(3, '0');
+    } catch(e) { console.warn('[PSM] cmdOrderNum tx:', e); }
+  }
+  var _n = (APP.commandesFourn || []).filter(function(c){ return c.numero && c.numero.startsWith('CF-' + _yr + '-'); }).length;
+  return 'CF-' + _yr + '-' + String(_n + 1).padStart(3, '0');
+}
 function downloadFile(content, filename, type) {
   const blob = new Blob([content], {type}); const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = filename; a.click();
@@ -394,9 +410,22 @@ function hexToLight(hex) {
 // AUDIT LOG
 // ============================================================
 function auditLog(type, entity, entityId, oldVal, newVal) {
-  APP.audit.unshift({ id:generateId(), ts:Date.now(), type, entity, entityId, oldVal:JSON.stringify(oldVal), newVal:JSON.stringify(newVal) });
-  if(APP.audit.length > 1000) APP.audit = APP.audit.slice(0,1000);
+  var _u = (typeof _currentUser === 'function') ? _currentUser() : null;
+  var _cu = (typeof _cloudUser !== 'undefined') ? _cloudUser : null;
+  var _entry = {
+    id: generateId(), ts: Date.now(), type: type, entity: entity, entityId: entityId,
+    oldVal: JSON.stringify(oldVal), newVal: JSON.stringify(newVal),
+    userEmail: (_u && _u.email) || (_cu && _cu.email) || 'unknown',
+    userName:  (_u && (_u.name || _u.display_name)) || (_cu && _cu.displayName) || 'unknown',
+    userRole:  (_u && _u.role) || 'unknown'
+  };
+  if (!APP.audit) APP.audit = [];
+  APP.audit.unshift(_entry);
+  if (APP.audit.length > 1000) APP.audit = APP.audit.slice(0, 1000);
   saveDB();
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cu) {
+    _firebaseDB.ref('audit_log').push(_entry).catch(function(){});
+  }
 }
 
 // ── Storage: Backup Scheduler + autoBackup + _saveBackupToFile ── (moved to storage.js)
@@ -454,6 +483,27 @@ const BON_STATUSES = [
 ];
 
 
+// ============================================================
+// F3 — NOTIFICATIONS NAVIGATEUR
+// ============================================================
+function _requestNotifPermission() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  Notification.requestPermission().catch(function(){});
+}
+
+function _sendBrowserNotif(title, body, tag) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    new Notification(title, {
+      body: body,
+      icon: 'favicon.ico',
+      tag: tag || ('psm-' + Date.now())
+    });
+  } catch(e) {}
+}
+
+var _notifSentAlerts = new Set();
+
 async function initApp() {
   try {
     if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
@@ -508,6 +558,7 @@ function _deduplicateUsers() {
 }
 
 async function _finishAppInit() {
+  _requestNotifPermission();
   _deduplicateUsers();
   try {
   if(!APP.commandesFourn) APP.commandesFourn = [];
@@ -696,7 +747,7 @@ function showPage(id) {
     'gma-catalogue':renderGMACatalogue,
     analytics:renderAnalytics, dispatch:renderDispatchPage, audit:renderAudit, boneditor:renderBonEditor, settings:renderSettings,
     calendar:renderCalendar,
-    administration:function(){ document.getElementById('content').innerHTML = renderAdminPage(); }
+    administration:function(){ document.getElementById('content').innerHTML = renderAdminPage(); _watchPresence(); }
   };
   document.getElementById('content').innerHTML = '';
   if(renders[id]) renders[id]();
@@ -923,6 +974,18 @@ function updateAlertBadge() {
   const alerts = APP.articles.filter(a => a.stock <= a.stockMin);
   const b = document.getElementById('badge-articles');
   if(b) { b.textContent = alerts.length; b.style.display = alerts.length ? '' : 'none'; }
+  // F3: Browser notifications for low stock
+  alerts.forEach(function(a) {
+    var _nkey = 'stock_' + a.id;
+    if (!_notifSentAlerts.has(_nkey)) {
+      _sendBrowserNotif(
+        '\u26a0 Stock bas \u2014 ' + a.name,
+        'Stock: ' + (a.stock||0) + ' (min: ' + (a.stockMin||0) + ')',
+        _nkey
+      );
+      _notifSentAlerts.add(_nkey);
+    }
+  });
   const frauds = detectFraud();
   const fb = document.getElementById('badge-fraud');
   if(fb) { fb.style.display = frauds.length ? '' : 'none'; }
@@ -3783,6 +3846,29 @@ function initGMAData() {
 // ============================================================
 // CATALOGUE GMA
 // ============================================================
+function applyGMAFilters() {
+  var _search = ((document.getElementById('gma-search') || {}).value || '').toLowerCase();
+  var _stockF = (document.getElementById('gma-filter-stock') || {}).value || 'all';
+  var _fournF = (document.getElementById('gma-filter-fourn') || {}).value || 'all';
+  var _catF   = (document.getElementById('gma-filter-cat') || {}).value || 'all';
+  var _arts = (APP.articles || []).filter(function(a) {
+    if (!a._gma) return false;
+    if (_catF !== 'all' && a.category !== _catF) return false;
+    if (_fournF !== 'all' && a.fournisseur !== _fournF) return false;
+    if (_stockF === 'ok'  && (a.stock||0) <= (a.stockMin||0)) return false;
+    if (_stockF === 'low' && !((a.stock||0) > 0 && (a.stock||0) <= (a.stockMin||0))) return false;
+    if (_stockF === 'out' && (a.stock||0) > 0) return false;
+    if (_search && !(a.name||'').toLowerCase().includes(_search) && !((a.code||'').toLowerCase().includes(_search))) return false;
+    return true;
+  });
+  var _grid = document.getElementById('gma-grid');
+  if (_grid) {
+    _grid.innerHTML = _arts.length
+      ? _arts.map(function(a,i){ return renderGMACard(a,i); }).join('')
+      : '<div style="grid-column:1/-1;padding:40px;text-align:center"><p style="color:var(--text-2)">Aucun article trouvé</p></div>';
+  }
+}
+
 function renderGMACatalogue() {
   const logo = APP.settings.gmaLogo || localStorage.getItem(GMA_LOGO_KEY) || '';
   const cats = [...new Set(GMA_ARTICLES.map(a=>a.category))];
@@ -3806,6 +3892,23 @@ function renderGMACatalogue() {
   <div class="gma-cat-tabs" id="gma-tabs">
     <button class="gma-cat-tab active" onclick="filterGMACat('all',this)">Tous</button>
     ${cats.map(c=>`<button class="gma-cat-tab" onclick="filterGMACat('${c}',this)">${c}</button>`).join('')}
+  </div>
+  <div class="filters" style="margin:10px 0 14px;gap:8px;flex-wrap:wrap">
+    <input type="text" id="gma-search" placeholder="Rechercher..." oninput="applyGMAFilters()" style="flex:1;min-width:140px">
+    <select id="gma-filter-stock" onchange="applyGMAFilters()" style="width:auto">
+      <option value="all">Tout le stock</option>
+      <option value="ok">Stock OK</option>
+      <option value="low">En alerte</option>
+      <option value="out">Rupture</option>
+    </select>
+    <select id="gma-filter-fourn" onchange="applyGMAFilters()" style="width:auto">
+      <option value="all">Tous fournisseurs</option>
+      ${[...new Set(APP.articles.filter(a=>a._gma&&a.fournisseur).map(a=>a.fournisseur))].map(f=>`<option value="${f}">${f}</option>`).join('')}
+    </select>
+    <select id="gma-filter-cat" onchange="applyGMAFilters()" style="width:auto">
+      <option value="all">Toutes catégories</option>
+      ${cats.map(c=>`<option value="${c}">${c}</option>`).join('')}
+    </select>
   </div>
   <div class="gma-article-grid" id="gma-grid">
     ${APP.articles.filter(a=>a._gma).map((a,i)=>renderGMACard(a,i)).join('')}
@@ -3851,6 +3954,8 @@ function renderGMACard(a, i=0) {
 function filterGMACat(cat, btn) {
   document.querySelectorAll('.gma-cat-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
+  var _sel = document.getElementById('gma-filter-cat');
+  if (_sel) { _sel.value = cat; applyGMAFilters(); return; }
   const arts = APP.articles.filter(a=>a._gma && (cat==='all'||a.category===cat));
   document.getElementById('gma-grid').innerHTML = arts.map((a,i)=>renderGMACard(a,i)).join('');
 }
@@ -4169,6 +4274,58 @@ function renderOrderCard(c) {
 
 // ── Modal réception (refonte) ───────────────────────────────
 
+function generateReceptionHTML(cmd, recLines) {
+  var _co = APP.settings || {};
+  var _logo = _co.companyLogo ? '<img src="'+_co.companyLogo+'" style="height:60px;object-fit:contain">' : '';
+  var _fourn = (APP.fournisseurs||[]).find(function(f){return f.id===cmd.fournisseurId;}) || {};
+  var _now = Date.now();
+  var _rows = (recLines||[]).map(function(l){
+    return '<tr>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd">' + (l.articleCode||'') + '</td>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd">' + (l.articleName||'') + '</td>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd;text-align:center">' + (l.qtyCommanded||0) + '</td>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd;text-align:center;font-weight:700;color:#E8640A">' + (l.qtyReceived||0) + '</td>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd;text-align:center">' + (l.totalReceived||0) + '</td>'
+      + '<td style="padding:6px 10px;border:1px solid #ddd;text-align:center">' + (Math.max(0,(l.qtyCommanded||0)-(l.totalReceived||0))) + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<div style="background:#fff;max-width:800px;margin:0 auto;padding:30px;font-family:Arial,sans-serif;font-size:13px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">'
+    + '<div>' + _logo + '<div style="font-size:18px;font-weight:700;color:#1B3A6B;margin-top:6px">' + (_co.companyName||'GMA') + '</div></div>'
+    + '<div style="text-align:right"><div style="font-size:22px;font-weight:900;color:#E8640A">BON DE RÉCEPTION</div>'
+    + '<div style="font-size:14px;font-weight:700;color:#1B3A6B">' + (cmd.numero||'') + '</div>'
+    + '<div style="font-size:11px;color:#666">' + (typeof fmtDateTime === 'function' ? fmtDateTime(_now) : new Date(_now).toLocaleString()) + '</div></div></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:12px">'
+    + '<div><strong>Fournisseur:</strong> ' + (_fourn.nom||cmd.fournisseurNom||'') + '</div>'
+    + '<div><strong>Commande:</strong> ' + (cmd.numero||'') + '</div></div>'
+    + '<table style="width:100%;border-collapse:collapse;margin-bottom:20px">'
+    + '<thead><tr style="background:#1B3A6B;color:#fff">'
+    + '<th style="padding:8px 10px;text-align:left">Code</th>'
+    + '<th style="padding:8px 10px;text-align:left">Désignation</th>'
+    + '<th style="padding:8px 10px;text-align:center">Qté cmdée</th>'
+    + '<th style="padding:8px 10px;text-align:center">Qté reçue</th>'
+    + '<th style="padding:8px 10px;text-align:center">Total reçu</th>'
+    + '<th style="padding:8px 10px;text-align:center">Restant</th>'
+    + '</tr></thead><tbody>' + _rows + '</tbody></table>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:30px">'
+    + '<div style="border-top:2px solid #333;padding-top:8px;text-align:center;font-size:12px">Réceptionnaire</div>'
+    + '<div style="border-top:2px solid #333;padding-top:8px;text-align:center;font-size:12px">Gestionnaire</div>'
+    + '<div style="border-top:2px solid #333;padding-top:8px;text-align:center;font-size:12px">Représentant Fournisseur</div>'
+    + '</div></div>';
+}
+
+function printReceptionBon(cmd, recLines) {
+  var _win = window.open('', '_blank', 'width=900,height=750');
+  if (!_win) { notify('Autorisez les popups pour imprimer', 'warning'); return; }
+  _win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Reception ' + (cmd.numero||'') + '<\/title>'
+    + '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px}@media print{body{background:#fff;padding:0}@page{margin:10mm}}<\/style>'
+    + '<\/head><body>' + generateReceptionHTML(cmd, recLines)
+    + '<script>window.onload=function(){setTimeout(function(){window.print();},400);}<\/script>'
+    + '<\/body><\/html>');
+  _win.document.close();
+  if (typeof auditLog === 'function') auditLog('PRINT', 'commandeFourn', cmd.id, null, { action: 'reception_pdf' });
+}
+
 function openReceptionModal(cmdId) {
   var c = (APP.commandesFourn||[]).find(function(x){ return x.id === cmdId; });
   if (!c) return;
@@ -4201,6 +4358,7 @@ function openReceptionModal(cmdId) {
     var recDate = document.getElementById('rec-date');
     var dateTs = recDate && recDate.value ? new Date(recDate.value).getTime() : Date.now();
     var anyChange = false;
+    var _recLines = [];
 
     document.querySelectorAll('.rec-qty-new').forEach(function(inp) {
       var idx = parseInt(inp.dataset.idx);
@@ -4223,6 +4381,7 @@ function openReceptionModal(cmdId) {
       }
 
       ligne.qteRecue = (ligne.qteRecue || 0) + qtyToAdd;
+      _recLines.push({ articleCode: ligne.articleCode||ligne.code||'', articleName: ligne.articleName||'', qtyCommanded: ligne.qteCommandee||0, qtyReceived: qtyToAdd, totalReceived: ligne.qteRecue||0 });
       anyChange = true;
     });
 
@@ -4235,6 +4394,12 @@ function openReceptionModal(cmdId) {
     setTimeout(function() { toggleFournOrders(c.fournisseurId); }, 100);
     updateAlertBadge();
     notify(anyChange ? 'R\u00e9ception enregistr\u00e9e, stock mis \u00e0 jour \u2713' : 'Aucun changement', anyChange ? 'success' : 'info');
+    if (anyChange && _recLines.length > 0) {
+      var _rc = c; var _rl = _recLines.slice();
+      setTimeout(function() {
+        if (confirm('Imprimer le bon de réception ?')) printReceptionBon(_rc, _rl);
+      }, 400);
+    }
   }, 'modal-lg');
 }
 
@@ -4400,6 +4565,35 @@ function _importLowStockCmd() {
   openNewCmdModal(null, preselected);
 }
 
+function _findDuplicateCmds(fournisseurId, lignes) {
+  var _artIds = new Set(lignes.map(function(l) { return l.articleId; }));
+  return (APP.commandesFourn || []).filter(function(c) {
+    if (c.fournisseurId !== fournisseurId) return false;
+    if (c.status !== 'pending' && c.status !== 'partial') return false;
+    return (c.lignes || []).some(function(l) { return _artIds.has(l.articleId); });
+  });
+}
+
+function _confirmDuplicateCmd() {
+  closeModal();
+  var p = window._pendingCmdData;
+  if (!p) return;
+  var fourn = (APP.fournisseurs || []).find(function(f){ return f.id === p.fournId; });
+  var cmd = {
+    id: generateId(), numero: p.numero, fournisseurId: p.fournId,
+    fournisseurNom: fourn ? (fourn.nom || '') : '',
+    lignes: p.lignes, status: 'pending', note: p.note,
+    dateCommande: Date.now(), dateLivraisonPrevue: null, createdAt: Date.now(),
+    _createdDespiteDuplicate: true
+  };
+  if (!APP.commandesFourn) APP.commandesFourn = [];
+  APP.commandesFourn.push(cmd);
+  auditLog('create', 'commandeFourn', cmd.id, null, cmd);
+  saveDB(); renderFournDashboard(); updateAlertBadge();
+  notify('Commande ' + cmd.numero + ' créée ✓', 'success');
+  window._pendingCmdData = null;
+}
+
 function openNewCmdModal(prefFournId, preselectedArts) {
   var fournOpts = (APP.fournisseurs||[]).map(function(f) {
     return '<option value="' + f.id + '" ' + (prefFournId === f.id ? 'selected' : '') + '>' + f.nom + (f.entreprise ? ' (' + f.entreprise + ')' : '') + '</option>';
@@ -4472,8 +4666,28 @@ function openNewCmdModal(prefFournId, preselectedArts) {
     };
 
     if (!APP.commandesFourn) APP.commandesFourn = [];
-    APP.commandesFourn.push(cmd);
 
+    // F10: Duplicate check
+    var _dupCmds = _findDuplicateCmds(fournId, lignes);
+    if (_dupCmds.length > 0) {
+      var _dupRows = _dupCmds.map(function(dc) {
+        var _shared = (dc.lignes||[]).filter(function(dl){ return lignes.some(function(nl){ return nl.articleId === dl.articleId; }); });
+        return '<div style="background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border-left:3px solid var(--warning)">'
+          + '<div style="font-weight:700;font-size:13px">' + (dc.numero||'') + '</div>'
+          + '<div style="font-size:12px;color:var(--warning);margin-top:4px">Articles en commun: ' + _shared.map(function(l){ return l.articleName||''; }).join(', ') + '</div>'
+          + '</div>';
+      }).join('');
+      var _warnBody = '<div style="color:var(--warning);font-weight:700;font-size:14px;margin-bottom:12px">⚠ Commande similaire déjà en cours</div>'
+        + '<p style="font-size:13px;margin-bottom:12px">Ce fournisseur a déjà une commande en attente avec les mêmes articles :</p>'
+        + _dupRows
+        + '<p style="font-size:12px;color:var(--text-2);margin-top:12px">Créer quand même ?</p>';
+      window._pendingCmdData = { fournId: fournId, lignes: lignes, note: cmd.note||'', numero: cmd.numero };
+      closeModal();
+      openModal('dup-warning', '⚠ Doublon potentiel', _warnBody, function() { _confirmDuplicateCmd(); }, 'modal-md');
+      return;
+    }
+
+    APP.commandesFourn.push(cmd);
     auditLog('create', 'commandeFourn', cmd.id, null, cmd);
     saveDB(); closeModal(); renderFournDashboard(); updateAlertBadge();
     notify('Commande ' + cmd.numero + ' cr\u00e9\u00e9e \u2713', 'success');
@@ -6271,6 +6485,23 @@ function _findUserIdByEmail(email) {
   return u ? u.id : null;
 }
 
+function _watchPresence() {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
+  _firebaseDB.ref('profiles').on('value', function(snap) {
+    if (!snap || !snap.exists()) return;
+    snap.forEach(function(child) {
+      var _data = child.val() || {};
+      var _isOnline = _data.online === true;
+      var _lastSeen = _data.lastSeen;
+      var _dot = document.getElementById('presence-dot-' + child.key);
+      if (_dot) {
+        _dot.style.background = _isOnline ? '#22c55e' : '#6b7280';
+        _dot.title = _isOnline ? 'En ligne' : (_lastSeen ? ('Vu le ' + (typeof fmtDateTime === 'function' ? fmtDateTime(_lastSeen) : new Date(_lastSeen).toLocaleString())) : 'Hors ligne');
+      }
+    });
+  });
+}
+
 function renderAdminPage() {
   var u = _currentUser();
   var role = (typeof _userProfile !== 'undefined' && _userProfile && _userProfile.role) || (u && u.role);
@@ -6294,7 +6525,7 @@ function renderAdminPage() {
       + (uu.photo ? '<img src="' + uu.photo + '" style="width:48px;height:48px;object-fit:cover;border-radius:50%">' : uu.name.charAt(0).toUpperCase())
       + '</div>'
       + '<div style="flex:1;min-width:0">'
-      + '<div style="font-weight:700;font-size:14px">' + uu.name + (uu.id === u.id ? ' <span style="font-size:10px;color:var(--accent)">(vous)</span>' : '') + '</div>'
+      + '<div style="font-weight:700;font-size:14px">' + uu.name + (uu.id === u.id ? ' <span style="font-size:10px;color:var(--accent)">(vous)</span>' : '') + ' <span id="presence-dot-' + uu.id + '" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#6b7280;margin-left:4px;vertical-align:middle" title="Hors ligne"></span></div>'
       + '<div style="font-size:12px;color:var(--text-2)">' + (uu.email || '\u2014') + '</div>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">'
       + '<span style="font-size:10px;background:' + roleMeta.color + '22;color:' + roleMeta.color + ';padding:2px 8px;border-radius:99px;border:1px solid ' + roleMeta.color + '44">' + roleMeta.label + '</span>'
