@@ -844,6 +844,15 @@ function selectThemePicker(themeId) {
   applyTheme(themeId);
   document.getElementById('_tp_panel')?.remove();
   if(currentPage === 'settings') renderSettings();
+  // Persist to Firebase prefs so theme survives reconnect (same payload as saveSettings)
+  if (typeof _saveUserPrefs === 'function') {
+    _saveUserPrefs({
+      theme: themeId,
+      _dynamicBg: APP.settings._dynamicBg,
+      _dynamicBgIntensity: APP.settings._dynamicBgIntensity,
+      _hiddenPages: APP.settings._hiddenPages
+    });
+  }
 }
 
 // ── DYNAMIC BACKGROUND ENGINE ──
@@ -1780,8 +1789,13 @@ function refreshDashboard(showNotif) {
 
 function drawChartCat() {
   const canvas = document.getElementById('chartCat'); if(!canvas) return;
-  canvas.width = canvas.offsetWidth||300; canvas.height = 180;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.offsetWidth || 300;
+  const h = 180;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
   const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
 
   // Resolve CSS variables to actual computed colors (canvas doesn't support CSS vars)
   const cs = getComputedStyle(document.documentElement);
@@ -1813,7 +1827,7 @@ function drawChartCat() {
   if(!activeLabels.length) {
     ctx.fillStyle = emptyCol;
     ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Aucun article en stock', canvas.width/2, 90);
+    ctx.fillText('Aucun article en stock', w/2, 90);
     return;
   }
 
@@ -1822,7 +1836,7 @@ function drawChartCat() {
 
   const total = values.reduce((s,v)=>s+v,0)||1;
   let angle = -Math.PI/2;
-  const cx = canvas.width/2, cy = 90, r = 70;
+  const cx = w/2, cy = 90, r = 70;
 
   activeLabels.forEach((l,i) => {
     const slice = (values[i]/total)*Math.PI*2;
@@ -1846,7 +1860,7 @@ function drawChartCat() {
   const maxLg = Math.min(activeLabels.length, 8);
   let ly = 14;
   for(let i=0;i<maxLg;i++) {
-    const lx = canvas.width - 92;
+    const lx = w - 92;
     ctx.fillStyle = palette[i%palette.length];
     ctx.beginPath(); ctx.arc(lx+5, ly-3, 4, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = textCol; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
@@ -1856,14 +1870,19 @@ function drawChartCat() {
   }
   if(activeLabels.length > maxLg) {
     ctx.fillStyle = emptyCol; ctx.font = '9px sans-serif';
-    ctx.fillText('+'+( activeLabels.length-maxLg)+' autres', canvas.width-92, ly+1);
+    ctx.fillText('+'+( activeLabels.length-maxLg)+' autres', w-92, ly+1);
   }
 }
 
 function drawChartMvt() {
   var canvas = document.getElementById('chartMvt'); if(!canvas) return;
-  canvas.width = canvas.offsetWidth||300; canvas.height = 200;
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.offsetWidth || 300;
+  var h = 200;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
   var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
   // Determine period from date pickers or default to current month
   var fromEl = document.getElementById('chartMvt-from');
   var toEl = document.getElementById('chartMvt-to');
@@ -1899,7 +1918,7 @@ function drawChartMvt() {
     sorties.push(APP.mouvements.filter(function(m){return m.type==='sortie'&&m.ts>=ds&&m.ts<de}).reduce(function(x,m){return x+m.qty},0));
   });
   var N = days.length;
-  var W=canvas.width, H=canvas.height, padL=36, padB=30, padT=22, padR=10;
+  var W=w, H=h, padL=36, padB=30, padT=22, padR=10;
   var chartW=W-padL-padR, chartH=H-padB-padT;
   var maxVal=Math.max.apply(null, entrees.concat(sorties).concat([1]));
   var _cs = getComputedStyle(document.documentElement);
