@@ -1336,7 +1336,7 @@ function renderDashboard() {
       <button class="btn btn-secondary btn-sm" onclick="openDashWidgetConfig()" title="Personnaliser">⚙️ Personnaliser</button>
     </div>
   </div>
-  <div class="grid-4 mb-16 dash-widget" data-widget="kpis">
+  <div class="grid-3 mb-16 dash-widget" data-widget="kpis">
     <div class="card"><div class="card-header"><span class="card-title">Stock Total</span><div class="kpi-icon" style="background:rgba(61,127,255,.15);color:var(--accent)">${ICONS.box}</div></div><div class="kpi-value" id="kv-stock" style="color:var(--accent)">—</div><div class="kpi-change" id="ks-stock">—</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Alertes</span><div class="kpi-icon" style="background:rgba(255,71,87,.15);color:var(--danger)">⚠️</div></div><div class="kpi-value" id="kv-alerts">—</div><div class="kpi-change">Gadgets sous seuil</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Bons / 30j</span><div class="kpi-icon" style="background:rgba(0,229,170,.15);color:var(--accent2)">📋</div></div><div class="kpi-value" id="kv-bons" style="color:var(--accent2)">—</div><div class="kpi-change">Bons émis</div></div>
