@@ -7429,7 +7429,7 @@ function renderDispatchPage() {
     + _dpTab('dispatch', 'R\u00e9partition', activeTab)
     + _dpTab('historique', 'Historique', activeTab)
     + '<div style="margin-left:auto;padding-bottom:8px;display:flex;gap:8px">'
-    + '<button class="btn btn-secondary btn-sm" onclick="saveDB();notify('\u2601 Configuration sauvegard\u00e9e','success')" style="font-weight:600"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:5px"></i>Sauvegarder config</button>'
+    + '<button class="btn btn-secondary btn-sm" onclick="saveDB();notify(&quot;\u2601 Configuration sauvegard\u00e9e&quot;,&quot;success&quot;)" style="font-weight:600"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:5px"></i>Sauvegarder config</button>'
     + (configured > 0 ? '<button class="btn btn-primary btn-sm" onclick="_showDispatchRecap()" style="font-weight:700"><i class="fa-solid fa-check" style="margin-right:6px"></i>Valider le dispatch</button>' : '')
     + '</div></div>';
 
