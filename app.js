@@ -3246,6 +3246,60 @@ function openCommercialModal(id) {
   ()=>saveCommercial(id), 'modal-lg');
 }
 
+function _syncCommercialPDV(comId, wantBoul, wantDist) {
+  if(!APP.pdv) APP.pdv = [];
+  var com = APP.commerciaux.find(function(c){ return c.id === comId; });
+  if(!com) return;
+  var comLabel = (com.prenom||'') + ' ' + (com.nom||'');
+
+  // Current real PDV for this commercial
+  var curBoul = APP.pdv.filter(function(p){ return p.commercialId===comId && p.type==='boulangerie' && p.actif!==false; });
+  var curDist = APP.pdv.filter(function(p){ return p.commercialId===comId && p.type==='distributeur' && p.actif!==false; });
+
+  // Boulangeries: add or remove
+  if(wantBoul > curBoul.length) {
+    for(var i = curBoul.length + 1; i <= wantBoul; i++) {
+      APP.pdv.push({
+        id: generateId(),
+        nom: 'Boulangerie ' + i + ' (' + com.nom + ')',
+        type: 'boulangerie',
+        commercialId: comId,
+        zoneId: com.dispatchZoneId || '',
+        secteurId: com.secteurId || '',
+        adresse: '', contact: '', actif: true,
+        createdAt: Date.now()
+      });
+    }
+  } else if(wantBoul < curBoul.length) {
+    // Remove excess (most recent first)
+    var toRemove = curBoul.slice(wantBoul);
+    var removeIds = {};
+    toRemove.forEach(function(p){ removeIds[p.id] = true; });
+    APP.pdv = APP.pdv.filter(function(p){ return !removeIds[p.id]; });
+  }
+
+  // Distributeurs: add or remove
+  if(wantDist > curDist.length) {
+    for(var j = curDist.length + 1; j <= wantDist; j++) {
+      APP.pdv.push({
+        id: generateId(),
+        nom: 'Distributeur ' + j + ' (' + com.nom + ')',
+        type: 'distributeur',
+        commercialId: comId,
+        zoneId: com.dispatchZoneId || '',
+        secteurId: com.secteurId || '',
+        adresse: '', contact: '', actif: true,
+        createdAt: Date.now()
+      });
+    }
+  } else if(wantDist < curDist.length) {
+    var toRemoveD = curDist.slice(wantDist);
+    var removeIdsD = {};
+    toRemoveD.forEach(function(p){ removeIdsD[p.id] = true; });
+    APP.pdv = APP.pdv.filter(function(p){ return !removeIdsD[p.id]; });
+  }
+}
+
 function saveCommercial(existingId) {
   const prenom = document.getElementById('com-prenom').value.trim();
   const nom = document.getElementById('com-nom').value.trim();
@@ -3276,6 +3330,10 @@ function saveCommercial(existingId) {
     auditLog('create','commercial',nc.id,null,nc);
     notify('Commercial ajouté ✓','success');
   }
+  // Sync real PDV records with Boul/Dist values
+  const comId = existingId || APP.commerciaux.find(x=>x.prenom===prenom&&x.nom===nom)?.id;
+  if(comId) _syncCommercialPDV(comId, fields.dispatchBoul, fields.dispatchDist);
+
   saveDB(); closeModal(); renderCommerciaux();
   const saved = APP.commerciaux.find(x=>x.prenom===prenom&&x.nom===nom);
   if(saved) dInitCommercialDispatchFields(saved);
