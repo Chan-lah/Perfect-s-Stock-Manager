@@ -2447,7 +2447,7 @@ function renderBonRow(b) {
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
     <td class="editable" id="td-bstat-${b.id}"><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
     <td><div style="display:flex;gap:4px">
-      <button class="btn btn-sm btn-secondary" onclick="advanceBonStatus('${b.id}')" title="Avancer le statut">→</button>
+      ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:`<button class="btn btn-sm btn-secondary" onclick="advanceBonStatus('${b.id}')" title="Avancer le statut">→</button>`}
       <button class="btn btn-sm btn-secondary" onclick="previewBon('${b.id}')">👁</button>
       <button class="btn btn-sm btn-secondary" onclick="printBon('${b.id}')">🖨</button>
       <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${b.id}')" title="PDF">📥</button>
@@ -2458,8 +2458,26 @@ function renderBonRow(b) {
 }
 
 function _handleBonStatusStockChange(b, oldStatus, newStatus) {
-  // When status changes TO annulé → restore stock
-  if(newStatus === 'annulé' && oldStatus !== 'annulé') {
+  // brouillon → validé/livré : deduct stock
+  if(oldStatus === 'brouillon' && (newStatus === 'validé' || newStatus === 'livré')) {
+    for(const l of (b.lignes||[])) {
+      const art = APP.articles.find(a => a.id === l.articleId);
+      if(art && l.qty > art.stock) { notify('Stock insuffisant pour ' + (l.name||'') + ' (Dispo: ' + art.stock + ')','error'); return false; }
+    }
+    (b.lignes || []).forEach(l => {
+      const art = APP.articles.find(a => a.id === l.articleId);
+      if(art && l.qty > 0) {
+        art.stock -= l.qty;
+        APP.mouvements.unshift({
+          id: generateId(), type: 'sortie', ts: Date.now(),
+          articleId: art.id, articleName: art.name, qty: l.qty,
+          note: 'Bon ' + (b.numero||'') + ' → ' + (b.recipiendaire||''), commercialId: b.commercialId||''
+        });
+      }
+    });
+  }
+  // When status changes TO annulé → restore stock (only if was validated)
+  if(newStatus === 'annulé' && oldStatus !== 'annulé' && oldStatus !== 'brouillon') {
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > 0) {
@@ -2469,7 +2487,6 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
           articleId: art.id, articleName: art.name, qty: l.qty,
           note: 'Annulation Bon ' + (b.numero||''), commercialId: b.commercialId||''
         });
-        auditLog('STOCK_ENTREE','article',art.id,{stock:art.stock-l.qty},{stock:art.stock,note:'Annulation Bon '+(b.numero||'')});
       }
     });
   }
@@ -2477,7 +2494,7 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
   if(oldStatus === 'annulé' && newStatus === 'validé') {
     for(const l of (b.lignes||[])) {
       const art = APP.articles.find(a => a.id === l.articleId);
-      if(art && l.qty > art.stock) { notify('Stock insuffisant pour ' + l.name + ' (Dispo: ' + art.stock + ')','error'); return false; }
+      if(art && l.qty > art.stock) { notify('Stock insuffisant pour ' + (l.name||'') + ' (Dispo: ' + art.stock + ')','error'); return false; }
     }
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
@@ -2488,7 +2505,6 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
           articleId: art.id, articleName: art.name, qty: l.qty,
           note: 'Réactivation Bon ' + (b.numero||''), commercialId: b.commercialId||''
         });
-        auditLog('STOCK_SORTIE','article',art.id,{stock:art.stock+l.qty},{stock:art.stock,note:'Réactivation Bon '+(b.numero||'')});
       }
     });
   }
@@ -7258,12 +7274,7 @@ async function validateDispatchV3(articleIds) {
 
   var ts = Date.now();
   results.forEach(function(r) {
-    r.alloc.forEach(function(a) {
-      if (a.qty > 0) {
-        APP.mouvements.unshift({ id: generateId(), type: 'sortie', ts: ts, articleId: r.art.id, articleName: r.art.name, qty: a.qty, note: 'Dispatch \u2192 ' + a.name, commercialId: a.id });
-      }
-    });
-    r.art.stock -= r.pool;
+    // No stock deduction here — stock is deducted when bon status changes from brouillon
     // Reset pool after validation
     APP.dispatch.pools[r.art.id] = 0;
     APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
@@ -7275,7 +7286,7 @@ async function validateDispatchV3(articleIds) {
     r.alloc.forEach(function(a) {
       if (a.qty > 0) {
         if (!bonsByComm[a.id]) bonsByComm[a.id] = { name: a.name, lignes: [] };
-        bonsByComm[a.id].lignes.push({ articleId: r.art.id, name: r.art.name, qty: a.qty });
+        bonsByComm[a.id].lignes.push({ articleId: r.art.id, code: r.art.code || '', name: r.art.name, qty: a.qty });
       }
     });
   });
@@ -7296,7 +7307,7 @@ async function validateDispatchV3(articleIds) {
       date: new Date().toISOString().split('T')[0],
       validite: '',
       lignes: bd.lignes,
-      status: 'livr\u00e9',
+      status: 'brouillon',
       sigDemandeur: '', sigMKT: '',
       createdAt: ts, _version: 1, _versions: []
     };
@@ -7341,6 +7352,16 @@ function _dispUpdatePool(articleId) {
 }
 
 // ── Render functions ──────────────────────────────────────────────────────────
+
+function _dispReset() {
+  if (!confirm('Remettre tous les pools et \u00e9ligibilit\u00e9s \u00e0 z\u00e9ro ?')) return;
+  _dispEnsure();
+  APP.dispatch.pools = {};
+  APP.dispatch.eligibility = {};
+  saveDB();
+  renderDispatchPage();
+  notify('Dispatch r\u00e9initialis\u00e9 \u2713', 'info');
+}
 
 function _showDispatchRecap() {
   _dispEnsure();
@@ -7429,7 +7450,8 @@ function renderDispatchPage() {
     + _dpTab('dispatch', 'R\u00e9partition', activeTab)
     + _dpTab('historique', 'Historique', activeTab)
     + '<div style="margin-left:auto;padding-bottom:8px;display:flex;gap:8px">'
-    + '<button class="btn btn-secondary btn-sm" onclick="saveDB();notify(&quot;\u2601 Configuration sauvegard\u00e9e&quot;,&quot;success&quot;)" style="font-weight:600"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:5px"></i>Sauvegarder config</button>'
+    + '<button class="btn btn-sm" onclick="_dispReset()" style="font-weight:600;color:var(--danger)"><i class="fa-solid fa-rotate-left" style="margin-right:5px"></i>Reset</button>'
+    + '<button class="btn btn-secondary btn-sm" onclick="saveDB();notify(&quot;\u2601 Configuration sauvegard\u00e9e&quot;,&quot;success&quot;);renderDispatchPage()" style="font-weight:600"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:5px"></i>Sauvegarder config</button>'
     + (configured > 0 ? '<button class="btn btn-primary btn-sm" onclick="_showDispatchRecap()" style="font-weight:700"><i class="fa-solid fa-check" style="margin-right:6px"></i>Valider le dispatch</button>' : '')
     + '</div></div>';
 
@@ -7656,6 +7678,57 @@ function dInitCommercialDispatchFields(c) {
 
 
 // ============================================================
+// ── Bon validation: deduct stock when brouillon -> livr\u00e9 ──
+function validateBon(bonId) {
+  var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
+  if (!bon) { notify('Bon introuvable', 'error'); return; }
+  if (bon.status !== 'brouillon') { notify('Ce bon n\u2019est pas en brouillon', 'warning'); return; }
+  if (!confirm('Valider ce bon et pr\u00e9lever le stock ?')) return;
+
+  // Deduct stock for each ligne
+  var ts = Date.now();
+  (bon.lignes||[]).forEach(function(l) {
+    var art = (APP.articles||[]).find(function(a){ return a.id === l.articleId; });
+    if (art) {
+      art.stock -= l.qty;
+      APP.mouvements.unshift({ id: generateId(), type: 'sortie', ts: ts, articleId: art.id, articleName: art.name, qty: l.qty, note: 'Bon ' + bon.numero + ' \u2192 ' + (bon.recipiendaire||''), commercialId: bon.commercialId||'' });
+    }
+  });
+  bon.status = 'livr\u00e9';
+  bon._validatedAt = ts;
+  saveDB();
+  auditLog('VALIDATE', 'bon', bon.numero);
+  notify('Bon ' + bon.numero + ' valid\u00e9 \u2014 stock pr\u00e9lev\u00e9 \u2713', 'success');
+  if (typeof renderBons === 'function') renderBons();
+}
+
+// ── Annuler un bon: restore stock if it was validated ──
+function cancelBon(bonId) {
+  var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
+  if (!bon) { notify('Bon introuvable', 'error'); return; }
+  var wasValidated = (bon.status === 'livr\u00e9');
+  if (!confirm('Annuler ce bon ?' + (wasValidated ? ' Le stock sera restaur\u00e9.' : ''))) return;
+
+  if (wasValidated) {
+    // Restore stock
+    (bon.lignes||[]).forEach(function(l) {
+      var art = (APP.articles||[]).find(function(a){ return a.id === l.articleId; });
+      if (art) art.stock += l.qty;
+    });
+    // Remove associated mouvements
+    var bonRef = 'Bon ' + bon.numero;
+    APP.mouvements = (APP.mouvements||[]).filter(function(m) {
+      return !(m.note && m.note.indexOf(bonRef) === 0);
+    });
+  }
+  bon.status = 'annul\u00e9';
+  bon._cancelledAt = Date.now();
+  saveDB();
+  auditLog('CANCEL', 'bon', bon.numero);
+  notify('Bon ' + bon.numero + ' annul\u00e9' + (wasValidated ? ' \u2014 stock restaur\u00e9' : '') + ' \u2713', 'info');
+  if (typeof renderBons === 'function') renderBons();
+}
+
 function undoDispatch(histIdx) {
   _ensureDispatch();
   var hist = APP.dispatch.history || [];
