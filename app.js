@@ -4444,7 +4444,6 @@ function openEditCmdModal(cmdId) {
     return '<option value="' + a.id + '">' + a.name + '</option>';
   }).join('');
 
-  var _ncNum = await cmdOrderNum();
   var body = '<div class="form-row">'
     + '<div class="form-group"><label>N\u00b0 Commande</label><input id="ec-num" value="' + c.numero + '"></div>'
     + '<div class="form-group"><label>Statut</label><select id="ec-status"><option value="pending" ' + (c.status==='pending'?'selected':'') + '>En attente</option><option value="partial" ' + (c.status==='partial'?'selected':'') + '>Partielle</option><option value="complete" ' + (c.status==='complete'?'selected':'') + '>Compl\u00e8te</option><option value="cancelled" ' + (c.status==='cancelled'?'selected':'') + '>Annul\u00e9e</option></select></div>'
@@ -4632,6 +4631,7 @@ async function openNewCmdModal(prefFournId, preselectedArts) {
     });
   }
 
+  var _ncNum = await cmdOrderNum();
   var body = '<div class="form-row">'
     + '<div class="form-group"><label>Fournisseur *</label><select id="nc-fourn"><option value="">-- Choisir --</option>' + fournOpts + '</select></div>'
     + '<div class="form-group"><label>N\u00b0 Commande</label><input id="nc-num" value="' + _ncNum + '"></div>'
