@@ -179,7 +179,14 @@ async function _doSaveToCloud() {
 
     // Strip images for compact JSON
     var refs = (typeof _stripImages === 'function') ? _stripImages(APP) : null;
+    // Exclude local-only keys from cloud payload (backups = ~6MB, stays local)
+    var _backupsSaved = APP.backups;
+    var _actLogSaved = APP._activityLog;
+    delete APP.backups;
+    delete APP._activityLog;
     var dataStr = JSON.stringify(APP);
+    APP.backups = _backupsSaved;
+    APP._activityLog = _actLogSaved;
     if (refs) _restoreImages(APP, refs);
 
     var dataObj = JSON.parse(dataStr);
