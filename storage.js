@@ -40,8 +40,60 @@ function _onOnlineStatusChange() {
     el.style.background = _isConnected ? 'var(--success, #0f0)' : 'var(--danger, #f00)';
     el.title = _isConnected ? 'En ligne' : 'Hors ligne';
   }
-  if (_onlineMode && !_isConnected) {
-    if (typeof notify === 'function') notify('Connexion perdue — sauvegarde locale active', 'warning');
+  if (!_isConnected) {
+    _updateSyncStatus('offline');
+    if (_onlineMode && typeof notify === 'function') notify('Connexion perdue \u2014 sauvegarde locale active', 'warning');
+  } else {
+    _updateSyncStatus('synced');
+  }
+}
+
+// ── Cloud sync status indicator ──────────────────────────
+var _syncStatusEl = null;
+function _updateSyncStatus(state) {
+  // state: 'syncing' | 'synced' | 'error' | 'offline'
+  if (!_syncStatusEl) {
+    _syncStatusEl = document.getElementById('cloud-sync-status');
+  }
+  if (!_syncStatusEl) {
+    // Create indicator in top bar if not exists
+    var topBar = document.querySelector('.top-bar') || document.querySelector('.sidebar-footer');
+    if (topBar) {
+      _syncStatusEl = document.createElement('div');
+      _syncStatusEl.id = 'cloud-sync-status';
+      _syncStatusEl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;transition:all .3s;cursor:default';
+      topBar.appendChild(_syncStatusEl);
+    }
+  }
+  if (!_syncStatusEl) return;
+  if (state === 'syncing') {
+    _syncStatusEl.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;border:2px solid var(--accent);border-top-color:transparent;animation:spin .8s linear infinite"></span> Sync...';
+    _syncStatusEl.style.color = 'var(--accent)';
+    _syncStatusEl.style.background = 'var(--accent)11';
+    _syncStatusEl.title = 'Synchronisation en cours...';
+  } else if (state === 'synced') {
+    _syncStatusEl.innerHTML = '\u2601 Sync\u00e9';
+    _syncStatusEl.style.color = 'var(--success)';
+    _syncStatusEl.style.background = 'var(--success)11';
+    _syncStatusEl.title = 'Donn\u00e9es synchronis\u00e9es avec le cloud';
+    // Fade after 4s
+    clearTimeout(_syncStatusEl._fadeTimer);
+    _syncStatusEl._fadeTimer = setTimeout(function() {
+      if (_syncStatusEl) _syncStatusEl.style.opacity = '0.5';
+    }, 4000);
+    _syncStatusEl.style.opacity = '1';
+  } else if (state === 'error') {
+    _syncStatusEl.innerHTML = '\u26a0 Sync \u00e9chou\u00e9';
+    _syncStatusEl.style.color = 'var(--danger)';
+    _syncStatusEl.style.background = 'var(--danger)11';
+    _syncStatusEl.title = 'La synchronisation a \u00e9chou\u00e9 — nouvelle tentative automatique';
+    _syncStatusEl.style.opacity = '1';
+  } else if (state === 'offline') {
+    _syncStatusEl.innerHTML = '\u26ab Hors ligne';
+    _syncStatusEl.style.color = 'var(--text-3)';
+    _syncStatusEl.style.background = 'var(--text-3)11';
+    _syncStatusEl.title = 'Mode hors ligne — les donn\u00e9es seront synchronis\u00e9es au retour en ligne';
+    _syncStatusEl.style.opacity = '1';
   }
 }
 
@@ -115,6 +167,7 @@ function _updateSectionHashes(dataObj) {
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
   _cloudSaving = true;
+  _updateSyncStatus('syncing');
   // Pause real-time listener during save to prevent echo/race
   if (_realtimeListenerActive) {
     try { _firebaseDB.ref('app_data/data').off('value'); } catch(e) {}
@@ -184,6 +237,7 @@ async function _doSaveToCloud() {
 
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
+    _updateSyncStatus('error');
   } finally {
     _cloudSaving = false;
     // Re-enable real-time listener after a short delay to skip our own echo
@@ -360,20 +414,42 @@ function saveDB() {
   try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   // Also save to file if available
   if (_dirHandle) { try { saveToFile(); } catch(e) {} }
-  // Cloud sync: debounced 1.5s (groups rapid successive changes into one upload)
+  // Cloud sync: debounced 800ms (groups rapid successive changes into one upload)
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
     clearTimeout(_cloudSaveDebounceTimer);
+    _updateSyncStatus('syncing');
     _cloudSaveDebounceTimer = setTimeout(function() {
       _cloudSaveDebounceTimer = null;
       _cloudSavePending = _doSaveToCloud().then(function() {
         _cloudSavePending = null;
+        _updateSyncStatus('synced');
       }).catch(function(e) {
         console.warn('[PSM] Cloud save failed:', e);
         _cloudSavePending = null;
+        _updateSyncStatus('error');
+        // Retry once after 5s
+        setTimeout(function() {
+          if (typeof _doSaveToCloud === 'function') {
+            _updateSyncStatus('syncing');
+            _doSaveToCloud().then(function() { _updateSyncStatus('synced'); })
+              .catch(function() { _updateSyncStatus('error'); });
+          }
+        }, 5000);
       });
-    }, 1500);
+    }, 800);
   }
 }
+
+// Flush pending cloud save when tab becomes hidden (user switches tab/closes)
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden' && _cloudSaveDebounceTimer) {
+    clearTimeout(_cloudSaveDebounceTimer);
+    _cloudSaveDebounceTimer = null;
+    if (typeof _doSaveToCloud === 'function' && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+      _doSaveToCloud().catch(function() {});
+    }
+  }
+});
 
 // Block page unload if cloud save is pending or debounce still running
 window.addEventListener('beforeunload', function(e) {
