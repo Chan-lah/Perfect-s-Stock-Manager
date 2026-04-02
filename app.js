@@ -1375,7 +1375,7 @@ function renderDashboard() {
         <button class="btn btn-secondary btn-sm" onclick="refreshReportCard()">🔄 Actualiser</button>
         <button class="btn btn-primary btn-sm" onclick="printStockReport()">🖨 Stock</button>
         <button class="btn btn-secondary btn-sm" onclick="printComReport()">👤 Par commercial</button>
-        <button class="btn btn-secondary btn-sm" onclick="printDispatchReport()">⚙️ Dispatch</button>
+        <button class="btn btn-secondary btn-sm" onclick="printDispatchReport(0)">⚙️ Dispatch</button>
       </div>
     </div>
     <div id="rpt-kpi-row" style="display:flex;gap:12px;padding:8px 4px 4px;flex-wrap:wrap"></div>
@@ -2519,7 +2519,7 @@ function bonAutoFillCode(sel) {
   }
 }
 
-function saveBon(existingId) {
+async function saveBon(existingId) {
   const recip=document.getElementById('bon-recip').value.trim();
   if(!recip){notify('Récipendaire requis','error');return;}
   const rows=document.querySelectorAll('#b-lignes .b-ligne');
@@ -2553,7 +2553,7 @@ function saveBon(existingId) {
     setTimeout(()=>{if(confirm('Imprimer le bon modifié ?'))printBon(bon.id);},300);
   } else {
     for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');return;}}
-    const bon={id:generateId(),numero:bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
     lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -4444,6 +4444,7 @@ function openEditCmdModal(cmdId) {
     return '<option value="' + a.id + '">' + a.name + '</option>';
   }).join('');
 
+  var _ncNum = await cmdOrderNum();
   var body = '<div class="form-row">'
     + '<div class="form-group"><label>N\u00b0 Commande</label><input id="ec-num" value="' + c.numero + '"></div>'
     + '<div class="form-group"><label>Statut</label><select id="ec-status"><option value="pending" ' + (c.status==='pending'?'selected':'') + '>En attente</option><option value="partial" ' + (c.status==='partial'?'selected':'') + '>Partielle</option><option value="complete" ' + (c.status==='complete'?'selected':'') + '>Compl\u00e8te</option><option value="cancelled" ' + (c.status==='cancelled'?'selected':'') + '>Annul\u00e9e</option></select></div>'
@@ -4543,13 +4544,13 @@ function deleteCmd(cmdId) {
 
 // ── Dupliquer commande ───────────────────────────────────────
 
-function duplicateCmd(cmdId) {
+async function duplicateCmd(cmdId) {
   var orig = (APP.commandesFourn||[]).find(function(c) { return c.id === cmdId; });
   if (!orig) return;
   if (!confirm('Dupliquer la commande ' + orig.numero + ' ?')) return;
   var dup = JSON.parse(JSON.stringify(orig));
   dup.id = generateId();
-  dup.numero = cmdOrderNum();
+  dup.numero = await cmdOrderNum();
   dup.status = 'pending';
   dup.dateCommande = Date.now();
   dup.createdAt = Date.now();
@@ -4613,7 +4614,7 @@ function _confirmDuplicateCmd() {
   window._pendingCmdData = null;
 }
 
-function openNewCmdModal(prefFournId, preselectedArts) {
+async function openNewCmdModal(prefFournId, preselectedArts) {
   var fournOpts = (APP.fournisseurs||[]).map(function(f) {
     return '<option value="' + f.id + '" ' + (prefFournId === f.id ? 'selected' : '') + '>' + f.nom + (f.entreprise ? ' (' + f.entreprise + ')' : '') + '</option>';
   }).join('');
@@ -4633,7 +4634,7 @@ function openNewCmdModal(prefFournId, preselectedArts) {
 
   var body = '<div class="form-row">'
     + '<div class="form-group"><label>Fournisseur *</label><select id="nc-fourn"><option value="">-- Choisir --</option>' + fournOpts + '</select></div>'
-    + '<div class="form-group"><label>N\u00b0 Commande</label><input id="nc-num" value="' + cmdOrderNum() + '"></div>'
+    + '<div class="form-group"><label>N\u00b0 Commande</label><input id="nc-num" value="' + _ncNum + '"></div>'
     + '</div>'
     + '<div class="form-row">'
     + '<div class="form-group"><label>Date commande</label><input id="nc-date" type="date" value="' + new Date().toISOString().split('T')[0] + '"></div>'
@@ -4673,7 +4674,7 @@ function openNewCmdModal(prefFournId, preselectedArts) {
 
     var cmd = {
       id: generateId(),
-      numero: document.getElementById('nc-num').value || cmdOrderNum(),
+      numero: document.getElementById('nc-num').value || _ncNum,
       fournisseurId: fournId,
       fournisseurNom: fourn ? fourn.nom : '',
       lignes: lignes,
@@ -7390,10 +7391,6 @@ function undoDispatch(histIdx) {
   if(art) art.stock += snap.totalQty;
   // Supprimer les mouvements de sortie correspondants
   var snapTs = snap.ts;
-  var removedIds = {};
-  (snap.alloc||[]).forEach(function(a){
-    if(a.qty > 0) removedIds[a.id || a.recipientId || a.name] = a.qty;
-  });
   // Remove matching mouvements (same article, same timestamp range +/- 2s)
   APP.mouvements = APP.mouvements.filter(function(m) {
     if(m.type !== 'sortie' || m.articleId !== snap.articleId) return true;
