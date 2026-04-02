@@ -6939,431 +6939,443 @@ function calShowDay(y, m, d) {
 // Supports commercials + non-commercial entities (UCAB, Export, etc.)
 // ═══════════════════════════════════════════════════════════════════════
 
-function _ensureDispatch() {
+// ============================================================
+// DISPATCH MODULE v3
+// Logic: Part = (PDV commercial / PDV total) x 100
+//        Pool per gadget configurable, eligibility per commercial
+//        100% of pool always distributed among eligible commercials
+// ============================================================
+
+function _dispEnsure() {
   if (!APP.dispatch) APP.dispatch = {};
   const D = APP.dispatch;
-  if (!D.besoins) D.besoins = {};
-  if (!D.entities) D.entities = [];
-  if (!D.weights) D.weights = { pdv: 50, zone: 20, history: 30 };
-  if (!D.zonePriority) D.zonePriority = {};
-  if (!D.rules) D.rules = { respectMin: true, respectMax: true, roundMethod: 'largest-remainder' };
-  if (!D.history) D.history = [];
+  if (!D.pools)       D.pools = {};
+  if (!D.eligibility) D.eligibility = {};
+  if (!D.history)     D.history = [];
   return D;
 }
 
-function _dispArticles() {
-  return APP.articles.filter(a => a.stock > 0);
+function _dispActiveCommerciaux() {
+  return (APP.commerciaux || []).filter(function(c) { return c.actif !== false; });
 }
 
-function dispGetBesoin(recipientId, articleId) {
-  _ensureDispatch();
-  const key = recipientId + '::' + articleId;
-  return APP.dispatch.besoins[key] || { min: 0, cible: 0, max: 999 };
+// Real PDV count from APP.pdv, fallback to c.nbClients
+function _dispGetPdv(c) {
+  var real = (APP.pdv || []).filter(function(p) { return p.commercialId === c.id && p.actif !== false; }).length;
+  return real > 0 ? real : (c.nbClients || 0);
 }
 
-function dispSetBesoin(recipientId, articleId, min, cible, max) {
-  _ensureDispatch();
-  const key = recipientId + '::' + articleId;
-  APP.dispatch.besoins[key] = { min: Math.max(0, min), cible: Math.max(0, cible), max: Math.max(0, max) };
+function _dispTotalPdv() {
+  return _dispActiveCommerciaux().reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
+}
+
+// Returns { [comId]: { name, pdv, pct } } for all active commercials
+function _dispShares() {
+  var total = _dispTotalPdv();
+  var out = {};
+  _dispActiveCommerciaux().forEach(function(c) {
+    var pdv = _dispGetPdv(c);
+    var name = ((c.prenom || '') + ' ' + (c.nom || '')).trim() || c.name || c.id;
+    out[c.id] = { name: name, pdv: pdv, pct: (pdv / total) * 100 };
+  });
+  return out;
+}
+
+function dispGetPool(articleId) {
+  _dispEnsure();
+  return APP.dispatch.pools[articleId] || 0;
+}
+
+function dispSetPool(articleId, qty) {
+  _dispEnsure();
+  APP.dispatch.pools[articleId] = Math.max(0, parseInt(qty) || 0);
   saveDB();
 }
 
-function dispGetArticleBesoin(articleId) {
-  _ensureDispatch();
-  const result = {};
-  const prefix = '::' + articleId;
-  for (const k in APP.dispatch.besoins) {
-    if (k.endsWith(prefix)) {
-      const rid = k.split('::')[0];
-      result[rid] = APP.dispatch.besoins[k];
-    }
-  }
-  return result;
+function dispIsEligible(articleId, commercialId) {
+  _dispEnsure();
+  var e = APP.dispatch.eligibility[articleId];
+  return !!(e && e[commercialId]);
 }
 
-function dispAddEntity(name, type) {
-  _ensureDispatch();
-  const id = 'ent_' + generateId();
-  APP.dispatch.entities.push({ id, name, type: type || 'autre', active: true });
-  saveDB();
-  return id;
-}
-
-function dispRemoveEntity(id) {
-  _ensureDispatch();
-  APP.dispatch.entities = APP.dispatch.entities.filter(e => e.id !== id);
-  const keysToRemove = Object.keys(APP.dispatch.besoins).filter(k => k.startsWith(id + '::'));
-  keysToRemove.forEach(k => delete APP.dispatch.besoins[k]);
-  saveDB();
-}
-
-function _dispAllRecipients() {
-  _ensureDispatch();
-  const list = [];
-  (APP.commerciaux||[]).forEach(c => {
-    if (c.actif !== false) {
-      const zone = APP.zones ? APP.zones.find(z => z.id === (c.dispatchZoneId || c.zoneId)) : null;
-      const fullName = ((c.prenom||'') + ' ' + (c.nom||'')).trim() || c.name || c.id;
-      const pdv = c.nbClients || c.pdvCount || 0;
-      list.push({ id: c.id, name: fullName, type: 'commercial', pdvCount: pdv, zoneId: c.dispatchZoneId || c.zoneId || '', zoneName: zone ? (zone.label||zone.id) : '', isEntity: false });
-    }
-  });
-  (APP.dispatch.entities || []).forEach(e => {
-    if (e.active !== false) {
-      list.push({ id: e.id, name: e.name, type: e.type || 'autre', pdvCount: 0, zoneId: '', zoneName: '', isEntity: true });
-    }
-  });
-  return list;
-}
-
-function dispSuggestBesoins(articleId) {
-  const recipients = _dispAllRecipients();
-  const totalPdv = recipients.reduce((s, r) => s + (r.pdvCount || 0), 0) || 1;
-  const suggestions = {};
-  recipients.forEach(r => {
-    const ratio = (r.pdvCount || 1) / totalPdv;
-    const cible = Math.max(1, Math.round(ratio * 100));
-    suggestions[r.id] = { min: Math.round(cible * 0.3), cible, max: Math.round(cible * 2) };
-  });
-  return suggestions;
-}
-
-function dispComputeAllocation(articleId, totalToDispatch) {
-  _ensureDispatch();
-  const D = APP.dispatch;
-  const recipients = _dispAllRecipients();
-  if (recipients.length === 0 || totalToDispatch <= 0) return [];
-  const w = D.weights || { pdv: 50, zone: 20, history: 30 };
-  const wSum = (w.pdv + w.zone + w.history) || 100;
-  const wPdv = w.pdv / wSum, wZone = w.zone / wSum, wHist = w.history / wSum;
-  const totalPdv = recipients.reduce((s, r) => s + (r.pdvCount || 0), 0) || 1;
-  const histTotals = {};
-  (APP.mouvements || []).forEach(m => {
-    if (m.type === 'sortie' && m.articleId === articleId && m.commercialId) {
-      histTotals[m.commercialId] = (histTotals[m.commercialId] || 0) + (m.qty || 0);
-    }
-  });
-  const totalHist = Object.values(histTotals).reduce((a, b) => a + b, 0) || 1;
-
-  const alloc = recipients.map(r => {
-    const b = dispGetBesoin(r.id, articleId);
-    const pdvScore = (r.pdvCount || 0) / totalPdv;
-    const zonePri = D.zonePriority[r.zoneId] || 1;
-    const zoneScore = zonePri / (Object.values(D.zonePriority).reduce((a, b) => a + b, 0) || 1);
-    const histScore = (histTotals[r.id] || 0) / totalHist;
-    const weight = wPdv * pdvScore + wZone * zoneScore + wHist * histScore;
-    return { recipientId: r.id, name: r.name, type: r.type, min: b.min, cible: b.cible, max: b.max, weight, qty: 0 };
-  });
-
-  // Pass 1: meet minimums
-  let remaining = totalToDispatch;
-  alloc.forEach(a => {
-    if (D.rules && D.rules.respectMin && a.min > 0) {
-      const give = Math.min(a.min, remaining);
-      a.qty = give;
-      remaining -= give;
-    }
-  });
-
-  // Pass 2: distribute toward targets using weights
-  if (remaining > 0) {
-    const eligible = alloc.filter(a => a.qty < a.cible);
-    const totalW = eligible.reduce((s, a) => s + a.weight, 0) || 1;
-    const raw = eligible.map(a => {
-      const need = a.cible - a.qty;
-      const share = (a.weight / totalW) * remaining;
-      return { a, ideal: Math.min(need, share) };
-    });
-    const totalIdeal = raw.reduce((s, r) => s + r.ideal, 0);
-    const scale = totalIdeal > 0 ? Math.min(remaining / totalIdeal, 1) : 0;
-    // Largest-remainder method
-    const scaled = raw.map(r => {
-      const v = r.ideal * scale;
-      return { a: r.a, floor: Math.floor(v), remainder: v - Math.floor(v) };
-    });
-    scaled.forEach(s => { s.a.qty += s.floor; remaining -= s.floor; });
-    scaled.sort((a, b) => b.remainder - a.remainder);
-    for (let i = 0; i < scaled.length && remaining > 0; i++) {
-      if (scaled[i].a.qty < scaled[i].a.cible) { scaled[i].a.qty++; remaining--; }
-    }
-  }
-
-  // Pass 3: enforce caps, redistribute excess
-  if (D.rules.respectMax) {
-    let excess = 0;
-    alloc.forEach(a => {
-      if (a.qty > a.max) { excess += a.qty - a.max; a.qty = a.max; }
-    });
-    if (excess > 0) {
-      const uncapped = alloc.filter(a => a.qty < a.max);
-      uncapped.sort((a, b) => b.weight - a.weight);
-      for (const u of uncapped) {
-        const give = Math.min(excess, u.max - u.qty);
-        u.qty += give; excess -= give;
-        if (excess <= 0) break;
-      }
-    }
-  }
-
-  return alloc;
-}
-
-function openBesoinsModal(articleId) {
-  const art = APP.articles.find(a => a.id === articleId);
-  if (!art) return;
-  const recipients = _dispAllRecipients();
-  let rows = '';
-  recipients.forEach(r => {
-    const b = dispGetBesoin(r.id, articleId);
-    rows += '<tr><td>' + r.name + '</td><td><span class="badge" style="font-size:0.7em">' + r.type + '</span></td>'
-      + '<td><input type="number" class="besoin-min" data-rid="' + r.id + '" value="' + b.min + '" min="0" style="width:60px;text-align:center"></td>'
-      + '<td><input type="number" class="besoin-cible" data-rid="' + r.id + '" value="' + b.cible + '" min="0" style="width:60px;text-align:center"></td>'
-      + '<td><input type="number" class="besoin-max" data-rid="' + r.id + '" value="' + b.max + '" min="0" style="width:60px;text-align:center"></td></tr>';
-  });
-  const html = '<div style="max-height:60vh;overflow:auto"><table class="table" style="font-size:0.85em"><thead><tr>'
-    + '<th>' + t('name') + '</th><th>Type</th><th>Min</th><th>' + t('target') + '</th><th>Max</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-    + '<div style="margin-top:10px;text-align:right"><button class="btn btn-sm" onclick="dispAutoSuggestBesoins(\'' + articleId + '\')" style="margin-right:8px">' + t('autoSuggest') + '</button>'
-    + '<button class="btn btn-primary btn-sm" onclick="saveBesoinsModal(\'' + articleId + '\')">' + t('save') + '</button></div>';
-  openGenericModal(t('needsMatrix') + ' — ' + art.name, html);
-}
-
-function saveBesoinsModal(articleId) {
-  document.querySelectorAll('.besoin-min').forEach(el => {
-    const rid = el.dataset.rid;
-    const min = parseInt(el.value) || 0;
-    const cible = parseInt(el.closest('tr').querySelector('.besoin-cible').value) || 0;
-    const max = parseInt(el.closest('tr').querySelector('.besoin-max').value) || 999;
-    dispSetBesoin(rid, articleId, min, cible, max);
-  });
-  closeModal();
-  notify(t('needsSaved'), 'success');
-  if (typeof renderDispatchPage === 'function') renderDispatchPage();
-}
-
-function dispAutoSuggestBesoins(articleId) {
-  const suggestions = dispSuggestBesoins(articleId);
-  document.querySelectorAll('.besoin-min').forEach(el => {
-    const rid = el.dataset.rid;
-    if (suggestions[rid]) {
-      el.value = suggestions[rid].min;
-      el.closest('tr').querySelector('.besoin-cible').value = suggestions[rid].cible;
-      el.closest('tr').querySelector('.besoin-max').value = suggestions[rid].max;
-    }
-  });
-  notify(t('autoSuggestApplied'), 'success');
-}
-
-function openEntityManagerModal() {
-  _ensureDispatch();
-  const ents = APP.dispatch.entities || [];
-  let rows = '';
-  ents.forEach(e => {
-    rows += '<tr><td>' + e.name + '</td><td>' + (e.type || 'autre') + '</td><td>' + (e.active !== false ? '\u2705' : '\u274c') + '</td>'
-      + '<td><button class="btn btn-sm btn-danger" onclick="dispRemoveEntity(\'' + e.id + '\');openEntityManagerModal()">\u00d7</button></td></tr>';
-  });
-  const html = '<table class="table" style="font-size:0.85em"><thead><tr><th>' + t('name') + '</th><th>Type</th><th>' + t('status') + '</th><th></th></tr></thead><tbody>'
-    + rows + '</tbody></table>'
-    + '<div style="margin-top:10px;display:flex;gap:8px;align-items:center">'
-    + '<input id="newEntName" placeholder="' + t('name') + '" style="flex:1;padding:4px">'
-    + '<select id="newEntType" style="padding:4px"><option value="direction">Direction</option><option value="export">Export</option><option value="technique">Technique</option><option value="autre">Autre</option></select>'
-    + '<button class="btn btn-primary btn-sm" onclick="const n=document.getElementById(\'newEntName\').value.trim();if(n){dispAddEntity(n,document.getElementById(\'newEntType\').value);openEntityManagerModal()}">' + t('add') + '</button></div>';
-  openGenericModal(t('entityManager'), html);
-}
-
-function openDispWeightsModal() {
-  _ensureDispatch();
-  const w = APP.dispatch.weights;
-  const zones = APP.zones || [];
-  let zoneRows = '';
-  zones.forEach(z => {
-    const pri = APP.dispatch.zonePriority[z.id] || 1;
-    zoneRows += '<tr><td>' + (z.label||z.id) + '</td><td><input type="number" class="zone-pri" data-zid="' + z.id + '" value="' + pri + '" min="0" max="10" step="0.1" style="width:60px;text-align:center"></td></tr>';
-  });
-  const html = '<div style="margin-bottom:15px"><h4 style="margin:0 0 8px">' + t('allocWeights') + '</h4>'
-    + '<div style="display:flex;gap:12px;flex-wrap:wrap">'
-    + '<label>PDV <input type="number" id="wPdv" value="' + w.pdv + '" min="0" max="100" style="width:60px;text-align:center"></label>'
-    + '<label>Zone <input type="number" id="wZone" value="' + w.zone + '" min="0" max="100" style="width:60px;text-align:center"></label>'
-    + '<label>' + t('history') + ' <input type="number" id="wHist" value="' + w.history + '" min="0" max="100" style="width:60px;text-align:center"></label>'
-    + '</div></div>'
-    + '<div><h4 style="margin:0 0 8px">' + t('zonePriority') + '</h4><table class="table" style="font-size:0.85em"><thead><tr><th>Zone</th><th>' + t('priority') + '</th></tr></thead><tbody>' + zoneRows + '</tbody></table></div>'
-    + '<div style="margin-top:10px;text-align:right"><button class="btn btn-primary btn-sm" onclick="saveDispWeights()">' + t('save') + '</button></div>';
-  openGenericModal(t('dispatchSettings'), html);
-}
-
-function saveDispWeights() {
-  _ensureDispatch();
-  APP.dispatch.weights.pdv = parseInt(document.getElementById('wPdv').value) || 50;
-  APP.dispatch.weights.zone = parseInt(document.getElementById('wZone').value) || 20;
-  APP.dispatch.weights.history = parseInt(document.getElementById('wHist').value) || 30;
-  document.querySelectorAll('.zone-pri').forEach(el => {
-    APP.dispatch.zonePriority[el.dataset.zid] = parseFloat(el.value) || 1;
-  });
-  saveDB();
-  closeModal();
-  notify(t('settingsSaved'), 'success');
-}
-
-function renderDispatchPage() {
-  _ensureDispatch();
-  const articles = _dispArticles();
-  const activeTab = document.querySelector('.disp-tab-btn.active')?.dataset?.tab || 'repartition';
-  let tabBtns = '<div style="display:flex;gap:4px;margin-bottom:15px;flex-wrap:wrap">';
-  [{id:'repartition',label:t('allocation')},{id:'besoins',label:t('needsMatrix')},{id:'gadgets',label:t('summary')},{id:'historique',label:t('history')}].forEach(tb => {
-    tabBtns += '<button class="btn btn-sm disp-tab-btn' + (tb.id === activeTab ? ' btn-primary active' : '') + '" data-tab="' + tb.id + '" onclick="document.querySelectorAll(\'.disp-tab-btn\').forEach(b=>{b.classList.remove(\'active\',\'btn-primary\')});this.classList.add(\'active\',\'btn-primary\');document.querySelectorAll(\'.disp-tab-content\').forEach(d=>d.style.display=\'none\');document.getElementById(\'disp-tab-\'+this.dataset.tab).style.display=\'block\'">' + tb.label + '</button>';
-  });
-  tabBtns += '<button class="btn btn-sm" onclick="openEntityManagerModal()" style="margin-left:auto">' + t('entities') + '</button>';
-  tabBtns += '<button class="btn btn-sm" onclick="openDispWeightsModal()" style="margin-left:4px">\u2699 ' + t('settings') + '</button>';
-  tabBtns += '</div>';
-
-  let content = tabBtns;
-  content += '<div id="disp-tab-repartition" class="disp-tab-content" style="display:' + (activeTab === 'repartition' ? 'block' : 'none') + '">';
-  if (articles.length === 0) {
-    content += '<p style="color:#888">' + t('noArticlesInStock') + '</p>';
+function dispToggleEligible(articleId, commercialId) {
+  _dispEnsure();
+  if (!APP.dispatch.eligibility[articleId]) APP.dispatch.eligibility[articleId] = {};
+  var cur = !!APP.dispatch.eligibility[articleId][commercialId];
+  if (cur) {
+    delete APP.dispatch.eligibility[articleId][commercialId];
   } else {
-    articles.forEach(a => { content += _renderDispArticleCard(a); });
+    APP.dispatch.eligibility[articleId][commercialId] = true;
   }
-  content += '</div>';
-  content += '<div id="disp-tab-besoins" class="disp-tab-content" style="display:' + (activeTab === 'besoins' ? 'block' : 'none') + '">' + _renderDispTabBesoins(articles) + '</div>';
-  content += '<div id="disp-tab-gadgets" class="disp-tab-content" style="display:' + (activeTab === 'gadgets' ? 'block' : 'none') + '">' + _renderDispTabGadgets(articles) + '</div>';
-  content += '<div id="disp-tab-historique" class="disp-tab-content" style="display:' + (activeTab === 'historique' ? 'block' : 'none') + '">' + _renderDispTabHistory() + '</div>';
-
-  document.getElementById('content').innerHTML = '<h2>' + t('dispatch') + '</h2>' + content;
-}
-
-function _renderDispArticleCard(art) {
-  const artId = art.id;
-  const cardId = 'disp-card-' + artId;
-  let html = '<div class="card" id="' + cardId + '" style="margin-bottom:12px;padding:12px">';
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  html += '<strong>' + art.name + '</strong><span class="badge">Stock: ' + art.stock + '</span>';
-  html += '</div>';
-  html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
-  html += '<label>' + t('qtyToDispatch') + ': <input type="number" id="disp-qty-' + artId + '" value="' + art.stock + '" min="0" max="' + art.stock + '" style="width:80px;text-align:center"></label>';
-  html += '<button class="btn btn-primary btn-sm" onclick="computeAndShowAlloc(\'' + artId + '\')">' + t('calculate') + '</button>';
-  html += '<button class="btn btn-sm" onclick="openBesoinsModal(\'' + artId + '\')">' + t('editNeeds') + '</button>';
-  html += '</div>';
-  html += '<div id="disp-result-' + artId + '"></div>';
-  html += '</div>';
-  return html;
-}
-
-function computeAndShowAlloc(articleId) {
-  const qty = parseInt(document.getElementById('disp-qty-' + articleId)?.value) || 0;
-  if (qty <= 0) { notify(t('enterQty'), 'error'); return; }
-  const alloc = dispComputeAllocation(articleId, qty);
-  let html = '<table class="table" style="font-size:0.85em"><thead><tr><th>' + t('recipient') + '</th><th>Type</th><th>Min</th><th>' + t('target') + '</th><th>Max</th><th>' + t('allocated') + '</th><th>%</th></tr></thead><tbody>';
-  const total = alloc.reduce((s, a) => s + a.qty, 0);
-  alloc.forEach(a => {
-    const pct = total > 0 ? ((a.qty / total) * 100).toFixed(1) : '0';
-    const warn = a.qty < a.min ? 'style="color:red"' : (a.qty >= a.max ? 'style="color:orange"' : '');
-    html += '<tr ' + warn + '><td>' + a.name + '</td><td>' + a.type + '</td><td>' + a.min + '</td><td>' + a.cible + '</td><td>' + a.max + '</td><td><strong>' + a.qty + '</strong></td><td>' + pct + '%</td></tr>';
-  });
-  html += '<tr style="font-weight:bold;border-top:2px solid #333"><td colspan="5">' + t('total') + '</td><td>' + total + '</td><td>100%</td></tr>';
-  html += '</tbody></table>';
-  html += '<div style="margin-top:8px;text-align:right"><button class="btn btn-primary btn-sm" onclick="validateDispatch(\'' + articleId + '\',' + qty + ')">' + t('validateDispatch') + '</button></div>';
-  document.getElementById('disp-result-' + articleId).innerHTML = html;
-}
-
-function validateDispatch(articleId, totalQty) {
-  _ensureDispatch();
-  const alloc = dispComputeAllocation(articleId, totalQty);
-  const art = APP.articles.find(a => a.id === articleId);
-  if (!art) return;
-  if (totalQty > art.stock) { notify(t('insufficientStock'), 'error'); return; }
-  alloc.forEach(a => {
-    if (a.qty > 0) {
-      APP.mouvements.unshift({ id: generateId(), type: 'sortie', ts: Date.now(), articleId: art.id, articleName: art.name, qty: a.qty, note: 'Dispatch \u2192 ' + a.name, commercialId: a.recipientId });
-    }
-  });
-  art.stock -= totalQty;
-  APP.dispatch.history.unshift({ ts: Date.now(), articleId, articleName: art.name, totalQty, alloc: alloc.map(a => ({ id: a.recipientId, name: a.name, qty: a.qty })) });
   saveDB();
-  auditLog('DISPATCH', 'dispatch', art.name + ' x' + totalQty + ' \u2192 ' + alloc.filter(a => a.qty > 0).length + ' recipients');
-  notify(t('dispatchValidated'), 'success');
+  _dispRefreshGadgetCard(articleId);
+}
+
+function dispSetAllEligible(articleId, eligible) {
+  _dispEnsure();
+  if (eligible) {
+    APP.dispatch.eligibility[articleId] = {};
+    _dispActiveCommerciaux().forEach(function(c) {
+      APP.dispatch.eligibility[articleId][c.id] = true;
+    });
+  } else {
+    APP.dispatch.eligibility[articleId] = {};
+  }
+  saveDB();
+  _dispRefreshGadgetCard(articleId);
+}
+
+// Compute allocation for one gadget.
+// Returns null if pool=0 or no eligible, else array of {id, name, pdv, pct, qty}
+function dispCompute(articleId) {
+  _dispEnsure();
+  var pool = dispGetPool(articleId);
+  if (pool <= 0) return null;
+  var shares = _dispShares();
+  var eligible = _dispActiveCommerciaux().filter(function(c) {
+    return dispIsEligible(articleId, c.id);
+  });
+  if (eligible.length === 0) return null;
+
+  // Normalize shares among eligible only
+  var eligiblePdvTotal = eligible.reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
+
+  // Compute raw floats
+  var raws = eligible.map(function(c) {
+    var pdv = _dispGetPdv(c);
+    var raw = pool * (pdv / eligiblePdvTotal);
+    return { id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: pdv, raw: raw, floor: Math.floor(raw), rem: raw - Math.floor(raw), qty: 0 };
+  });
+
+  // Largest-remainder to guarantee sum = pool
+  var floorSum = raws.reduce(function(s, r) { return s + r.floor; }, 0);
+  var leftover = pool - floorSum;
+  raws.forEach(function(r) { r.qty = r.floor; });
+  raws.sort(function(a, b) { return b.rem - a.rem; });
+  for (var i = 0; i < leftover; i++) raws[i].qty++;
+
+  // Restore natural order and add pct
+  raws.sort(function(a, b) { return (shares[a.id] ? shares[a.id].pct : 0) > (shares[b.id] ? shares[b.id].pct : 0) ? -1 : 1; });
+  raws.forEach(function(r) {
+    r.pct = (r.qty / pool) * 100;
+  });
+  return raws;
+}
+
+// Validate a specific list of articleIds (or all configured ones)
+function validateDispatchV3(articleIds) {
+  _dispEnsure();
+  var toDispatch = articleIds || Object.keys(APP.dispatch.pools).filter(function(id) { return dispGetPool(id) > 0; });
+  if (toDispatch.length === 0) { notify('Aucun gadget \u00e0 dispatcher', 'warning'); return; }
+
+  var errors = [];
+  var results = [];
+  toDispatch.forEach(function(articleId) {
+    var art = (APP.articles || []).find(function(a) { return a.id === articleId; });
+    if (!art) return;
+    var pool = dispGetPool(articleId);
+    if (pool <= 0) return;
+    if (pool > art.stock) { errors.push(art.name + ': pool (' + pool + ') > stock (' + art.stock + ')'); return; }
+    var alloc = dispCompute(articleId);
+    if (!alloc) { errors.push(art.name + ': aucun commercial \u00e9ligible (ignor\u00e9)'); return; }
+    results.push({ art: art, pool: pool, alloc: alloc });
+  });
+
+  if (errors.length > 0 && results.length === 0) {
+    notify(errors[0], 'error'); return;
+  }
+
+  var confirmMsg = results.map(function(r) {
+    return r.art.name + ' \u00d7' + r.pool + ' \u2192 ' + r.alloc.length + ' commerciaux';
+  }).join('\n');
+  if (!confirm('Valider le dispatch ?\n\n' + confirmMsg + (errors.length > 0 ? '\n\nIgnor\u00e9s:\n' + errors.join('\n') : ''))) return;
+
+  var ts = Date.now();
+  results.forEach(function(r) {
+    r.alloc.forEach(function(a) {
+      if (a.qty > 0) {
+        APP.mouvements.unshift({ id: generateId(), type: 'sortie', ts: ts, articleId: r.art.id, articleName: r.art.name, qty: a.qty, note: 'Dispatch \u2192 ' + a.name, commercialId: a.id });
+      }
+    });
+    r.art.stock -= r.pool;
+    // Reset pool after validation
+    APP.dispatch.pools[r.art.id] = 0;
+    APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
+  });
+
+  saveDB();
+  auditLog('DISPATCH', 'dispatch', results.length + ' gadget(s) dispatched');
+  notify('\u2705 Dispatch valid\u00e9 \u2014 ' + results.length + ' gadget(s)', 'success');
   renderDispatchPage();
 }
 
-function _renderDispTabBesoins(articles) {
-  if (articles.length === 0) return '<p style="color:#888">' + t('noArticlesInStock') + '</p>';
-  let html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
-  articles.forEach(a => {
-    const besoins = dispGetArticleBesoin(a.id);
-    const count = Object.keys(besoins).length;
-    html += '<div class="card" style="padding:10px;min-width:200px;cursor:pointer" onclick="openBesoinsModal(\'' + a.id + '\')">';
-    html += '<strong>' + a.name + '</strong><br><span style="font-size:0.85em;color:#888">' + count + ' ' + t('configured') + '</span>';
-    html += '</div>';
-  });
-  html += '</div>';
-  return html;
+// ── Partial refresh (eligibility/pool change without full re-render) ──────────
+function _dispRefreshGadgetCard(articleId) {
+  var card = document.getElementById('dp-card-' + articleId);
+  if (!card) return;
+  var art = (APP.articles || []).find(function(a) { return a.id === articleId; });
+  if (!art) return;
+  card.outerHTML = _renderDispGadgetCard(art, _dispShares());
 }
 
-function _renderDispTabGadgets(articles) {
-  const recipients = _dispAllRecipients();
-  if (recipients.length === 0) return '<p style="color:#888">' + t('noRecipients') + '</p>';
-  let html = '<div style="overflow-x:auto"><table class="table" style="font-size:0.8em"><thead><tr><th>' + t('recipient') + '</th><th>Type</th>';
-  articles.forEach(a => { html += '<th style="writing-mode:vertical-lr;text-align:center;padding:4px">' + a.name + '</th>'; });
-  html += '</tr></thead><tbody>';
-  recipients.forEach(r => {
-    html += '<tr><td>' + r.name + '</td><td>' + r.type + '</td>';
-    articles.forEach(a => {
-      const b = dispGetBesoin(r.id, a.id);
-      html += '<td style="text-align:center;font-size:0.85em">' + b.min + '/' + b.cible + '/' + b.max + '</td>';
-    });
-    html += '</tr>';
+function _dispUpdatePool(articleId) {
+  var inp = document.getElementById('dp-pool-' + articleId);
+  if (!inp) return;
+  var val = parseInt(inp.value) || 0;
+  var art = (APP.articles || []).find(function(a) { return a.id === articleId; });
+  if (art && val > art.stock) { val = art.stock; inp.value = val; }
+  dispSetPool(articleId, val);
+  // refresh preview only
+  var prev = document.getElementById('dp-prev-' + articleId);
+  if (prev) prev.innerHTML = _renderDispPreview(articleId);
+}
+
+// ── Render functions ──────────────────────────────────────────────────────────
+
+function renderDispatchPage() {
+  _dispEnsure();
+  var articles = (APP.articles || []).filter(function(a) { return a.stock > 0; });
+  var shares   = _dispShares();
+  var totalPdv = _dispTotalPdv();
+  var coms     = _dispActiveCommerciaux();
+  var activeTab = (document.querySelector('.dp-tab.active') || {}).dataset && document.querySelector('.dp-tab.active').dataset.tab || 'dispatch';
+
+  // KPI row
+  var configured = articles.filter(function(a) { return dispGetPool(a.id) > 0; }).length;
+  var kpis = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">'
+    + _dpKpi(coms.length, 'Commerciaux', 'var(--accent)', 'fa-user-tie')
+    + _dpKpi(totalPdv, 'PDV total', 'var(--accent2)', 'fa-store')
+    + _dpKpi(articles.length, 'Gadgets en stock', 'var(--warning)', 'fa-boxes-stacked')
+    + _dpKpi(configured, 'Pools\u00a0configur\u00e9s', 'var(--success,#0f0)', 'fa-check-circle')
+    + '</div>';
+
+  // Tabs
+  var tabs = '<div style="display:flex;gap:4px;margin-bottom:18px;border-bottom:2px solid var(--border);padding-bottom:0">'
+    + _dpTab('dispatch', 'R\u00e9partition', activeTab)
+    + _dpTab('historique', 'Historique', activeTab)
+    + '<div style="margin-left:auto;padding-bottom:8px">'
+    + (configured > 0 ? '<button class="btn btn-primary btn-sm" onclick="validateDispatchV3(null)" style="font-weight:700"><i class="fa-solid fa-check" style="margin-right:6px"></i>Valider le dispatch</button>' : '')
+    + '</div></div>';
+
+  // Tab: dispatch
+  var tabDispatch = '<div class="dp-tab-pane" id="dp-pane-dispatch" style="display:' + (activeTab === 'dispatch' ? 'block' : 'none') + '">';
+
+  // Shares summary (collapsible)
+  tabDispatch += '<div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">';
+  tabDispatch += '<div onclick="var b=document.getElementById(\'dp-shares-body\');b.style.display=b.style.display===\'none\'?\'block\':\'none\';this.querySelector(\'.dp-caret\').style.transform=b.style.display===\'none\'?\'rotate(0deg)\':\' rotate(180deg)\'" '
+    + 'style="padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">'
+    + '<i class="fa-solid fa-chart-pie" style="color:var(--accent)"></i>'
+    + '<strong style="font-size:0.95rem">Parts terrain par commercial</strong>'
+    + '<span class="dp-caret" style="margin-left:auto;display:inline-block;transition:transform .2s;color:var(--text-2)">&#8964;</span>'
+    + '</div>';
+  tabDispatch += '<div id="dp-shares-body" style="padding:12px 16px">' + _renderSharesTable(shares, totalPdv) + '</div>';
+  tabDispatch += '</div>';
+
+  // Gadget cards
+  if (articles.length === 0) {
+    tabDispatch += '<div class="card" style="padding:32px;text-align:center;color:var(--text-2)"><i class="fa-solid fa-box-open" style="font-size:2rem;margin-bottom:12px;display:block"></i>Aucun gadget en stock</div>';
+  } else {
+    tabDispatch += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
+    articles.forEach(function(a) { tabDispatch += _renderDispGadgetCard(a, shares); });
+    tabDispatch += '</div>';
+  }
+  tabDispatch += '</div>';
+
+  // Tab: historique
+  var tabHist = '<div class="dp-tab-pane" id="dp-pane-historique" style="display:' + (activeTab === 'historique' ? 'block' : 'none') + '">'
+    + _renderDispTabHistory() + '</div>';
+
+  document.getElementById('content').innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">'
+    + '<h2 style="margin:0"><i class="fa-solid fa-share-nodes" style="color:var(--accent);margin-right:10px"></i>Dispatch Gadgets</h2>'
+    + '</div>'
+    + kpis + tabs + tabDispatch + tabHist;
+}
+
+function _dpKpi(val, label, color, icon) {
+  return '<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:12px">'
+    + '<div style="width:36px;height:36px;border-radius:8px;background:' + color + '22;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+    + '<i class="fa-solid ' + icon + '" style="color:' + color + ';font-size:0.95rem"></i></div>'
+    + '<div><div style="font-size:1.4rem;font-weight:800;color:' + color + ';line-height:1">' + val + '</div>'
+    + '<div style="font-size:0.75rem;color:var(--text-2);margin-top:2px">' + label + '</div></div>'
+    + '</div>';
+}
+
+function _dpTab(id, label, activeTab) {
+  var isActive = activeTab === id;
+  return '<button class="dp-tab btn btn-sm' + (isActive ? ' btn-primary active' : '') + '" data-tab="' + id + '" '
+    + 'onclick="document.querySelectorAll(\'.dp-tab\').forEach(function(b){b.classList.remove(\'active\',\'btn-primary\')});this.classList.add(\'active\',\'btn-primary\');'
+    + 'document.querySelectorAll(\'.dp-tab-pane\').forEach(function(p){p.style.display=\'none\'});document.getElementById(\'dp-pane-\'+this.dataset.tab).style.display=\'block\'" '
+    + 'style="border-radius:6px 6px 0 0;border-bottom:none;margin-bottom:-2px;padding:7px 18px">' + label + '</button>';
+}
+
+function _renderSharesTable(shares, totalPdv) {
+  var coms = _dispActiveCommerciaux();
+  if (coms.length === 0) return '<p style="color:var(--text-2);font-size:0.85rem">Aucun commercial actif</p>';
+  var rows = '';
+  coms.forEach(function(c) {
+    var s = shares[c.id] || { name: c.id, pdv: 0, pct: 0 };
+    var barW = Math.round(s.pct);
+    rows += '<tr>'
+      + '<td style="font-weight:600;font-size:0.88rem">' + s.name + '</td>'
+      + '<td style="text-align:center;font-size:0.85rem">' + s.pdv + '</td>'
+      + '<td style="min-width:80px"><div style="background:var(--border);border-radius:3px;height:6px;overflow:hidden">'
+      + '<div style="background:var(--accent);height:100%;width:' + barW + '%;border-radius:3px"></div></div></td>'
+      + '<td style="text-align:right;font-weight:700;color:var(--accent);font-size:0.88rem">' + s.pct.toFixed(1) + '%</td>'
+      + '</tr>';
   });
-  html += '</tbody></table></div>';
-  return html;
+  return '<table style="width:100%;border-collapse:collapse;font-size:0.85rem">'
+    + '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.78rem;text-transform:uppercase">Commercial</th>'
+    + '<th style="text-align:center;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.78rem">PDV</th>'
+    + '<th style="padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.78rem">R\u00e9partition</th>'
+    + '<th style="text-align:right;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.78rem">Part</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '<tfoot><tr><td style="padding:6px 8px;border-top:1px solid var(--border);font-weight:700;font-size:0.82rem">TOTAL</td>'
+    + '<td style="text-align:center;padding:6px 8px;border-top:1px solid var(--border);font-weight:700">' + totalPdv + '</td>'
+    + '<td style="border-top:1px solid var(--border)"></td>'
+    + '<td style="text-align:right;padding:6px 8px;border-top:1px solid var(--border);font-weight:700;color:var(--accent)">100%</td></tr></tfoot>'
+    + '</table>';
+}
+
+function _renderDispGadgetCard(art, shares) {
+  var artId = art.id;
+  var pool  = dispGetPool(artId);
+  var coms  = _dispActiveCommerciaux();
+
+  // Eligibility chips
+  var chips = '<div style="display:flex;flex-wrap:wrap;gap:5px;margin:10px 0">';
+  coms.forEach(function(c) {
+    var eli = dispIsEligible(artId, c.id);
+    var s   = shares[c.id] || { name: c.id, pct: 0 };
+    chips += '<span onclick="dispToggleEligible(\'' + artId + '\',\'' + c.id + '\')" '
+      + 'title="' + s.name + ' \u2014 ' + s.pct.toFixed(1) + '%" '
+      + 'style="cursor:pointer;padding:4px 8px;border-radius:20px;font-size:0.75rem;font-weight:600;user-select:none;transition:all .15s;'
+      + (eli ? 'background:var(--accent);color:#fff;' : 'background:var(--border);color:var(--text-2);')
+      + '">' + s.name.split(' ')[0] + '</span>';
+  });
+  chips += '</div>';
+
+  // Quick-select all/none
+  chips += '<div style="display:flex;gap:6px;margin-bottom:8px">'
+    + '<button class="btn btn-sm" onclick="dispSetAllEligible(\'' + artId + '\',true)" style="font-size:0.72rem;padding:2px 8px">Tous</button>'
+    + '<button class="btn btn-sm" onclick="dispSetAllEligible(\'' + artId + '\',false)" style="font-size:0.72rem;padding:2px 8px">Aucun</button>'
+    + '</div>';
+
+  // Preview
+  var previewHtml = _renderDispPreview(artId);
+
+  return '<div class="card" id="dp-card-' + artId + '" style="padding:14px 16px">'
+    // Header
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+    + '<div><span style="font-weight:700;font-size:0.95rem">' + art.name + '</span>'
+    + (art.category ? '<span style="margin-left:8px;font-size:0.72rem;color:var(--text-2)">' + art.category + '</span>' : '')
+    + '</div>'
+    + '<span class="badge" style="background:var(--accent)22;color:var(--accent)">Stock&nbsp;' + art.stock + '</span>'
+    + '</div>'
+    // Pool input
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<label style="font-size:0.8rem;color:var(--text-2);white-space:nowrap">Pool \u00e0 dispatcher</label>'
+    + '<input type="number" id="dp-pool-' + artId + '" value="' + pool + '" min="0" max="' + art.stock + '" '
+    + 'oninput="_dispUpdatePool(\'' + artId + '\')" '
+    + 'style="width:80px;text-align:center;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input,var(--bg-card));color:var(--text-1);font-weight:700">'
+    + '<span style="font-size:0.75rem;color:var(--text-2)">/ ' + art.stock + '</span>'
+    + '</div>'
+    // Eligibility
+    + '<div style="font-size:0.75rem;color:var(--text-2);margin-bottom:2px">Commerciaux \u00e9ligibles <span style="color:var(--text-2)">(cliquer pour basculer)</span></div>'
+    + chips
+    // Preview
+    + '<div id="dp-prev-' + artId + '">' + previewHtml + '</div>'
+    + '</div>';
+}
+
+function _renderDispPreview(articleId) {
+  var alloc = dispCompute(articleId);
+  if (!alloc) {
+    var pool = dispGetPool(articleId);
+    if (pool <= 0) return '<p style="font-size:0.78rem;color:var(--text-2);margin:4px 0">D\u00e9finissez un pool pour voir la r\u00e9partition.</p>';
+    return '<p style="font-size:0.78rem;color:var(--warning);margin:4px 0"><i class="fa-solid fa-triangle-exclamation"></i>&nbsp;Aucun commercial \u00e9ligible &mdash; gadget ignor\u00e9.</p>';
+  }
+  var total = alloc.reduce(function(s, a) { return s + a.qty; }, 0);
+  var rows = '';
+  alloc.forEach(function(a) {
+    var barW = Math.round((a.qty / (total || 1)) * 100);
+    rows += '<tr>'
+      + '<td style="padding:3px 6px;font-size:0.8rem">' + a.name + '</td>'
+      + '<td style="padding:3px 6px;text-align:center"><div style="background:var(--border);border-radius:2px;height:5px;width:60px;display:inline-block;vertical-align:middle;overflow:hidden">'
+      + '<div style="background:var(--accent2);height:100%;width:' + barW + '%;border-radius:2px"></div></div></td>'
+      + '<td style="padding:3px 6px;text-align:right;font-weight:700;font-size:0.8rem;color:var(--accent2)">' + a.qty + '</td>'
+      + '<td style="padding:3px 6px;text-align:right;font-size:0.75rem;color:var(--text-2)">' + a.pct.toFixed(1) + '%</td>'
+      + '</tr>';
+  });
+  return '<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr><th style="text-align:left;font-size:0.72rem;color:var(--text-2);padding:2px 6px;text-transform:uppercase">Commercial</th>'
+    + '<th style="font-size:0.72rem;color:var(--text-2);padding:2px 6px"></th>'
+    + '<th style="text-align:right;font-size:0.72rem;color:var(--text-2);padding:2px 6px">Qtt\u00e9</th>'
+    + '<th style="text-align:right;font-size:0.72rem;color:var(--text-2);padding:2px 6px">%</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '<tfoot><tr><td colspan="2" style="padding:4px 6px;font-weight:700;font-size:0.8rem;border-top:1px solid var(--border)">Total dispatch\u00e9</td>'
+    + '<td style="text-align:right;padding:4px 6px;font-weight:700;font-size:0.8rem;border-top:1px solid var(--border);color:var(--accent)">' + total + '</td>'
+    + '<td style="text-align:right;padding:4px 6px;font-size:0.8rem;border-top:1px solid var(--border);color:var(--accent)">100%</td></tr></tfoot>'
+    + '</table></div>';
 }
 
 function _renderDispTabHistory() {
-  _ensureDispatch();
+  _dispEnsure();
   var hist = APP.dispatch.history || [];
-  if (hist.length === 0) return '<p style="color:#888">' + t('noHistory') + '</p>';
-  var html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">';
-  html += '<label style="font-size:0.85em">Du <input type="date" id="disp-hist-from" style="padding:4px"></label>';
-  html += '<label style="font-size:0.85em">Au <input type="date" id="disp-hist-to" style="padding:4px"></label>';
-  html += '<button class="btn btn-sm" onclick="_filterDispHistory()">Filtrer</button>';
-  html += '<button class="btn btn-sm" onclick="_resetDispHistFilter()">Tout</button>';
-  html += '</div>';
-  html += '<div id="disp-hist-list">' + _buildDispHistRows(hist) + '</div>';
+  if (hist.length === 0) return '<div class="card" style="padding:32px;text-align:center;color:var(--text-2)"><i class="fa-solid fa-clock-rotate-left" style="font-size:2rem;margin-bottom:12px;display:block"></i>Aucun dispatch valid\u00e9</div>';
+  var html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">'
+    + '<label style="font-size:0.82rem;color:var(--text-2)">Du <input type="date" id="disp-hist-from" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
+    + '<label style="font-size:0.82rem;color:var(--text-2)">Au <input type="date" id="disp-hist-to" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
+    + '<button class="btn btn-sm" onclick="_filterDispHistory()"><i class="fa-solid fa-filter"></i>&nbsp;Filtrer</button>'
+    + '<button class="btn btn-sm" onclick="_resetDispHistFilter()">Tout</button>'
+    + '</div>'
+    + '<div id="disp-hist-list">' + _buildDispHistRows(hist) + '</div>';
   return html;
 }
 
 function _buildDispHistRows(list) {
-  var html = '<table class="table" style="font-size:0.85em"><thead><tr><th>Date</th><th>Article</th><th>' + t('total') + '</th><th>' + t('details') + '</th><th>Actions</th></tr></thead><tbody>';
   var fullHist = APP.dispatch.history || [];
+  var rows = '';
   list.forEach(function(h) {
     var realIdx = fullHist.indexOf(h);
-    var details = (h.alloc || []).filter(function(a){return a.qty > 0}).map(function(a){return a.name + ':' + a.qty}).join(', ');
-    html += '<tr><td>' + new Date(h.ts).toLocaleString('fr-FR') + '</td><td>' + (h.articleName || '') + '</td><td>' + h.totalQty + '</td><td style="font-size:0.85em">' + details + '</td>';
-    html += '<td><button class="btn btn-sm" onclick="printDispatchReport(' + realIdx + ')" title="Imprimer">🖨</button> ';
-    html += '<button class="btn btn-sm" style="color:var(--danger)" onclick="undoDispatch(' + realIdx + ')" title="Annuler">\u21A9</button></td></tr>';
+    var details = (h.alloc || []).filter(function(a) { return a.qty > 0; }).map(function(a) { return '<span style="font-size:0.75rem;background:var(--border);border-radius:10px;padding:2px 7px;display:inline-block;margin:1px">' + a.name + ': <strong>' + a.qty + '</strong></span>'; }).join(' ');
+    rows += '<div class="card" style="margin-bottom:8px;padding:12px 14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+      + '<div><strong style="font-size:0.92rem">' + (h.articleName || '') + '</strong>'
+      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s</span></div>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<span style="font-size:0.78rem;color:var(--text-2)">' + new Date(h.ts).toLocaleString('fr-FR') + '</span>'
+      + '<button class="btn btn-sm" onclick="printDispatchReport(' + realIdx + ')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
+      + '<button class="btn btn-sm" onclick="undoDispatch(' + realIdx + ')" title="Annuler" style="color:var(--danger)"><i class="fa-solid fa-rotate-left"></i></button>'
+      + '</div></div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:4px">' + details + '</div>'
+      + '</div>';
   });
-  html += '</tbody></table>';
-  return html;
+  return rows || '<p style="color:var(--text-2);font-size:0.85rem">Aucun r\u00e9sultat</p>';
 }
 
 function _filterDispHistory() {
   var fromEl = document.getElementById('disp-hist-from');
-  var toEl = document.getElementById('disp-hist-to');
+  var toEl   = document.getElementById('disp-hist-to');
   var from = fromEl && fromEl.value ? new Date(fromEl.value).getTime() : 0;
-  var to = toEl && toEl.value ? new Date(toEl.value).setHours(23,59,59,999) : Infinity;
+  var to   = toEl && toEl.value ? new Date(toEl.value).setHours(23,59,59,999) : Infinity;
   var hist = (APP.dispatch.history || []).filter(function(h) { return h.ts >= from && h.ts <= to; });
   var el = document.getElementById('disp-hist-list');
-  if(el) el.innerHTML = _buildDispHistRows(hist);
+  if (el) el.innerHTML = _buildDispHistRows(hist);
 }
 
 function _resetDispHistFilter() {
   var fromEl = document.getElementById('disp-hist-from');
-  var toEl = document.getElementById('disp-hist-to');
-  if(fromEl) fromEl.value = '';
-  if(toEl) toEl.value = '';
+  var toEl   = document.getElementById('disp-hist-to');
+  if (fromEl) fromEl.value = '';
+  if (toEl)   toEl.value   = '';
   var el = document.getElementById('disp-hist-list');
-  if(el) el.innerHTML = _buildDispHistRows(APP.dispatch.history || []);
+  if (el) el.innerHTML = _buildDispHistRows(APP.dispatch.history || []);
 }
 
 function dInitCommercialDispatchFields(c) {
-  if(c.dispatchZoneId === undefined) c.dispatchZoneId = c.zoneId || '';
+  if (c.dispatchZoneId === undefined) c.dispatchZoneId = c.zoneId || '';
 }
 
 
