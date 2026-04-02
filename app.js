@@ -7354,10 +7354,11 @@ function _dispUpdatePool(articleId) {
 // ── Render functions ──────────────────────────────────────────────────────────
 
 function _dispReset() {
-  if (!confirm('Remettre tous les pools et \u00e9ligibilit\u00e9s \u00e0 z\u00e9ro ?')) return;
+  if (!confirm('Remettre tout le dispatch \u00e0 z\u00e9ro ?\n(Pools, \u00e9ligibilit\u00e9s et historique)')) return;
   _dispEnsure();
   APP.dispatch.pools = {};
   APP.dispatch.eligibility = {};
+  APP.dispatch.history = [];
   saveDB();
   renderDispatchPage();
   notify('Dispatch r\u00e9initialis\u00e9 \u2713', 'info');
@@ -7684,47 +7685,27 @@ function validateBon(bonId) {
   if (!bon) { notify('Bon introuvable', 'error'); return; }
   if (bon.status !== 'brouillon') { notify('Ce bon n\u2019est pas en brouillon', 'warning'); return; }
   if (!confirm('Valider ce bon et pr\u00e9lever le stock ?')) return;
-
-  // Deduct stock for each ligne
-  var ts = Date.now();
-  (bon.lignes||[]).forEach(function(l) {
-    var art = (APP.articles||[]).find(function(a){ return a.id === l.articleId; });
-    if (art) {
-      art.stock -= l.qty;
-      APP.mouvements.unshift({ id: generateId(), type: 'sortie', ts: ts, articleId: art.id, articleName: art.name, qty: l.qty, note: 'Bon ' + bon.numero + ' \u2192 ' + (bon.recipiendaire||''), commercialId: bon.commercialId||'' });
-    }
-  });
-  bon.status = 'livr\u00e9';
-  bon._validatedAt = ts;
+  var old = bon.status;
+  if (!_handleBonStatusStockChange(bon, old, 'valid\u00e9')) return;
+  bon.status = 'valid\u00e9';
+  bon._validatedAt = Date.now();
   saveDB();
-  auditLog('VALIDATE', 'bon', bon.numero);
+  auditLog('VALIDATE', 'bon', bon.numero, {status: old}, {status: bon.status});
   notify('Bon ' + bon.numero + ' valid\u00e9 \u2014 stock pr\u00e9lev\u00e9 \u2713', 'success');
   if (typeof renderBons === 'function') renderBons();
 }
 
-// ── Annuler un bon: restore stock if it was validated ──
 function cancelBon(bonId) {
   var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
   if (!bon) { notify('Bon introuvable', 'error'); return; }
-  var wasValidated = (bon.status === 'livr\u00e9');
+  var wasValidated = (bon.status === 'valid\u00e9');
   if (!confirm('Annuler ce bon ?' + (wasValidated ? ' Le stock sera restaur\u00e9.' : ''))) return;
-
-  if (wasValidated) {
-    // Restore stock
-    (bon.lignes||[]).forEach(function(l) {
-      var art = (APP.articles||[]).find(function(a){ return a.id === l.articleId; });
-      if (art) art.stock += l.qty;
-    });
-    // Remove associated mouvements
-    var bonRef = 'Bon ' + bon.numero;
-    APP.mouvements = (APP.mouvements||[]).filter(function(m) {
-      return !(m.note && m.note.indexOf(bonRef) === 0);
-    });
-  }
+  var old = bon.status;
+  if (!_handleBonStatusStockChange(bon, old, 'annul\u00e9')) return;
   bon.status = 'annul\u00e9';
   bon._cancelledAt = Date.now();
   saveDB();
-  auditLog('CANCEL', 'bon', bon.numero);
+  auditLog('CANCEL', 'bon', bon.numero, {status: old}, {status: bon.status});
   notify('Bon ' + bon.numero + ' annul\u00e9' + (wasValidated ? ' \u2014 stock restaur\u00e9' : '') + ' \u2713', 'info');
   if (typeof renderBons === 'function') renderBons();
 }
