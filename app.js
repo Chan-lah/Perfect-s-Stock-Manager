@@ -2998,10 +2998,7 @@ function secteurCommercialCount(secteurId) {
 // ============================================================
 function renderCommerciaux() {
   // Stats globales
-  const totalPDV = APP.commerciaux.reduce((s,c)=>{
-    const real = comPDVCount(c.id);
-    return s + (real > 0 ? real : (c.nbClients||0));
-  },0);
+  const totalPDV = APP.commerciaux.reduce((s,c)=>s + comPDVCount(c.id), 0);
   const totalZones = (APP.zones||[]).length;
   const totalSecteurs = (APP.secteurs||[]).length;
   const totalBons = APP.bons.length;
@@ -3145,9 +3142,9 @@ function _renderComTable(coms, color) {
       const bonsCount = APP.bons.filter(b=>b.commercialId===c.id).length;
       const totalQty = APP.mouvements.filter(m=>m.type==='sortie'&&m.commercialId===c.id).reduce((s,m)=>s+m.qty,0);
       const realPDV = comPDVCount(c.id);
-      const boul = c.dispatchBoul||0;
-      const dist = c.dispatchDist||0;
-      const displayPDV = boul + dist;
+      const boul = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='boulangerie'&&p.actif!==false).length;
+      const dist = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='distributeur'&&p.actif!==false).length;
+      const displayPDV = realPDV;
       const isDispatch = c.dispatchActive !== false;
       const z = (APP.zones||[]).find(x=>x.id===c.dispatchZoneId);
       const secteur = (APP.secteurs||[]).find(x=>x.id===c.secteurId);
@@ -7027,10 +7024,9 @@ function _dispActiveCommerciaux() {
   return (APP.commerciaux || []).filter(function(c) { return c.actif !== false && c.dispatchActive !== false; });
 }
 
-// Real PDV count from APP.pdv, fallback to c.nbClients
+// Real PDV count: only APP.pdv assigned to this commercial (no fallback)
 function _dispGetPdv(c) {
-  var real = (APP.pdv || []).filter(function(p) { return p.commercialId === c.id && p.actif !== false; }).length;
-  return real > 0 ? real : (c.nbClients || 0);
+  return (APP.pdv || []).filter(function(p) { return p.commercialId === c.id && p.actif !== false; }).length;
 }
 
 function _dispTotalPdv() {
