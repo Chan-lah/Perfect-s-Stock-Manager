@@ -2740,7 +2740,7 @@ function generateBonHTML(bon, overrides) {
     </table>
     <div style="margin:14px 0 6px">
       <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:5px">
-        <strong>DEMANDEUR :</strong> <span style="display:inline-block;width:400px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${commercial?commercial.prenom+' '+commercial.nom:'—'}</span>
+        <strong>DEMANDEUR :</strong> <span style="display:inline-block;width:400px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.demandeur||(commercial?commercial.prenom+' '+commercial.nom:'—')}</span>
       </div>
       <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:5px">
         <strong>DESTINATAIRE / RÉCIPIENDAIRE :</strong> <span style="display:inline-block;width:340px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.recipiendaire||''}</span>
@@ -7283,13 +7283,16 @@ async function validateDispatchV3(articleIds) {
   for (var comId in bonsByComm) {
     var bd = bonsByComm[comId];
     var bonNum = await bonNumber();
+    var com = APP.commerciaux.find(function(x){ return x.id === comId; });
+    var fullName = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : bd.name;
     var bon = {
       id: generateId(), numero: bonNum,
       companyId: (APP.settings && APP.settings.companyId) || '',
-      recipiendaire: bd.name,
+      demandeur: 'DCM',
+      recipiendaire: fullName,
       commercialId: comId,
-      commercialName: bd.name,
-      objet: 'Dispatch gadgets',
+      commercialName: fullName,
+      objet: 'DOTATION MENSUELLE',
       date: new Date().toISOString().split('T')[0],
       validite: '',
       lignes: bd.lignes,
@@ -7339,6 +7342,71 @@ function _dispUpdatePool(articleId) {
 
 // ── Render functions ──────────────────────────────────────────────────────────
 
+function _showDispatchRecap() {
+  _dispEnsure();
+  var articles = (APP.articles || []).filter(function(a) { return a.stock > 0 && dispGetPool(a.id) > 0; });
+  if (articles.length === 0) { notify('Aucun gadget configur\u00e9', 'warning'); return; }
+
+  // Build recap: per commercial, total across all gadgets
+  var comTotals = {};
+  var errors = [];
+  articles.forEach(function(a) {
+    var pool = dispGetPool(a.id);
+    if (pool > a.stock) { errors.push(a.name + ': pool (' + pool + ') > stock (' + a.stock + ')'); return; }
+    var alloc = dispCompute(a.id);
+    if (!alloc) { errors.push(a.name + ': aucun commercial \u00e9ligible'); return; }
+    alloc.forEach(function(al) {
+      if (al.qty > 0) {
+        if (!comTotals[al.id]) comTotals[al.id] = { name: al.name, gadgets: [], total: 0 };
+        comTotals[al.id].gadgets.push({ name: a.name, qty: al.qty });
+        comTotals[al.id].total += al.qty;
+      }
+    });
+  });
+
+  if (Object.keys(comTotals).length === 0 && errors.length > 0) {
+    notify(errors[0], 'error'); return;
+  }
+
+  // Build HTML table
+  var rows = '';
+  var grandTotal = 0;
+  for (var comId in comTotals) {
+    var ct = comTotals[comId];
+    grandTotal += ct.total;
+    var detail = ct.gadgets.map(function(g) { return g.name + ' \u00d7' + g.qty; }).join(', ');
+    rows += '<tr style="border-bottom:1px solid var(--border)">'
+      + '<td style="padding:8px 10px;font-weight:700">' + ct.name + '</td>'
+      + '<td style="padding:8px 10px;font-size:0.85rem;color:var(--text-2)">' + detail + '</td>'
+      + '<td style="padding:8px 10px;text-align:right;font-weight:800;color:var(--accent);font-size:1.1rem">' + ct.total + '</td>'
+      + '</tr>';
+  }
+
+  var errHtml = errors.length > 0
+    ? '<div style="background:var(--danger)11;border:1px solid var(--danger)33;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:0.82rem;color:var(--danger)">'
+      + '<strong>Ignor\u00e9s :</strong> ' + errors.join(', ') + '</div>'
+    : '';
+
+  var html = errHtml
+    + '<div style="margin-bottom:14px;font-size:0.88rem;color:var(--text-2)"><strong>' + articles.length + '</strong> gadget(s) \u2192 <strong>' + Object.keys(comTotals).length + '</strong> commercial(aux) \u2192 <strong>' + grandTotal + '</strong> unit\u00e9s total</div>'
+    + '<div class="table-wrap"><table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr><th style="text-align:left;padding:8px 10px;font-size:0.78rem;text-transform:uppercase;color:var(--text-2)">Commercial</th>'
+    + '<th style="text-align:left;padding:8px 10px;font-size:0.78rem;text-transform:uppercase;color:var(--text-2)">D\u00e9tail gadgets</th>'
+    + '<th style="text-align:right;padding:8px 10px;font-size:0.78rem;text-transform:uppercase;color:var(--text-2)">Total</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '<tfoot><tr style="background:var(--accent)08"><td colspan="2" style="padding:10px;font-weight:700;font-size:0.92rem">TOTAL G\u00c9N\u00c9RAL</td>'
+    + '<td style="padding:10px;text-align:right;font-weight:900;font-size:1.2rem;color:var(--accent)">' + grandTotal + '</td></tr></tfoot>'
+    + '</table></div>'
+    + '<div style="margin-top:16px;padding:10px 14px;background:var(--accent)08;border-radius:8px;font-size:0.82rem;color:var(--text-2)">'
+    + '<i class="fa-solid fa-file-invoice" style="color:var(--accent);margin-right:6px"></i>'
+    + '<strong>' + Object.keys(comTotals).length + ' bon(s) de sortie</strong> seront g\u00e9n\u00e9r\u00e9s avec : <strong>DEMANDEUR</strong> = DCM, <strong>Objet</strong> = DOTATION MENSUELLE</div>';
+
+  openModal('dispatch-recap-modal', '\ud83d\udce6 R\u00e9cap Dispatch', html, function() {
+    closeModal();
+    validateDispatchV3(null);
+  }, 'modal-lg');
+}
+
 function renderDispatchPage() {
   _dispEnsure();
   var articles = (APP.articles || []).filter(function(a) { return a.stock > 0; });
@@ -7360,8 +7428,9 @@ function renderDispatchPage() {
   var tabs = '<div style="display:flex;gap:4px;margin-bottom:18px;border-bottom:2px solid var(--border);padding-bottom:0">'
     + _dpTab('dispatch', 'R\u00e9partition', activeTab)
     + _dpTab('historique', 'Historique', activeTab)
-    + '<div style="margin-left:auto;padding-bottom:8px">'
-    + (configured > 0 ? '<button class="btn btn-primary btn-sm" onclick="validateDispatchV3(null)" style="font-weight:700"><i class="fa-solid fa-check" style="margin-right:6px"></i>Valider le dispatch</button>' : '')
+    + '<div style="margin-left:auto;padding-bottom:8px;display:flex;gap:8px">'
+    + '<button class="btn btn-secondary btn-sm" onclick="saveDB();notify('\u2601 Configuration sauvegard\u00e9e','success')" style="font-weight:600"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:5px"></i>Sauvegarder config</button>'
+    + (configured > 0 ? '<button class="btn btn-primary btn-sm" onclick="_showDispatchRecap()" style="font-weight:700"><i class="fa-solid fa-check" style="margin-right:6px"></i>Valider le dispatch</button>' : '')
     + '</div></div>';
 
   // Tab: dispatch
