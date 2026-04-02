@@ -75,7 +75,8 @@ var _cloudSaveQueue = null; // pending save promise
 // Sections that are synced to Firebase (images excluded — too large)
 var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
                       'commandesFourn','zones','secteurs','pdv','settings',
-                      'dispatch','companies','backups','audit','users'];
+                      'dispatch','companies','audit','users'];
+// Note: 'backups' removed — backups stay local (filesystem only), not synced to Firebase
 
 // Fast djb2-style hash to detect changes per section
 function _strHash(str) {

@@ -409,19 +409,25 @@ function hexToLight(hex) {
 // ============================================================
 // AUDIT LOG
 // ============================================================
+function _truncStr(v, max) {
+  if (!v) return '';
+  var s = typeof v === 'string' ? v : JSON.stringify(v);
+  return s.length > max ? s.substring(0, max) + '...' : s;
+}
+
 function auditLog(type, entity, entityId, oldVal, newVal) {
   var _u = (typeof _currentUser === 'function') ? _currentUser() : null;
   var _cu = (typeof _cloudUser !== 'undefined') ? _cloudUser : null;
   var _entry = {
     id: generateId(), ts: Date.now(), type: type, entity: entity, entityId: entityId,
-    oldVal: JSON.stringify(oldVal), newVal: JSON.stringify(newVal),
+    oldVal: _truncStr(oldVal, 200), newVal: _truncStr(newVal, 200),
     userEmail: (_u && _u.email) || (_cu && _cu.email) || 'unknown',
     userName:  (_u && (_u.name || _u.display_name)) || (_cu && _cu.displayName) || 'unknown',
     userRole:  (_u && _u.role) || 'unknown'
   };
   if (!APP.audit) APP.audit = [];
   APP.audit.unshift(_entry);
-  if (APP.audit.length > 1000) APP.audit = APP.audit.slice(0, 1000);
+  if (APP.audit.length > 500) APP.audit = APP.audit.slice(0, 500);
   saveDB();
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cu) {
     _firebaseDB.ref('audit_log').push(_entry).catch(function(){});
@@ -504,6 +510,59 @@ function _sendBrowserNotif(title, body, tag) {
 
 var _notifSentAlerts = new Set();
 
+// ── Storage pruning: remove old historical data ──────────────
+function _pruneHistoricalData() {
+  if (typeof APP === 'undefined') return;
+  var now = Date.now();
+  var pruned = false;
+
+  // Mouvements: keep last 24 months
+  if (APP.mouvements && APP.mouvements.length > 500) {
+    var cutoff24m = now - (730 * 86400000);
+    var before = APP.mouvements.length;
+    APP.mouvements = APP.mouvements.filter(function(m) { return m.ts >= cutoff24m; });
+    if (APP.mouvements.length < before) {
+      console.log('[PSM] Pruned ' + (before - APP.mouvements.length) + ' old mouvements (>24mo)');
+      pruned = true;
+    }
+  }
+
+  // Bons: keep last 36 months
+  if (APP.bons && APP.bons.length > 200) {
+    var cutoff36m = now - (1095 * 86400000);
+    var before = APP.bons.length;
+    APP.bons = APP.bons.filter(function(b) { return (b.createdAt || b.ts || now) >= cutoff36m; });
+    if (APP.bons.length < before) {
+      console.log('[PSM] Pruned ' + (before - APP.bons.length) + ' old bons (>36mo)');
+      pruned = true;
+    }
+  }
+
+  // Dispatch history: keep last 12 months
+  if (APP.dispatch && APP.dispatch.history && APP.dispatch.history.length > 50) {
+    var cutoff12m = now - (365 * 86400000);
+    var before = APP.dispatch.history.length;
+    APP.dispatch.history = APP.dispatch.history.filter(function(h) { return h.ts >= cutoff12m; });
+    if (APP.dispatch.history.length < before) {
+      console.log('[PSM] Pruned ' + (before - APP.dispatch.history.length) + ' old dispatch records (>12mo)');
+      pruned = true;
+    }
+  }
+
+  // Audit: keep last 6 months (in addition to the 500 cap)
+  if (APP.audit && APP.audit.length > 100) {
+    var cutoff6m = now - (180 * 86400000);
+    var before = APP.audit.length;
+    APP.audit = APP.audit.filter(function(a) { return a.ts >= cutoff6m; });
+    if (APP.audit.length < before) {
+      console.log('[PSM] Pruned ' + (before - APP.audit.length) + ' old audit entries (>6mo)');
+      pruned = true;
+    }
+  }
+
+  if (pruned) saveDB();
+}
+
 async function initApp() {
   try {
     if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
@@ -579,6 +638,7 @@ async function _finishAppInit() {
   if(!APP.bons) APP.bons = [];
   if(!APP.fournisseurs) APP.fournisseurs = [];
   initGMAData();
+  _pruneHistoricalData();
   (APP.commerciaux||[]).forEach(c => dInitCommercialDispatchFields(c));
   (APP.articles||[]).forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
   if(!APP.dispatchHistory) APP.dispatchHistory = [];
