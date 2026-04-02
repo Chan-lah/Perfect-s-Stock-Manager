@@ -3491,6 +3491,7 @@ function buildPDVTooltip(p) {
 }
 
 let _pdvSearch='', _pdvZone='all', _pdvType='all', _pdvCom='all';
+let _pdvSelectMode = false, _pdvSelected = new Set();
 
 function renderPDV() {
   const pdv = APP.pdv||[];
@@ -3505,6 +3506,7 @@ function renderPDV() {
       <div style="font-size:12px;color:var(--text-2);margin-top:2px">${pdv.length} PDV total · ${boul} boulangeries · ${dist} distributeurs · ${inactif} inactifs</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="togglePdvSelectMode()" id="pdv-select-btn">${_pdvSelectMode?'Annuler s\u00e9lection':'\u2610 S\u00e9lectionner'}</button>
       <button class="btn btn-secondary btn-sm" onclick="importPDVCSV()">📥 Import CSV</button>
       <button class="btn btn-secondary btn-sm" onclick="exportPDVCSV()">📤 Export CSV</button>
       <button class="btn btn-secondary" onclick="showPage('territoire')">🗺 Zones</button>
@@ -3561,6 +3563,7 @@ function _renderPDVTable() {
 
   wrap.innerHTML = `<div class="table-wrap"><table>
     <thead><tr>
+      ${_pdvSelectMode?'<th style="width:36px"><input type="checkbox" onchange="togglePdvSelectAll(this.checked)" style="width:16px;height:16px;cursor:pointer"></th>':''}
       <th>Nom du PDV</th><th>Type</th><th>Zone</th><th>Secteur</th><th>Commercial</th><th>Adresse</th><th>Contact</th><th>Statut</th><th>Actions</th>
     </tr></thead>
     <tbody>${pdv.map(p=>{
@@ -3568,7 +3571,8 @@ function _renderPDVTable() {
       const s = (APP.secteurs||[]).find(x=>x.id===p.secteurId);
       const c = APP.commerciaux.find(x=>x.id===p.commercialId);
       const actif = p.actif!==false;
-      return `<tr style="${actif?'':'opacity:.5'}">
+      return `<tr style="${actif?'':'opacity:.5'}${_pdvSelectMode&&_pdvSelected.has(p.id)?';background:rgba(99,102,241,.08)':''}">
+        ${_pdvSelectMode?`<td><input type="checkbox" ${_pdvSelected.has(p.id)?'checked':''} onchange="togglePdvSelect('${p.id}')" style="width:16px;height:16px;cursor:pointer"></td>`:''}
         <td style="font-weight:600"><div class="pdv-name-wrap">${p.nom||'—'}<div class="pdv-tooltip">${buildPDVTooltip(p)}</div></div></td>
         <td>${p.type==='boulangerie'?'<span class="badge badge-teal">🏭 Boulangerie</span>':'<span class="badge badge-yellow">🚛 Distributeur</span>'}</td>
         <td>${z?`<span style="background:${z.color}22;color:${z.color};border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600">${z.label}</span>`:'<span class="badge badge-gray">—</span>'}</td>
@@ -3585,7 +3589,8 @@ function _renderPDVTable() {
       </tr>`;
     }).join('')}</tbody>
   </table></div>
-  <div style="font-size:11px;color:var(--text-2);margin-top:8px">Affichage : ${pdv.length} PDV</div>`;
+  <div style="font-size:11px;color:var(--text-2);margin-top:8px">Affichage : ${pdv.length} PDV</div>
+  ${_pdvSelectMode?'<div id="pdv-select-bar" style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:10px 20px;display:flex;align-items:center;gap:14px;box-shadow:0 8px 32px rgba(0,0,0,.18);z-index:999"><span id="pdv-select-count" style="font-size:13px;font-weight:600;color:var(--text-1)">'+_pdvSelected.size+' s\u00e9lectionn\u00e9(s)</span><button class="btn btn-danger btn-sm" onclick="deletePdvSelection()" style="font-weight:600">\ud83d\uddd1 Supprimer la s\u00e9lection</button><button class="btn btn-secondary btn-sm" onclick="togglePdvSelectMode()">Annuler</button></div>':''}`;
 }
 
 function openPDVModal(id) {
@@ -3657,6 +3662,45 @@ function deletePDV(id) {
   APP.pdv = (APP.pdv||[]).filter(x=>x.id!==id);
   saveDB(); _renderPDVTable();
   notify('PDV supprimé','warning');
+}
+
+function togglePdvSelectMode() {
+  _pdvSelectMode = !_pdvSelectMode;
+  _pdvSelected.clear();
+  renderPDV();
+}
+
+function togglePdvSelectAll(checked) {
+  const showInactif = document.getElementById('pdv-show-inactif')?.checked;
+  const pdv = (APP.pdv||[]).filter(function(p) {
+    if(!showInactif && p.actif===false) return false;
+    if(_pdvSearch && !p.nom?.toLowerCase().includes(_pdvSearch.toLowerCase()) && !p.adresse?.toLowerCase().includes(_pdvSearch.toLowerCase())) return false;
+    if(_pdvZone!=='all' && p.zoneId!==_pdvZone) return false;
+    if(_pdvType!=='all' && p.type!==_pdvType) return false;
+    if(_pdvCom!=='all' && p.commercialId!==_pdvCom) return false;
+    return true;
+  });
+  _pdvSelected.clear();
+  if(checked) pdv.forEach(function(p){ _pdvSelected.add(p.id); });
+  _renderPDVTable();
+}
+
+function togglePdvSelect(id) {
+  if(_pdvSelected.has(id)) _pdvSelected.delete(id); else _pdvSelected.add(id);
+  _renderPDVTable();
+}
+
+function deletePdvSelection() {
+  if(_pdvSelected.size===0){notify('Aucun PDV s\u00e9lectionn\u00e9','warning');return;}
+  if(!confirm('Supprimer '+_pdvSelected.size+' PDV ?')) return;
+  APP.pdv = (APP.pdv||[]).filter(function(p){ return !_pdvSelected.has(p.id); });
+  var count = _pdvSelected.size;
+  _pdvSelected.clear();
+  _pdvSelectMode = false;
+  saveDB();
+  renderPDV();
+  notify(count+' PDV supprim\u00e9(s) \u2713','success');
+  auditLog('DELETE','pdv',count+' PDV supprim\u00e9s en lot');
 }
 
 function exportPDVCSV() {
