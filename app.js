@@ -3085,9 +3085,10 @@ function _renderComTable(coms, color) {
       const bonsCount = APP.bons.filter(b=>b.commercialId===c.id).length;
       const totalQty = APP.mouvements.filter(m=>m.type==='sortie'&&m.commercialId===c.id).reduce((s,m)=>s+m.qty,0);
       const realPDV = comPDVCount(c.id);
-      const displayPDV = realPDV > 0 ? realPDV : (c.nbClients||0);
-      const boul = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='boulangerie'&&p.actif!==false).length || c.dispatchBoul||0;
-      const dist = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='distributeur'&&p.actif!==false).length || c.dispatchDist||0;
+      const boul = c.dispatchBoul||0;
+      const dist = c.dispatchDist||0;
+      const displayPDV = boul + dist;
+      const isDispatch = c.dispatchActive !== false;
       const z = (APP.zones||[]).find(x=>x.id===c.dispatchZoneId);
       const secteur = (APP.secteurs||[]).find(x=>x.id===c.secteurId);
       return `<tr id="com-row-${c.id}">
@@ -3096,7 +3097,7 @@ function _renderComTable(coms, color) {
         <td class="editable" id="td-cprenom-${c.id}">${c.prenom}</td>
         <td class="editable" id="td-cservice-${c.id}" style="font-size:12px;color:var(--text-2)">${c.service||'—'}</td>
         <td class="editable" id="td-ctel-${c.id}" style="font-size:12px;color:var(--text-2)">${c.tel||'—'}</td>
-        <td style="font-weight:700;color:${color}">${displayPDV} <span style="font-size:10px;font-weight:400;color:var(--text-2)">PDV</span></td>
+        <td style="font-weight:700;color:${color}">${displayPDV} <span style="font-size:10px;font-weight:400;color:var(--text-2)">PDV</span>${isDispatch?'<span style="margin-left:4px;font-size:9px;background:var(--accent)22;color:var(--accent);padding:1px 5px;border-radius:8px">dispatch</span>':''}</td>
         <td style="font-family:var(--font-mono);font-size:12px"><span style="color:var(--accent2)">${boul}🏭</span> <span style="color:var(--warning)">${dist}🚛</span></td>
         <td>${z?`<span style="background:${z.color||'var(--accent)'}22;color:${z.color||'var(--accent)'};border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600">${z.label}</span>`:'<span style="color:var(--text-3);font-size:11px">—</span>'}${secteur?` <span style="background:${secteur.color||'#888'}22;color:${secteur.color||'#888'};border-radius:99px;padding:2px 8px;font-size:10px">${secteur.label}</span>`:''}</td>
         <td><span class="badge badge-blue">${bonsCount}</span></td>
@@ -3138,8 +3139,13 @@ function openCommercialModal(id) {
       <div class="form-group"><label>Email</label><input type="email" id="com-email" value="${c?.email||''}"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Téléphone</label><input id="com-tel" value="${c?.tel||''}"></div>
-      <div class="form-group"><label>PDV total (si pas saisi manuellement)</label><input type="number" id="com-nbclients" value="${c?.nbClients||0}" min="0"></div>
+      <div class="form-group"><label>T\u00e9l\u00e9phone</label><input id="com-tel" value="${c?.tel||''}"></div>
+      <div class="form-group"><label>PDV total <span style="font-size:10px;color:var(--text-2)">(auto = Boul + Dist)</span></label><input type="number" id="com-nbclients" value="${c?.nbClients||0}" min="0" readonly style="background:var(--bg-3);cursor:not-allowed"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:8px 12px;border-radius:8px;background:rgba(61,127,255,.06);border:1px solid rgba(61,127,255,.12)">
+      <input type="checkbox" id="com-dispatch-active" ${(c?.dispatchActive!==false)?'checked':''} style="width:18px;height:18px;cursor:pointer">
+      <label for="com-dispatch-active" style="cursor:pointer;font-size:13px;font-weight:600;color:var(--accent)">Inclure dans le dispatch</label>
+      <span style="font-size:11px;color:var(--text-2);margin-left:auto">D\u00e9cochez pour exclure ce commercial du calcul de r\u00e9partition</span>
     </div>
     <div style="background:rgba(61,127,255,.06);border:1px solid rgba(61,127,255,.18);border-radius:var(--radius);padding:14px;margin-bottom:14px">
       <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">🗺 Territoire</div>
@@ -3164,8 +3170,8 @@ function openCommercialModal(id) {
     <div style="background:rgba(0,229,170,.06);border:1px solid rgba(0,229,170,.18);border-radius:var(--radius);padding:14px;margin-bottom:14px">
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em">🏪 PDV Dispatch</div>
       <div class="form-row">
-        <div class="form-group"><label>Boulangeries</label><input type="number" id="com-dboul" value="${c?.dispatchBoul||Math.round((c?.nbClients||0)*0.65)}" min="0"></div>
-        <div class="form-group"><label>Distributeurs</label><input type="number" id="com-ddist" value="${c?.dispatchDist||Math.round((c?.nbClients||0)*0.35)}" min="0"></div>
+        <div class="form-group"><label>Boulangeries</label><input type="number" id="com-dboul" value="${c?.dispatchBoul||Math.round((c?.nbClients||0)*0.65)}" min="0" oninput="document.getElementById('com-nbclients').value=(parseInt(this.value)||0)+(parseInt(document.getElementById('com-ddist').value)||0)"></div>
+        <div class="form-group"><label>Distributeurs</label><input type="number" id="com-ddist" value="${c?.dispatchDist||Math.round((c?.nbClients||0)*0.35)}" min="0" oninput="document.getElementById('com-nbclients').value=(parseInt(document.getElementById('com-dboul').value)||0)+(parseInt(this.value)||0)"></div>
       </div>
       <div style="font-size:11px;color:var(--text-2)">Ces valeurs seront utilisées par le moteur dispatch. Vous pouvez aussi saisir les PDV individuellement dans <a href="#" onclick="closeModal();showPage('pdv')">Points de Vente</a>.</div>
     </div>
@@ -3193,9 +3199,10 @@ function saveCommercial(existingId) {
     service: document.getElementById('com-service').value,
     email: document.getElementById('com-email').value,
     tel: document.getElementById('com-tel').value,
-    nbClients: parseInt(document.getElementById('com-nbclients').value)||0,
     dispatchBoul: parseInt(document.getElementById('com-dboul').value)||0,
     dispatchDist: parseInt(document.getElementById('com-ddist').value)||0,
+    nbClients: (parseInt(document.getElementById('com-dboul').value)||0) + (parseInt(document.getElementById('com-ddist').value)||0),
+    dispatchActive: document.getElementById('com-dispatch-active').checked,
     dispatchZoneId: document.getElementById('com-dzone').value||'',
     secteurId: document.getElementById('com-secteur-id').value||'',
   };
@@ -6957,7 +6964,7 @@ function _dispEnsure() {
 }
 
 function _dispActiveCommerciaux() {
-  return (APP.commerciaux || []).filter(function(c) { return c.actif !== false; });
+  return (APP.commerciaux || []).filter(function(c) { return c.actif !== false && c.dispatchActive !== false; });
 }
 
 // Real PDV count from APP.pdv, fallback to c.nbClients
@@ -7064,7 +7071,7 @@ function dispCompute(articleId) {
 }
 
 // Validate a specific list of articleIds (or all configured ones)
-function validateDispatchV3(articleIds) {
+async function validateDispatchV3(articleIds) {
   _dispEnsure();
   var toDispatch = articleIds || Object.keys(APP.dispatch.pools).filter(function(id) { return dispGetPool(id) > 0; });
   if (toDispatch.length === 0) { notify('Aucun gadget \u00e0 dispatcher', 'warning'); return; }
@@ -7104,10 +7111,51 @@ function validateDispatchV3(articleIds) {
     APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
   });
 
+  // Generate bons de sortie per commercial
+  var bonsByComm = {};
+  results.forEach(function(r) {
+    r.alloc.forEach(function(a) {
+      if (a.qty > 0) {
+        if (!bonsByComm[a.id]) bonsByComm[a.id] = { name: a.name, lignes: [] };
+        bonsByComm[a.id].lignes.push({ articleId: r.art.id, name: r.art.name, qty: a.qty });
+      }
+    });
+  });
+  var bonIds = [];
+  for (var comId in bonsByComm) {
+    var bd = bonsByComm[comId];
+    var bonNum = await bonNumber();
+    var bon = {
+      id: generateId(), numero: bonNum,
+      companyId: (APP.settings && APP.settings.companyId) || '',
+      recipiendaire: bd.name,
+      commercialId: comId,
+      commercialName: bd.name,
+      objet: 'Dispatch gadgets',
+      date: new Date().toISOString().split('T')[0],
+      validite: '',
+      lignes: bd.lignes,
+      status: 'livr\u00e9',
+      sigDemandeur: '', sigMKT: '',
+      createdAt: ts, _version: 1, _versions: []
+    };
+    APP.bons.push(bon);
+    bonIds.push(bon.id);
+  }
+
   saveDB();
-  auditLog('DISPATCH', 'dispatch', results.length + ' gadget(s) dispatched');
-  notify('\u2705 Dispatch valid\u00e9 \u2014 ' + results.length + ' gadget(s)', 'success');
+  auditLog('DISPATCH', 'dispatch', results.length + ' gadget(s) dispatched, ' + bonIds.length + ' bon(s) generated');
+  notify('\u2705 Dispatch valid\u00e9 \u2014 ' + results.length + ' gadget(s), ' + bonIds.length + ' bon(s) cr\u00e9\u00e9(s)', 'success');
   renderDispatchPage();
+
+  // Offer to print bons
+  if (bonIds.length > 0) {
+    setTimeout(function() {
+      if (confirm(bonIds.length + ' bon(s) de sortie g\u00e9n\u00e9r\u00e9(s). Imprimer ?')) {
+        bonIds.forEach(function(bid) { printBon(bid); });
+      }
+    }, 300);
+  }
 }
 
 // ── Partial refresh (eligibility/pool change without full re-render) ──────────
