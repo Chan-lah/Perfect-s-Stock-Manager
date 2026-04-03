@@ -2496,18 +2496,16 @@ function renderBons() {
   ${renderBonPipeline()}
   <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">💡 <strong>Double-cliquez</strong> sur Statut pour modifier · <strong>→</strong> pour avancer</div>
   <div class="table-wrap"><table>
-    <thead><tr><th>${t('bon_number')}</th><th>${t('company')}</th><th>${t('recipient')}</th><th>${t('gadgets')}</th><th>${t('date')}</th><th>${t('status')}</th><th>${t('actions')}</th></tr></thead>
-    <tbody>${filtered.length===0?`<tr><td colspan="7"><div class="empty-state"><p>Aucun bon de sortie</p></div></td></tr>`:filtered.slice().sort((a,b)=>b.createdAt-a.createdAt).map(b=>renderBonRow(b)).join('')}</tbody>
+    <thead><tr><th>${t('bon_number')}</th><th>${t('recipient')}</th><th>${t('gadgets')}</th><th>${t('date')}</th><th>${t('status')}</th><th>${t('actions')}</th></tr></thead>
+    <tbody>${filtered.length===0?`<tr><td colspan="6"><div class="empty-state"><p>Aucun bon de sortie</p></div></td></tr>`:filtered.slice().sort((a,b)=>b.createdAt-a.createdAt).map(b=>renderBonRow(b)).join('')}</tbody>
   </table></div>`;
   filtered.forEach(b=>attachBonEditors(b));
 }
 
 function renderBonRow(b) {
-  const co=null; // companies removed
   const statusColor=(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.color)||'badge-yellow';
   return `<tr id="bon-row-${b.id}">
     <td style="font-family:monospace;font-weight:700;color:var(--accent)">${b.numero}</td>
-    <td style="font-size:12px;color:var(--text-2)">${co?.shortName||co?.name||'—'}</td>
     <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${b.recipiendaire||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
     <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${(b.lignes||[]).map(l=>`${l.qty}× ${l.name||l.articleName}`).join(', ')}</td>
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
@@ -2851,7 +2849,7 @@ function generateBonHTML(bon, overrides) {
           <div style="width:60%;height:2px;background:#111;margin-top:8px"></div>
         </td>
         <td style="vertical-align:top;text-align:right">
-          <div style="font-size:11px;color:#111;margin-bottom:12px">Abidjan, le ....................................... 20 .........</div>
+          <div style="font-size:11px;color:#111;margin-bottom:12px">Abidjan, le <strong>${bon.date||new Date(bon.createdAt||Date.now()).toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</strong></div>
           <div style="font-size:20px;font-weight:900;color:#111;text-align:center;border:2px solid #111;padding:10px 18px;display:inline-block;letter-spacing:0.01em;line-height:1.3">${bonTitle}</div>
           <div style="text-align:center;margin-top:8px;font-size:14px;font-weight:700;color:#111">
             Valable ${bon.validite||'1 mois'}
@@ -2881,7 +2879,7 @@ function generateBonHTML(bon, overrides) {
           <th style="padding:10px 12px;border:1px solid #555;font-size:12px;font-weight:700;color:#111;text-align:center;width:26%">Observations</th>
         </tr>
       </thead>
-      <tbody>${dataRows}${blankRows}</tbody>
+      <tbody>${dataRows}</tbody>
     </table>
     <table style="width:100%;border-collapse:collapse;border:2px solid #111;border-top:none">
       <tr>
