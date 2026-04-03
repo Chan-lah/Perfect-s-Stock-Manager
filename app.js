@@ -2067,6 +2067,7 @@ function renderArticles() {
   <div class="flex-between mb-16">
     <div class="page-title">${t('articles')}</div>
     <div class="flex-center gap-8">
+      <button class="btn btn-secondary btn-sm" onclick="renderBonsHistory()"><i class="fa-solid fa-clock-rotate-left"></i> Historique</button>
       <button class="btn btn-secondary btn-sm" onclick="renderStockPredictions()">📊 Suggestions</button>
       <button class="btn btn-primary" onclick="openArticleModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Ajouter</button>
     </div>
@@ -2412,6 +2413,71 @@ function renderStockPredictions() {
   ).join('');
   openModal('modal-predictions', '📊 Prévisions de rupture', `<div style="max-height:400px;overflow-y:auto">${rows}</div>`);
 }
+function renderBonsHistory() {
+  var validatedBons = APP.bons.filter(function(b) {
+    return b.status === 'valid\u00e9' || b.status === 'annul\u00e9';
+  }).sort(function(a, b) { return (b._validatedAt || b._cancelledAt || b.createdAt || 0) - (a._validatedAt || a._cancelledAt || a.createdAt || 0); });
+
+  var filterHtml = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">'
+    + '<button class="btn btn-sm" onclick="renderBons()" style="font-weight:600"><i class="fa-solid fa-arrow-left" style="margin-right:4px"></i>Retour</button>'
+    + '<span style="font-size:0.85rem;color:var(--text-2);margin-left:8px">' + validatedBons.length + ' bon(s) valid\u00e9s/annul\u00e9s</span>'
+    + '<label style="font-size:0.82rem;color:var(--text-2);margin-left:auto">Du <input type="date" id="bh-from" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
+    + '<label style="font-size:0.82rem;color:var(--text-2)">Au <input type="date" id="bh-to" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
+    + '<button class="btn btn-sm" onclick="_filterBonsHistory()"><i class="fa-solid fa-filter"></i></button>'
+    + '</div>';
+  document.getElementById('content').innerHTML = '<div class="flex-between mb-16">'
+    + '<div class="page-title"><i class="fa-solid fa-clock-rotate-left" style="margin-right:8px"></i>Historique des Bons</div></div>'
+    + filterHtml
+    + '<div id="bh-list">' + _buildBonsHistoryRows(validatedBons) + '</div>';
+}
+
+function _buildBonsHistoryRows(list) {
+  if (list.length === 0) return '<div class="card" style="padding:32px;text-align:center;color:var(--text-2)"><i class="fa-solid fa-inbox" style="font-size:2rem;margin-bottom:12px;display:block"></i>Aucun bon valid\u00e9 ou annul\u00e9</div>';
+  var html = '';
+  list.forEach(function(b) {
+    var isValid = b.status === 'valid\u00e9';
+    var actionDate = isValid ? b._validatedAt : b._cancelledAt;
+    var gadgets = (b.lignes || []).map(function(l) { return l.qty + '\u00d7 ' + (l.name || l.articleName || ''); }).join(', ');
+    var statusBadge = isValid
+      ? '<span class="badge badge-green">\u2713 Valid\u00e9</span>'
+      : '<span class="badge badge-red">\u2717 Annul\u00e9</span>';
+    html += '<div class="card" style="margin-bottom:8px;padding:12px 16px;border-left:4px solid ' + (isValid ? 'var(--success,#28a745)' : 'var(--danger,#dc3545)') + '">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+      + '<div style="display:flex;align-items:center;gap:10px">'
+      + '<span style="font-family:monospace;font-weight:700;font-size:0.95rem;color:var(--accent)">' + b.numero + '</span>'
+      + statusBadge + '</div>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<button class="btn btn-sm btn-secondary" onclick="previewBon(\'' + b.id + '\')" title="Aper\u00e7u"><i class="fa-solid fa-eye"></i></button>'
+      + '<button class="btn btn-sm btn-secondary" onclick="printBon(\'' + b.id + '\')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
+      + '<button class="btn btn-sm btn-secondary" onclick="exportBonPDF(\'' + b.id + '\')" title="PDF"><i class="fa-solid fa-file-pdf"></i></button>'
+      + '</div></div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:0.82rem;color:var(--text-2)">'
+      + '<div><strong>Demandeur:</strong> ' + (b.demandeur || '\u2014') + '</div>'
+      + '<div><strong>Destinataire:</strong> ' + (b.recipiendaire || '\u2014') + '</div>'
+      + '<div><strong>Objet:</strong> ' + (b.objet || '\u2014') + '</div>'
+      + '<div><strong>Date bon:</strong> ' + (b.date || fmtDate(b.createdAt)) + '</div>'
+      + '</div>'
+      + '<div style="margin-top:6px;font-size:0.8rem;color:var(--text-1)"><strong>Gadgets:</strong> ' + (gadgets || 'Aucun') + '</div>'
+      + (actionDate ? '<div style="margin-top:4px;font-size:0.72rem;color:var(--text-2)">' + (isValid ? 'Valid\u00e9' : 'Annul\u00e9') + ' le ' + new Date(actionDate).toLocaleString('fr-FR') + '</div>' : '')
+      + '</div>';
+  });
+  return html;
+}
+
+function _filterBonsHistory() {
+  var from = document.getElementById('bh-from');
+  var to = document.getElementById('bh-to');
+  var fromTs = from && from.value ? new Date(from.value).getTime() : 0;
+  var toTs = to && to.value ? new Date(to.value + 'T23:59:59').getTime() : Infinity;
+  var filtered = APP.bons.filter(function(b) {
+    if (b.status !== 'valid\u00e9' && b.status !== 'annul\u00e9') return false;
+    var ts = b._validatedAt || b._cancelledAt || b.createdAt || 0;
+    return ts >= fromTs && ts <= toTs;
+  }).sort(function(a, b) { return (b._validatedAt || b._cancelledAt || b.createdAt || 0) - (a._validatedAt || a._cancelledAt || a.createdAt || 0); });
+  var el = document.getElementById('bh-list');
+  if (el) el.innerHTML = _buildBonsHistoryRows(filtered);
+}
+
 function renderBons() {
   const filtered = _bonStatusFilter
     ? APP.bons.filter(b => (b.status||'brouillon') === _bonStatusFilter)
@@ -2442,7 +2508,7 @@ function renderBonRow(b) {
   return `<tr id="bon-row-${b.id}">
     <td style="font-family:monospace;font-weight:700;color:var(--accent)">${b.numero}</td>
     <td style="font-size:12px;color:var(--text-2)">${co?.shortName||co?.name||'—'}</td>
-    <td style="font-size:13px">${b.recipiendaire||'—'}</td>
+    <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${b.recipiendaire||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
     <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${(b.lignes||[]).map(l=>`${l.qty}× ${l.name||l.articleName}`).join(', ')}</td>
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
     <td class="editable" id="td-bstat-${b.id}"><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
@@ -2560,7 +2626,17 @@ function openBonModal(bonId) {
     <div class="form-group"><label>Statut</label><select id="bon-status"><option value="brouillon" ${bon?.status==='brouillon'?'selected':''}>Brouillon</option><option value="validé" ${!bon||bon?.status==='validé'?'selected':''}>Validé</option><option value="annulé" ${bon?.status==='annulé'?'selected':''}>Annulé</option></select></div>
   </div>
   <div class="form-row">
-    <div class="form-group"><label>Demandeur (Commercial)</label><select id="bon-commercial"><option value="">— Aucun —</option>${comOptions}</select></div>
+    <div class="form-group"><label>Demandeur</label>
+      <select id="bon-demandeur-type" onchange="bonDemandeurToggle()">
+        <option value="commercial" ${bon && bon._demandeurType==='custom'?'':'selected'}>Commercial</option>
+        <option value="custom" ${bon && bon._demandeurType==='custom'?'selected':''}>Autre (personnalis\u00e9)</option>
+      </select>
+      <select id="bon-commercial" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'display:none':''}"><option value="">\u2014 S\u00e9lectionner \u2014</option>${comOptions}</select>
+      <div id="bon-custom-demandeur-wrap" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'':'display:none'}">
+        <input id="bon-custom-demandeur" list="custom-demandeurs-list" value="${bon && bon._demandeurType==='custom' ? (bon.demandeur||'').replace(/"/g,'&quot;') : ''}" placeholder="Nom du demandeur" style="width:100%">
+        <datalist id="custom-demandeurs-list">${((APP.settings||{})._customDemandeurs||[]).map(function(n){return '<option value="'+n+'">';}).join('')}</datalist>
+      </div>
+    </div>
     <div class="form-group"><label>Destinataire / Récipiendaire *</label><input id="bon-recip" value="${bon?.recipiendaire||''}" placeholder="Nom du destinataire"></div>
   </div>
   <div class="form-row">
@@ -2595,6 +2671,19 @@ function bonAutoFillCode(sel) {
   }
 }
 
+function bonDemandeurToggle() {
+  var t = document.getElementById('bon-demandeur-type').value;
+  var comSel = document.getElementById('bon-commercial');
+  var custWrap = document.getElementById('bon-custom-demandeur-wrap');
+  if (t === 'custom') {
+    comSel.style.display = 'none';
+    custWrap.style.display = '';
+  } else {
+    comSel.style.display = '';
+    custWrap.style.display = 'none';
+  }
+}
+
 async function saveBon(existingId) {
   const recip=document.getElementById('bon-recip').value.trim();
   if(!recip){notify('Récipendaire requis','error');return;}
@@ -2612,6 +2701,23 @@ async function saveBon(existingId) {
   const comId=document.getElementById('bon-commercial').value;
   const com=comId?APP.commerciaux.find(c=>c.id===comId):null;
   const coId=null;
+  // Demandeur logic
+  var demType = (document.getElementById('bon-demandeur-type')||{}).value || 'commercial';
+  var demandeur = '';
+  var _demandeurType = demType;
+  if (demType === 'custom') {
+    demandeur = (document.getElementById('bon-custom-demandeur')||{}).value || '';
+    if (demandeur.trim()) {
+      if (!APP.settings) APP.settings = {};
+      if (!APP.settings._customDemandeurs) APP.settings._customDemandeurs = [];
+      var lcName = demandeur.trim().toLowerCase();
+      if (!APP.settings._customDemandeurs.some(function(n) { return n.toLowerCase() === lcName; })) {
+        APP.settings._customDemandeurs.push(demandeur.trim());
+      }
+    }
+  } else {
+    demandeur = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : '';
+  }
 
   if(existingId) {
     const bon=APP.bons.find(b=>b.id===existingId); if(!bon) return;
@@ -2622,14 +2728,14 @@ async function saveBon(existingId) {
     for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');(bon.lignes||[]).forEach(l2=>{const a=APP.articles.find(x=>x.id===l2.articleId);if(a)a.stock-=l2.qty;});return;}}
     // Deduct new
     lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
-    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,_version:(bon._version||1)+1});
+    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,_version:(bon._version||1)+1});
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
     notify('Bon '+bon.numero+' mis à jour','success');
     setTimeout(()=>{if(confirm('Imprimer le bon modifié ?'))printBon(bon.id);},300);
   } else {
     for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');return;}}
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
     lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -7134,6 +7240,7 @@ function _dispEnsure() {
   const D = APP.dispatch;
   if (!D.pools)       D.pools = {};
   if (!D.eligibility) D.eligibility = {};
+  if (!D.fixedAlloc)  D.fixedAlloc = {};
   if (!D.history)     D.history = [];
   return D;
 }
@@ -7172,6 +7279,20 @@ function dispSetPool(articleId, qty) {
   _dispEnsure();
   APP.dispatch.pools[articleId] = Math.max(0, parseInt(qty) || 0);
   saveDB();
+}
+
+function dispGetFixedAlloc(articleId, commercialId) {
+  _dispEnsure();
+  return parseInt((APP.dispatch.fixedAlloc[articleId] || {})[commercialId]) || 0;
+}
+function dispSetFixedAlloc(articleId, commercialId, qty) {
+  _dispEnsure();
+  if (!APP.dispatch.fixedAlloc[articleId]) APP.dispatch.fixedAlloc[articleId] = {};
+  var q = Math.max(0, parseInt(qty) || 0);
+  if (q > 0) { APP.dispatch.fixedAlloc[articleId][commercialId] = q; }
+  else { delete APP.dispatch.fixedAlloc[articleId][commercialId]; }
+  saveDB();
+  _dispRefreshGadgetCard(articleId);
 }
 
 function dispIsEligible(articleId, commercialId) {
@@ -7219,24 +7340,37 @@ function dispCompute(articleId) {
   });
   if (eligible.length === 0) return null;
 
-  // Normalize shares among eligible only
-  var eligiblePdvTotal = eligible.reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
-
-  // Compute raw floats
-  var raws = eligible.map(function(c) {
-    var pdv = _dispGetPdv(c);
-    var raw = pool * (pdv / eligiblePdvTotal);
-    return { id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: pdv, raw: raw, floor: Math.floor(raw), rem: raw - Math.floor(raw), qty: 0 };
+  var fixedMap = (APP.dispatch.fixedAlloc || {})[articleId] || {};
+  var fixedResults = [];
+  var pdvEligible = [];
+  var fixedTotal = 0;
+  eligible.forEach(function(c) {
+    var fa = parseInt(fixedMap[c.id]) || 0;
+    if (fa > 0) {
+      fixedResults.push({ id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: _dispGetPdv(c), qty: fa, pct: 0, fixed: true });
+      fixedTotal += fa;
+    } else {
+      pdvEligible.push(c);
+    }
   });
-
-  // Largest-remainder to guarantee sum = pool
-  var floorSum = raws.reduce(function(s, r) { return s + r.floor; }, 0);
-  var leftover = pool - floorSum;
-  raws.forEach(function(r) { r.qty = r.floor; });
-  raws.sort(function(a, b) { return b.rem - a.rem; });
-  for (var i = 0; i < leftover; i++) raws[i].qty++;
-
-  // Restore natural order and add pct
+  var remainingPool = pool - fixedTotal;
+  var pdvResults = [];
+  if (remainingPool > 0 && pdvEligible.length > 0) {
+    var eligiblePdvTotal = pdvEligible.reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
+    pdvResults = pdvEligible.map(function(c) {
+      var pdv = _dispGetPdv(c);
+      var raw = remainingPool * (pdv / eligiblePdvTotal);
+      return { id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: pdv, raw: raw, floor: Math.floor(raw), rem: raw - Math.floor(raw), qty: 0 };
+    });
+    var floorSum = pdvResults.reduce(function(s, r) { return s + r.floor; }, 0);
+    var leftover = remainingPool - floorSum;
+    pdvResults.forEach(function(r) { r.qty = r.floor; });
+    pdvResults.sort(function(a, b) { return b.rem - a.rem; });
+    for (var i = 0; i < leftover; i++) pdvResults[i].qty++;
+  } else if (remainingPool > 0 && pdvEligible.length === 0 && fixedResults.length === 0) {
+    return null;
+  }
+  var raws = fixedResults.concat(pdvResults);
   raws.sort(function(a, b) { return (shares[a.id] ? shares[a.id].pct : 0) > (shares[b.id] ? shares[b.id].pct : 0) ? -1 : 1; });
   raws.forEach(function(r) {
     r.pct = (r.qty / pool) * 100;
@@ -7246,6 +7380,34 @@ function dispCompute(articleId) {
 
 // Validate a specific list of articleIds (or all configured ones)
 async function validateDispatchV3(articleIds) {
+  // Extract demandeur/objet from recap modal
+  var _dispDemType = 'commercial';
+  var _dispDemandeur = 'DCM';
+  var _dispObjet = 'DOTATION MENSUELLE';
+  var dtEl = document.getElementById('disp-demandeur-type');
+  if (dtEl) {
+    _dispDemType = dtEl.value;
+    if (_dispDemType === 'dcm') { _dispDemandeur = 'DCM'; _dispDemType = 'commercial'; }
+    else if (_dispDemType === 'commercial') {
+      var comSel = document.getElementById('disp-dem-com');
+      if (comSel && comSel.value) {
+        var dc = APP.commerciaux.find(function(c){ return c.id === comSel.value; });
+        _dispDemandeur = dc ? ((dc.prenom||'') + ' ' + (dc.nom||'')).trim() : 'DCM';
+      } else { _dispDemandeur = 'DCM'; }
+    } else if (_dispDemType === 'custom') {
+      _dispDemandeur = (document.getElementById('disp-custom-dem')||{}).value || '';
+      if (_dispDemandeur.trim()) {
+        if (!APP.settings) APP.settings = {};
+        if (!APP.settings._customDemandeurs) APP.settings._customDemandeurs = [];
+        var lcn = _dispDemandeur.trim().toLowerCase();
+        if (!APP.settings._customDemandeurs.some(function(n){ return n.toLowerCase() === lcn; })) {
+          APP.settings._customDemandeurs.push(_dispDemandeur.trim());
+        }
+      }
+    }
+  }
+  var objEl = document.getElementById('disp-objet');
+  if (objEl) _dispObjet = objEl.value || 'DOTATION MENSUELLE';
   _dispEnsure();
   var toDispatch = articleIds || Object.keys(APP.dispatch.pools).filter(function(id) { return dispGetPool(id) > 0; });
   if (toDispatch.length === 0) { notify('Aucun gadget \u00e0 dispatcher', 'warning'); return; }
@@ -7299,11 +7461,12 @@ async function validateDispatchV3(articleIds) {
     var bon = {
       id: generateId(), numero: bonNum,
       companyId: (APP.settings && APP.settings.companyId) || '',
-      demandeur: 'DCM',
+      demandeur: _dispDemandeur || 'DCM',
+      _demandeurType: _dispDemType || 'commercial',
       recipiendaire: fullName,
       commercialId: comId,
       commercialName: fullName,
-      objet: 'DOTATION MENSUELLE',
+      objet: _dispObjet || 'DOTATION MENSUELLE',
       date: new Date().toISOString().split('T')[0],
       validite: '',
       lignes: bd.lignes,
@@ -7358,6 +7521,7 @@ function _dispReset() {
   _dispEnsure();
   APP.dispatch.pools = {};
   APP.dispatch.eligibility = {};
+  APP.dispatch.fixedAlloc = {};
   APP.dispatch.history = [];
   saveDB();
   renderDispatchPage();
@@ -7421,7 +7585,16 @@ function _showDispatchRecap() {
     + '</table></div>'
     + '<div style="margin-top:16px;padding:10px 14px;background:var(--accent)08;border-radius:8px;font-size:0.82rem;color:var(--text-2)">'
     + '<i class="fa-solid fa-file-invoice" style="color:var(--accent);margin-right:6px"></i>'
-    + '<strong>' + Object.keys(comTotals).length + ' bon(s) de sortie</strong> seront g\u00e9n\u00e9r\u00e9s avec : <strong>DEMANDEUR</strong> = DCM, <strong>Objet</strong> = DOTATION MENSUELLE</div>';
+    + '<strong>' + Object.keys(comTotals).length + ' bon(s) de sortie</strong> seront g\u00e9n\u00e9r\u00e9s</div>'
+    + '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
+    + '<label style="font-size:0.85rem;font-weight:600">Demandeur :</label>'
+    + '<select id="disp-demandeur-type" onchange="var cw=document.getElementById(\'disp-custom-dem-wrap\');var cs=document.getElementById(\'disp-dem-com\');if(this.value===\'custom\'){cw.style.display=\'\';cs.style.display=\'none\';}else if(this.value===\'commercial\'){cs.style.display=\'\';cw.style.display=\'none\';}else{cw.style.display=\'none\';cs.style.display=\'none\';}" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border)">'
+    + '<option value="dcm">DCM</option><option value="commercial">Commercial</option><option value="custom">Autre</option></select>'
+    + '<select id="disp-dem-com" style="display:none;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">' + APP.commerciaux.map(function(c){return '<option value="'+c.id+'">'+((c.prenom||'')+' '+(c.nom||'')).trim()+'</option>';}).join('') + '</select>'
+    + '<div id="disp-custom-dem-wrap" style="display:none"><input id="disp-custom-dem" list="disp-custom-dem-list" placeholder="Nom..." style="padding:4px 8px;border-radius:6px;border:1px solid var(--border)"><datalist id="disp-custom-dem-list">' + ((APP.settings||{})._customDemandeurs||[]).map(function(n){return '<option value="'+n+'">';}).join('') + '</datalist></div>'
+    + '<label style="font-size:0.85rem;font-weight:600;margin-left:12px">Objet :</label>'
+    + '<input id="disp-objet" value="DOTATION MENSUELLE" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);width:200px">'
+    + '</div>';
 
   openModal('dispatch-recap-modal', '\ud83d\udce6 R\u00e9cap Dispatch', html, function() {
     closeModal();
@@ -7560,6 +7733,24 @@ function _renderDispGadgetCard(art, shares) {
     + '<button class="btn btn-sm" onclick="dispSetAllEligible(\'' + artId + '\',false)" style="font-size:0.72rem;padding:2px 8px">Aucun</button>'
     + '</div>';
 
+  // Fixed allocation panel (collapsible)
+  var _hasEligible = coms.some(function(c) { return dispIsEligible(artId, c.id); });
+  var showFixedBtn = _hasEligible ? '<button class="btn btn-sm" onclick="var p=document.getElementById(\'dp-fixpanel-' + artId + '\');p.style.display=p.style.display===\'none\'?\'block\':\'none\'" style="font-size:0.7rem;padding:1px 6px;margin-bottom:4px;color:var(--text-2)"><i class="fa-solid fa-sliders" style="margin-right:3px"></i>Alloc. fixes</button>' : '';
+  var allFixedHtml = '<div id="dp-fixpanel-' + artId + '" style="display:none;background:var(--border)22;border-radius:6px;padding:6px 10px;margin-bottom:6px">';
+  allFixedHtml += '<div style="font-size:0.72rem;color:var(--text-2);margin-bottom:4px"><i class="fa-solid fa-lock" style="margin-right:3px"></i>Quantit\u00e9s fixes (d\u00e9duites du pool avant r\u00e9partition PDV)</div>';
+  coms.forEach(function(c) {
+    if (!dispIsEligible(artId, c.id)) return;
+    var sn = (shares[c.id] || {}).name || c.id;
+    var fa = dispGetFixedAlloc(artId, c.id);
+    var pdv = _dispGetPdv(c);
+    allFixedHtml += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:0.78rem">'
+      + '<span style="min-width:110px;color:' + (pdv === 0 ? 'var(--warning)' : 'var(--text-1)') + '">' + sn.split(' ')[0] + (pdv === 0 ? ' <i style="font-size:0.65rem;color:var(--warning)">(0 PDV)</i>' : ' <i style="font-size:0.65rem;color:var(--text-2)">(' + pdv + ' PDV)</i>') + '</span>'
+      + '<input type="number" value="' + fa + '" min="0" style="width:60px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);font-size:0.78rem;text-align:center;background:var(--bg-input,var(--bg-card));color:var(--text-1)" '
+      + 'onchange="dispSetFixedAlloc(\'' + artId + '\',\'' + c.id + '\',this.value)" placeholder="0">'
+      + '<span style="font-size:0.7rem;color:var(--text-2)">fixe</span></div>';
+  });
+  allFixedHtml += '</div>';
+
   // Preview
   var previewHtml = _renderDispPreview(artId);
 
@@ -7582,6 +7773,8 @@ function _renderDispGadgetCard(art, shares) {
     // Eligibility
     + '<div style="font-size:0.75rem;color:var(--text-2);margin-bottom:2px">Commerciaux \u00e9ligibles <span style="color:var(--text-2)">(cliquer pour basculer)</span></div>'
     + chips
+    + showFixedBtn
+    + allFixedHtml
     // Preview
     + '<div id="dp-prev-' + artId + '">' + previewHtml + '</div>'
     + '</div>';
@@ -7598,11 +7791,12 @@ function _renderDispPreview(articleId) {
   var rows = '';
   alloc.forEach(function(a) {
     var barW = Math.round((a.qty / (total || 1)) * 100);
+    var isFixed = a.fixed ? true : false;
     rows += '<tr>'
-      + '<td style="padding:3px 6px;font-size:0.8rem">' + a.name + '</td>'
+      + '<td style="padding:3px 6px;font-size:0.8rem">' + a.name + (isFixed ? ' <i class="fa-solid fa-lock" style="font-size:0.6rem;color:var(--warning)" title="Allocation fixe"></i>' : '') + '</td>'
       + '<td style="padding:3px 6px;text-align:center"><div style="background:var(--border);border-radius:2px;height:5px;width:60px;display:inline-block;vertical-align:middle;overflow:hidden">'
-      + '<div style="background:var(--accent2);height:100%;width:' + barW + '%;border-radius:2px"></div></div></td>'
-      + '<td style="padding:3px 6px;text-align:right;font-weight:700;font-size:0.8rem;color:var(--accent2)">' + a.qty + '</td>'
+      + '<div style="background:' + (isFixed ? 'var(--warning)' : 'var(--accent2)') + ';height:100%;width:' + barW + '%;border-radius:2px"></div></div></td>'
+      + '<td style="padding:3px 6px;text-align:right;font-weight:700;font-size:0.8rem;color:' + (isFixed ? 'var(--warning)' : 'var(--accent2)') + '">' + a.qty + '</td>'
       + '<td style="padding:3px 6px;text-align:right;font-size:0.75rem;color:var(--text-2)">' + a.pct.toFixed(1) + '%</td>'
       + '</tr>';
   });
