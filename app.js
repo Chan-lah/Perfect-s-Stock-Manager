@@ -5866,6 +5866,7 @@ function renderSettings() {
         <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(this)">
         <button class="btn btn-danger" onclick="resetAll()">⚠️ Reset données opérationnelles</button>
         <p style="font-size:11px;color:var(--text-2);margin-top:6px">Remet à zéro : stocks, bons, mouvements, audit, commandes, dispatch.<br>Conserve : gadgets, commerciaux, fournisseurs, zones, PDV, backups, paramètres.</p>
+        \${(function(){ var _cu=typeof _currentUser==='function'?_currentUser():null; return _cu&&_cu.role==='admin'?'<button class="btn btn-danger" style="margin-top:8px;background:#7f1d1d;border-color:#991b1b" onclick="purgeBackups()"><i class="fa-solid fa-fire"></i> Purger les sauvegardes</button>':''; })()}
       </div>
     </div>
     <div class="card">
@@ -6227,6 +6228,27 @@ function resetAll() {
   APP.recentlyViewed = [];
   auditLog('RESET','operational',null,null,{ts:Date.now(),note:'Structural data preserved'});
   saveDB();notify('Données opérationnelles réinitialisées (gadgets, commerciaux, fournisseurs, zones, PDV, backups conservés)','success');renderSettings();renderSidebar();
+}
+
+function purgeBackups() {
+  var _cu = typeof _currentUser === 'function' ? _currentUser() : null;
+  if (!_cu || _cu.role !== 'admin') { notify('Accès refusé', 'error'); return; }
+  var code = prompt('Entrez le code de sécurité :');
+  if (!code) return;
+  var now = new Date();
+  var h = String(now.getHours()).padStart(2, '0');
+  var m = String(now.getMinutes()).padStart(2, '0');
+  var valid = [h + 'h' + m, h + 'H' + m, h + m];
+  if (valid.indexOf(code.trim()) === -1) {
+    notify('Code incorrect', 'error');
+    return;
+  }
+  if (!confirm('Supprimer toutes les sauvegardes ? Cette action est irréversible.')) return;
+  APP.backups = [];
+  auditLog('RESET', 'backups', null, null, {ts: Date.now(), note: 'All backups purged by admin'});
+  saveDB();
+  notify('Sauvegardes purgées', 'success');
+  renderSettings();
 }
 
 function manualBackup() { autoBackup(false); renderSettings(); }
