@@ -579,6 +579,19 @@ async function initApp() {
       }
     } catch(e) { console.warn('[PSM] localStorage load:', e); }
 
+    // === ONE-TIME DATA RESET (2026-04-06) ===
+    if (!APP._resetDone_20260406) {
+      console.log('[PSM] One-time data reset: clearing mouvements, audit, activityLog, dispatch history');
+      APP.mouvements = [];
+      APP.audit = [];
+      APP._activityLog = [];
+      if (APP.dispatch) { APP.dispatch.history = []; }
+      APP.dispatchHistory = [];
+      APP._resetDone_20260406 = true;
+      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+      console.log('[PSM] Data reset complete');
+    }
+
     // 2. Sign out any previous session — force fresh login every time
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
       try { await _firebaseAuth.signOut(); } catch(e) {}
@@ -5244,6 +5257,42 @@ function _auditEntityName(entity, entityId) {
   } catch(e) { return entityId || '—'; }
 }
 
+function _auditDescription(e) {
+  var user = (e.userName && e.userName !== 'unknown') ? e.userName : (e.userEmail || 'Quelqu\u2019un');
+  var role = (e.userRole && e.userRole !== 'unknown') ? (' (' + e.userRole + ')') : '';
+  var entity = _auditEntityName(e.entity, e.entityId);
+  var typeMap = {
+    'create': 'a cr\u00e9\u00e9', 'CREATE': 'a cr\u00e9\u00e9',
+    'edit': 'a modifi\u00e9', 'UPDATE': 'a modifi\u00e9',
+    'delete': 'a supprim\u00e9', 'DELETE': 'a supprim\u00e9',
+    'STOCK_ENTREE': 'a enregistr\u00e9 une entr\u00e9e de stock pour',
+    'STOCK_SORTIE': 'a enregistr\u00e9 une sortie de stock pour',
+    'STOCK_OUT': 'a enregistr\u00e9 une sortie de stock pour',
+    'STOCK_INIT': 'a initialis\u00e9 le stock de',
+    'PRINT': 'a imprim\u00e9', 'DOWNLOAD': 'a t\u00e9l\u00e9charg\u00e9',
+    'EXPORT': 'a export\u00e9', 'IMPORT': 'a import\u00e9',
+    'RESET': 'a r\u00e9initialis\u00e9',
+    'VALIDATE': 'a valid\u00e9', 'CANCEL': 'a annul\u00e9',
+    'UNDO': 'a annul\u00e9',
+    'DISPATCH': 'a valid\u00e9 un dispatch'
+  };
+  var entityLabels = {
+    'article': 'l\u2019article', 'bon': 'le bon', 'commercial': 'le commercial',
+    'fournisseur': 'le fournisseur', 'zone': 'la zone', 'pdv': 'le PDV',
+    'commandeFourn': 'la commande fournisseur', 'company': 'l\u2019entreprise',
+    'settings': 'les param\u00e8tres', 'dispatch': 'le dispatch',
+    'all': 'les donn\u00e9es', 'operational': 'les donn\u00e9es op\u00e9rationnelles',
+    'audit': 'le journal d\u2019audit', 'mouvement': 'le mouvement'
+  };
+  var action = typeMap[e.type] || e.type;
+  var entLabel = entityLabels[(e.entity || '').toLowerCase()] || e.entity || '';
+  var desc = '<b>' + user + '</b>' + role + ' ' + action + ' ' + entLabel;
+  if (entity && entity !== '\u2014' && entity !== e.entityId) {
+    desc += ' <b>' + entity + '</b>';
+  }
+  return desc;
+}
+
 function _auditDiff(oldStr, newStr) {
   try {
     const o = oldStr ? JSON.parse(oldStr) : null;
@@ -5306,15 +5355,14 @@ function filterAudit() {
     const label   = _auditTypeLabel(e.type);
     const name    = _auditEntityName(e.entity, e.entityId);
     const diff    = _auditDiff(e.oldVal, e.newVal);
+    const desc = _auditDescription(e);
     const entityIcon = {article:'📦',bon:'📋',commercial:'👤',fournisseur:'🚛',zone:'🗺️',pdv:'🏪',bon:'📋'}[(e.entity||'').toLowerCase()] || '📝';
     return `
     <div class="audit-row" style="border-left:3px solid ${color}22;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1">
           <span class="badge" style="background:${color}20;color:${color};white-space:nowrap">${label}</span>
-          <span style="font-size:12px;font-weight:600">${entityIcon} ${e.entity||'—'}</span>
-          <span style="font-size:12px;color:var(--accent);font-weight:600">${name}</span>
-          ${e.entityId && e.entityId !== name ? `<span style="font-size:10px;color:var(--text-3);font-family:monospace">${e.entityId.slice(0,12)}</span>` : ''}
+          <span style="font-size:12px">${desc}</span>
         </div>
         <div style="font-size:10px;color:var(--text-2);white-space:nowrap">${fmtDateTime(e.ts)}</div>
       </div>
@@ -7034,26 +7082,93 @@ async function _confirmDeleteUser(uid) {
 
 function _showActivityLog() {
   var logs = (APP._activityLog || []).slice().reverse();
-  var html = '<div style="max-height:60vh;overflow-y:auto">';
-  if (logs.length === 0) {
-    html += '<div style="text-align:center;padding:20px;color:var(--text-3)">Aucune activit\u00e9 enregistr\u00e9e</div>';
-  } else {
-    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">'
-      + '<thead><tr><th style="text-align:left;padding:6px">Date</th><th style="text-align:left;padding:6px">Utilisateur</th><th style="text-align:left;padding:6px">Action</th><th style="text-align:left;padding:6px">D\u00e9tails</th></tr></thead><tbody>';
-    logs.slice(0, 100).forEach(function(l) {
+  var html = '';
+
+  // Online/Offline status section
+  html += '<div style="margin-bottom:16px;padding:12px;background:var(--bg-2);border-radius:8px">';
+  html += '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--text-1)"><i class="fa-solid fa-circle-nodes" style="margin-right:6px;color:var(--accent)"></i>Statut des comptes</div>';
+  html += '<div id="al-presence-list" style="display:flex;flex-wrap:wrap;gap:10px">';
+  var users = APP.users || [];
+  users.forEach(function(uu) {
+    html += '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-card);border-radius:6px;border:1px solid var(--border)">'
+      + '<span id="al-dot-' + uu.id + '" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#6b7280"></span>'
+      + '<span style="font-size:12px;font-weight:600">' + (uu.name || uu.email) + '</span>'
+      + '<span id="al-status-' + uu.id + '" style="font-size:10px;color:var(--text-2)">...</span>'
+      + '</div>';
+  });
+  html += '</div></div>';
+
+  // Connection/disconnection logs
+  html += '<div style="max-height:50vh;overflow-y:auto">';
+  var connLogs = logs.filter(function(l) { return l.action === 'login' || l.action === 'logout'; });
+  var otherLogs = logs.filter(function(l) { return l.action !== 'login' && l.action !== 'logout'; });
+
+  if (connLogs.length > 0) {
+    html += '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--text-1)"><i class="fa-solid fa-right-to-bracket" style="margin-right:6px;color:var(--accent2,#2563eb)"></i>Connexions / D\u00e9connexions</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px">'
+      + '<thead><tr style="background:var(--bg-2)"><th style="text-align:left;padding:6px">Date & Heure</th><th style="text-align:left;padding:6px">Utilisateur</th><th style="text-align:left;padding:6px">Action</th><th style="text-align:left;padding:6px">D\u00e9tails</th></tr></thead><tbody>';
+    connLogs.slice(0, 50).forEach(function(l) {
+      var isLogin = l.action === 'login';
       html += '<tr style="border-top:1px solid var(--border)">'
-        + '<td style="padding:6px;white-space:nowrap">' + fmtDateTime(l.ts) + '</td>'
-        + '<td style="padding:6px">' + (l.user || l.email || '\u2014') + '</td>'
-        + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
-        + '<td style="padding:6px;color:var(--text-2)">' + (l.details || '') + '</td></tr>';
+        + '<td style="padding:6px;white-space:nowrap;font-family:monospace;font-size:11px">' + fmtDateTime(l.ts) + '</td>'
+        + '<td style="padding:6px;font-weight:600">' + (l.user || l.email || '\u2014') + '</td>'
+        + '<td style="padding:6px"><span class="badge" style="background:' + (isLogin ? 'var(--success,#22c55e)' : 'var(--danger,#ef4444)') + '22;color:' + (isLogin ? 'var(--success,#22c55e)' : 'var(--danger,#ef4444)') + '">' + (isLogin ? '\u25b2 Connexion' : '\u25bc D\u00e9connexion') + '</span></td>'
+        + '<td style="padding:6px;color:var(--text-2);font-size:11px">' + (l.details || '') + '</td></tr>';
     });
     html += '</tbody></table>';
+  }
+
+  if (otherLogs.length > 0) {
+    html += '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--text-1)"><i class="fa-solid fa-list" style="margin-right:6px;color:var(--warning)"></i>Autres activit\u00e9s</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr style="background:var(--bg-2)"><th style="text-align:left;padding:6px">Date & Heure</th><th style="text-align:left;padding:6px">Utilisateur</th><th style="text-align:left;padding:6px">Action</th><th style="text-align:left;padding:6px">D\u00e9tails</th></tr></thead><tbody>';
+    otherLogs.slice(0, 100).forEach(function(l) {
+      html += '<tr style="border-top:1px solid var(--border)">'
+        + '<td style="padding:6px;white-space:nowrap;font-family:monospace;font-size:11px">' + fmtDateTime(l.ts) + '</td>'
+        + '<td style="padding:6px">' + (l.user || l.email || '\u2014') + '</td>'
+        + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
+        + '<td style="padding:6px;color:var(--text-2);font-size:11px">' + (l.details || '') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  if (logs.length === 0) {
+    html += '<div style="text-align:center;padding:20px;color:var(--text-3)">Aucune activit\u00e9 enregistr\u00e9e</div>';
   }
   html += '</div>';
 
   openModal('Journal d\'activit\u00e9', html, [
     { label: 'Fermer', cls: 'btn-secondary', onclick: 'closeModal()' }
   ]);
+
+  // Load presence from Firebase
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+    _firebaseDB.ref('profiles').once('value').then(function(snap) {
+      var data = snap.val() || {};
+      users.forEach(function(uu) {
+        // Find profile by email match
+        for (var uid in data) {
+          var p = data[uid];
+          if (p.email === uu.email) {
+            var dot = document.getElementById('al-dot-' + uu.id);
+            var stat = document.getElementById('al-status-' + uu.id);
+            if (dot && stat) {
+              if (p.online === true) {
+                dot.style.background = '#22c55e';
+                stat.textContent = 'En ligne';
+                stat.style.color = '#22c55e';
+              } else {
+                dot.style.background = '#6b7280';
+                stat.textContent = p.lastSeen ? ('Vu ' + fmtDateTime(p.lastSeen)) : 'Hors ligne';
+                stat.style.color = 'var(--text-2)';
+              }
+            }
+            break;
+          }
+        }
+      });
+    }).catch(function() {});
+  }
 
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser && typeof _adminGetActivityLog === 'function') {
     _adminGetActivityLog(100).then(function(cloudLogs) {
