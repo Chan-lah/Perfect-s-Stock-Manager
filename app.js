@@ -2403,21 +2403,6 @@ function renderBonPipeline() {
   </div>`;
 }
 
-function advanceBonStatus(id) {
-  const b = APP.bons.find(b => b.id === id);
-  if(!b) return;
-  const keys = BON_STATUSES.map(s => s.key);
-  const idx = keys.indexOf(b.status || 'brouillon');
-  if(idx < keys.length - 1) {
-    const old = b.status;
-    const next = keys[idx + 1];
-    if(!_handleBonStatusStockChange(b, old, next)) return;
-    b.status = next;
-    auditLog('edit', 'bon', b.id, {status: old}, {status: b.status});
-    saveDB(); renderBons(); updateAlertBadge();
-  }
-}
-
 function renderStockPredictions() {
   const predictions = (typeof predictShortages === 'function') ? predictShortages() : [];
   if(!predictions.length) { notify('Aucune rupture de stock prévue sous 30 jours ✅', 'success'); return; }
@@ -2534,6 +2519,36 @@ function renderBonRow(b) {
   </tr>`;
 }
 
+function _setBonStatusTimestamp(b, newStatus) {
+  if (newStatus === 'validé') b._validatedAt = Date.now();
+  if (newStatus === 'annulé') b._cancelledAt = Date.now();
+}
+
+function _computeAvailableForBon(articleId, excludeBonId) {
+  var art = APP.articles.find(function(a){ return a.id === articleId; });
+  if (!art) return 0;
+  var avail = parseInt(art.stock) || 0;
+  // re-add the qty engaged by the bon being edited if it was already validated
+  if (excludeBonId) {
+    var bx = (APP.bons||[]).find(function(b){ return b.id === excludeBonId; });
+    if (bx && bx.status === 'validé') {
+      (bx.lignes||[]).forEach(function(l){
+        if (l.articleId === articleId) avail += (parseInt(l.qty)||0);
+      });
+    }
+  }
+  // subtract qty already engaged in OTHER non-annulé bons (brouillon + validé)
+  // validé bons already deducted from art.stock, so only count brouillons here
+  (APP.bons||[]).forEach(function(b){
+    if (b.id === excludeBonId) return;
+    if ((b.status||'brouillon') !== 'brouillon') return;
+    (b.lignes||[]).forEach(function(l){
+      if (l.articleId === articleId) avail -= (parseInt(l.qty)||0);
+    });
+  });
+  return avail;
+}
+
 function _handleBonStatusStockChange(b, oldStatus, newStatus) {
   // brouillon → validé : deduct stock
   if(oldStatus === 'brouillon' && newStatus === 'validé') {
@@ -2609,6 +2624,8 @@ function attachBonEditors(b) {
       const old=b.status;
       if(!_handleBonStatusStockChange(b, old, v)) return;
       b.status=v;
+      _setBonStatusTimestamp(b, v);
+      b._version=(b._version||1)+1;
       auditLog('edit','bon',b.id,{status:old},{status:v}); saveDB(); updateAlertBadge();
       const row=document.getElementById('bon-row-'+b.id);
       if(row){row.outerHTML=renderBonRow(b);attachBonEditors(b);}
@@ -2751,32 +2768,64 @@ async function saveBon(existingId) {
     var _newStatus = document.getElementById('bon-status').value;
     var _wasDeducted = (_oldStatus === 'validé');
     var _willDeduct = (_newStatus === 'validé');
-    // Restore old stock ONLY if it was previously deducted
+    // Restore old stock ONLY if it was previously deducted (with audit mouvement)
     if(_wasDeducted) {
-      (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art) art.stock+=l.qty;});
+      (bon.lignes||[]).forEach(function(l){
+        var art=APP.articles.find(function(a){return a.id===l.articleId;});
+        if(art && l.qty>0){
+          art.stock+=l.qty;
+          APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Modif Bon '+(bon.numero||'')+' (restauration)'});
+        }
+      });
     }
-    // Check new stock ONLY if we will deduct
-    if(_willDeduct) {
-      for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');if(_wasDeducted){(bon.lignes||[]).forEach(l2=>{const a=APP.articles.find(x=>x.id===l2.articleId);if(a)a.stock-=l2.qty;});}return;}}
+    // Global stock constraint: even brouillons must not exceed real stock
+    // Aggregate qty per article in this bon
+    var _aggThis = {};
+    lignes.forEach(function(l){ _aggThis[l.articleId]=(_aggThis[l.articleId]||0)+(parseInt(l.qty)||0); });
+    for(var _aid in _aggThis){
+      var _avail = _computeAvailableForBon(_aid, existingId);
+      if(_aggThis[_aid] > _avail){
+        var _art=APP.articles.find(function(a){return a.id===_aid;});
+        notify('Stock insuffisant pour '+(_art?_art.name:_aid)+' (Dispo réel: '+_avail+', demandé: '+_aggThis[_aid]+')','error');
+        // rollback restoration
+        if(_wasDeducted){
+          (bon.lignes||[]).forEach(function(l2){
+            var a=APP.articles.find(function(x){return x.id===l2.articleId;});
+            if(a && l2.qty>0){
+              a.stock-=l2.qty;
+              if(APP.mouvements && APP.mouvements[0] && APP.mouvements[0].note && APP.mouvements[0].note.indexOf('restauration')>=0) APP.mouvements.shift();
+            }
+          });
+        }
+        return;
+      }
     }
     // Deduct new ONLY if needed
     if(_willDeduct) {
-      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
+      lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
     }
     Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
+    if(_oldStatus !== _newStatus) _setBonStatusTimestamp(bon, _newStatus);
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
     notify('Bon '+bon.numero+' mis à jour','success');
     setTimeout(()=>{if(confirm('Imprimer le bon modifié ?'))printBon(bon.id);},300);
   } else {
     var _newStatus = document.getElementById('bon-status').value || 'brouillon';
-    // Check stock ONLY if creating as validé
-    if(_newStatus === 'validé') {
-      for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');return;}}
+    // Global stock constraint: even brouillons must not exceed real available stock
+    var _aggThis = {};
+    lignes.forEach(function(l){ _aggThis[l.articleId]=(_aggThis[l.articleId]||0)+(parseInt(l.qty)||0); });
+    for(var _aid in _aggThis){
+      var _avail = _computeAvailableForBon(_aid, null);
+      if(_aggThis[_aid] > _avail){
+        var _art=APP.articles.find(function(a){return a.id===_aid;});
+        notify('Stock insuffisant pour '+(_art?_art.name:_aid)+' (Dispo réel: '+_avail+', demandé: '+_aggThis[_aid]+')','error');
+        return;
+      }
     }
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
-    // Deduct stock ONLY if creating as validé
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
     if(_newStatus === 'validé') {
+      bon._validatedAt = Date.now();
       lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
     }
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
@@ -2790,9 +2839,15 @@ function deleteBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
   var _wasDeducted = (bon.status === 'validé');
   if(!confirm('Supprimer le bon '+bon.numero+' ?' + (_wasDeducted ? '\nLe stock sera restauré.' : ''))) return;
-  // Restore stock ONLY if bon was validated (and thus had deducted)
+  // Restore stock with audit mouvement if bon was validated
   if(_wasDeducted) {
-    (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art)art.stock+=l.qty;});
+    (bon.lignes||[]).forEach(function(l){
+      var art=APP.articles.find(function(a){return a.id===l.articleId;});
+      if(art && l.qty>0){
+        art.stock+=l.qty;
+        APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Suppression Bon '+(bon.numero||'')});
+      }
+    });
   }
   auditLog('DELETE','bon',bon.id,bon,null);
   APP.bons=APP.bons.filter(b=>b.id!==id);
