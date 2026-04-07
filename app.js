@@ -2634,7 +2634,7 @@ function openBonModal(bonId) {
   const body=`
   <div class="form-row">
     '<div></div>'
-    <div class="form-group"><label>Statut</label><select id="bon-status"><option value="brouillon" ${bon?.status==='brouillon'?'selected':''}>Brouillon</option><option value="validé" ${!bon||bon?.status==='validé'?'selected':''}>Validé</option><option value="annulé" ${bon?.status==='annulé'?'selected':''}>Annulé</option></select></div>
+    <div class="form-group"><label>Statut</label><select id="bon-status"><option value="brouillon" ${!bon||bon?.status==='brouillon'?'selected':''}>Brouillon</option><option value="validé" ${bon?.status==='validé'?'selected':''}>Validé</option><option value="annulé" ${bon?.status==='annulé'?'selected':''}>Annulé</option></select></div>
   </div>
   <div class="form-row">
     <div class="form-group"><label>Demandeur</label>
@@ -2733,21 +2733,38 @@ async function saveBon(existingId) {
   if(existingId) {
     const bon=APP.bons.find(b=>b.id===existingId); if(!bon) return;
     const old={...bon};
-    // Restore old stock
-    (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art) art.stock+=l.qty;});
-    // Check new stock
-    for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');(bon.lignes||[]).forEach(l2=>{const a=APP.articles.find(x=>x.id===l2.articleId);if(a)a.stock-=l2.qty;});return;}}
-    // Deduct new
-    lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
-    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,_version:(bon._version||1)+1});
+    var _oldStatus = bon.status || 'brouillon';
+    var _newStatus = document.getElementById('bon-status').value;
+    var _wasDeducted = (_oldStatus === 'validé');
+    var _willDeduct = (_newStatus === 'validé');
+    // Restore old stock ONLY if it was previously deducted
+    if(_wasDeducted) {
+      (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art) art.stock+=l.qty;});
+    }
+    // Check new stock ONLY if we will deduct
+    if(_willDeduct) {
+      for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');if(_wasDeducted){(bon.lignes||[]).forEach(l2=>{const a=APP.articles.find(x=>x.id===l2.articleId);if(a)a.stock-=l2.qty;});}return;}}
+    }
+    // Deduct new ONLY if needed
+    if(_willDeduct) {
+      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
+    }
+    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
     notify('Bon '+bon.numero+' mis à jour','success');
     setTimeout(()=>{if(confirm('Imprimer le bon modifié ?'))printBon(bon.id);},300);
   } else {
-    for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');return;}}
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:document.getElementById('bon-status').value,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
-    lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
+    var _newStatus = document.getElementById('bon-status').value || 'brouillon';
+    // Check stock ONLY if creating as validé
+    if(_newStatus === 'validé') {
+      for(const l of lignes){const art=APP.articles.find(a=>a.id===l.articleId);if(art&&l.qty>art.stock){notify(`Stock insuffisant pour ${l.name} (Dispo: ${art.stock})`,'error');return;}}
+    }
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
+    // Deduct stock ONLY if creating as validé
+    if(_newStatus === 'validé') {
+      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
+    }
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
     notify('Bon '+bon.numero+' créé ✓','success');
@@ -2757,12 +2774,16 @@ async function saveBon(existingId) {
 
 function deleteBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
-  if(!confirm(`Supprimer le bon ${bon.numero} ?\nNote : le stock sera restauré.`)) return;
-  (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art)art.stock+=l.qty;});
+  var _wasDeducted = (bon.status === 'validé');
+  if(!confirm('Supprimer le bon '+bon.numero+' ?' + (_wasDeducted ? '\nLe stock sera restauré.' : ''))) return;
+  // Restore stock ONLY if bon was validated (and thus had deducted)
+  if(_wasDeducted) {
+    (bon.lignes||[]).forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art)art.stock+=l.qty;});
+  }
   auditLog('DELETE','bon',bon.id,bon,null);
   APP.bons=APP.bons.filter(b=>b.id!==id);
   saveDB();renderBons();updateAlertBadge();renderSidebar();
-  notify('Bon '+bon.numero+' supprimé (stock restauré)','warning');
+  notify('Bon '+bon.numero+' supprimé' + (_wasDeducted ? ' (stock restauré)' : ''),'warning');
 }
 
 // ============================================================
@@ -5864,9 +5885,9 @@ function renderSettings() {
         <button class="btn btn-secondary" onclick="exportAllJSON()">⬇ Export global JSON</button>
         <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆ Import JSON</button>
         <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(this)">
-        <button class="btn btn-danger" onclick="resetAll()">⚠️ Reset données opérationnelles</button>
-        <p style="font-size:11px;color:var(--text-2);margin-top:6px">Remet à zéro : stocks, bons, mouvements, audit, commandes, dispatch.<br>Conserve : gadgets, commerciaux, fournisseurs, zones, PDV, backups, paramètres.</p>
-        \${(function(){ var _cu=typeof _currentUser==='function'?_currentUser():null; return _cu&&_cu.role==='admin'?'<button class="btn btn-danger" style="margin-top:8px;background:#7f1d1d;border-color:#991b1b" onclick="purgeBackups()"><i class="fa-solid fa-fire"></i> Purger les sauvegardes</button>':''; })()}
+        <button class="btn btn-danger" onclick="resetAll()">⚠️ Réinitialiser les historiques</button>
+        <p style="font-size:11px;color:var(--text-2);margin-top:6px">Efface uniquement : mouvements, audit, journal d'activité, historique de dispatch.<br>Conserve : stocks, bons, gadgets, commerciaux, fournisseurs, zones, PDV, backups, paramètres.</p>
+        ${(function(){ var _cu=typeof _currentUser==='function'?_currentUser():null; return _cu&&_cu.role==='admin'?'<button class="btn btn-danger" style="margin-top:8px;background:#7f1d1d;border-color:#991b1b" onclick="purgeBackups()"><i class="fa-solid fa-fire"></i> Purger les sauvegardes</button>':''; })()}
       </div>
     </div>
     <div class="card">
@@ -5882,10 +5903,6 @@ function renderSettings() {
     <div class="card">
       <div class="card-header"><span class="card-title">🏷️ Catégories de gadgets</span><button class="btn btn-sm btn-primary" onclick="openAddCategoryModal()">+ Nouvelle catégorie</button></div>
       <div id="cat-list-settings" style="padding:4px 0"></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">🗺️ Gestion des Zones</span><button class="btn btn-sm btn-primary" onclick="openZoneModal()">+ Nouvelle zone</button></div>
-      <div id="zones-list"></div>
     </div>
     <div class="card">
       <div class="card-header"><span class="card-title">⏱ Sauvegardes automatiques</span></div>
@@ -6212,22 +6229,20 @@ function restoreSpecificBackup(id) {
 }
 
 function resetAll() {
-  const c1=prompt('Tapez "RESET" pour confirmer la réinitialisation des données opérationnelles:');
+  const c1=prompt('Tapez "RESET" pour confirmer la réinitialisation des historiques:');
   if(c1!=='RESET') return;
   const c2=prompt('Confirmation 2/2 — Tapez "OUI":');
   if(c2!=='OUI') return;
   autoBackup(true);
-  // Reset operational data only — keep articles (structure), commerciaux, fournisseurs, zones, secteurs, PDV, backups, settings
-  APP.articles.forEach(a => { a.stock = 0; });
-  APP.bons = [];
+  // Clear ONLY histories — keep stocks, bons, gadgets, commerciaux, fournisseurs, zones, PDV, backups, settings
   APP.mouvements = [];
   APP.audit = [];
-  APP.commandesFourn = [];
-  APP.dispatch = { besoins:{}, entities:[], weights:{pdv:50,zone:20,history:30}, zonePriority:{}, rules:{respectMin:true,respectMax:true}, history:[] };
+  APP._activityLog = [];
+  if(APP.dispatch) APP.dispatch.history = [];
   APP.dispatchHistory = [];
   APP.recentlyViewed = [];
-  auditLog('RESET','operational',null,null,{ts:Date.now(),note:'Structural data preserved'});
-  saveDB();notify('Données opérationnelles réinitialisées (gadgets, commerciaux, fournisseurs, zones, PDV, backups conservés)','success');renderSettings();renderSidebar();
+  auditLog('RESET','histories',null,null,{ts:Date.now(),note:'Only histories cleared, all data preserved'});
+  saveDB();notify('Historiques réinitialisés (stocks, bons, gadgets, commerciaux, fournisseurs, zones, PDV, backups conservés)','success');renderSettings();renderSidebar();
 }
 
 function purgeBackups() {

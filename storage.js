@@ -191,11 +191,14 @@ async function _doSaveToCloud() {
 
     var dataObj = JSON.parse(dataStr);
 
-    // Remove session-local settings from cloud data
+    // Remove session-local settings from cloud data (per-user prefs)
     if (dataObj.settings) {
       delete dataObj.settings.theme;
       delete dataObj.settings._sidebarCollapsed;
       delete dataObj.settings.lastPage;
+      delete dataObj.settings._hiddenPages;
+      delete dataObj.settings._dynamicBg;
+      delete dataObj.settings._dynamicBgIntensity;
     }
     // Strip role/permissions from users (comes from Firebase profiles)
     // Keep only id, email, photo, signature for shared access
@@ -324,6 +327,9 @@ function startRealtimeSync() {
       var _savedTheme = APP.settings ? APP.settings.theme : 'dark';
       var _savedSidebar = APP.settings ? APP.settings._sidebarCollapsed : false;
       var _savedLastPage = APP.settings ? APP.settings.lastPage : 'dashboard';
+      var _savedHiddenPages = APP.settings ? APP.settings._hiddenPages : undefined;
+      var _savedDynBg = APP.settings ? APP.settings._dynamicBg : undefined;
+      var _savedDynBgInt = APP.settings ? APP.settings._dynamicBgIntensity : undefined;
 
       Object.assign(APP, cloudData);
 
@@ -333,6 +339,9 @@ function startRealtimeSync() {
       APP.settings.theme = _savedTheme;
       APP.settings._sidebarCollapsed = _savedSidebar;
       APP.settings.lastPage = _savedLastPage;
+      if (_savedHiddenPages !== undefined) APP.settings._hiddenPages = _savedHiddenPages;
+      if (_savedDynBg !== undefined) APP.settings._dynamicBg = _savedDynBg;
+      if (_savedDynBgInt !== undefined) APP.settings._dynamicBgIntensity = _savedDynBgInt;
 
       // Restore images from localStorage cache (not from cloud)
       try {
