@@ -7658,7 +7658,7 @@ async function validateDispatchV3(articleIds) {
     // No stock deduction here — stock is deducted when bon status changes from brouillon
     // Reset pool after validation
     APP.dispatch.pools[r.art.id] = 0;
-    APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
+    APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, stockAtDispatch: (parseInt(r.art.stock)||0), alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
   });
 
   // Generate bons de sortie per commercial
@@ -8055,7 +8055,9 @@ function _buildDispHistRows(list) {
     rows += '<div class="card" style="margin-bottom:8px;padding:12px 14px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
       + '<div><strong style="font-size:0.92rem">' + (h.articleName || '') + '</strong>'
-      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s</span></div>'
+      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s</span>'
+      + (h.stockAtDispatch != null ? '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-2)" title="Stock au moment du dispatch: ' + h.stockAtDispatch + ' \u2014 simulation, n\'impacte pas le stock r\u00e9el">\u2192 reste simul\u00e9: <strong>' + (h.stockAtDispatch - h.totalQty) + '</strong></span>' : '')
+      + '</div>'
       + '<div style="display:flex;gap:6px;align-items:center">'
       + '<span style="font-size:0.78rem;color:var(--text-2)">' + new Date(h.ts).toLocaleString('fr-FR') + '</span>'
       + '<button class="btn btn-sm" onclick="printDispatchReport(' + realIdx + ')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
