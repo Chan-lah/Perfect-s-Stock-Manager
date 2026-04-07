@@ -8055,8 +8055,9 @@ function _buildDispHistRows(list) {
     rows += '<div class="card" style="margin-bottom:8px;padding:12px 14px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
       + '<div><strong style="font-size:0.92rem">' + (h.articleName || '') + '</strong>'
-      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s</span>'
-      + (h.stockAtDispatch != null ? '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-2)" title="Stock au moment du dispatch: ' + h.stockAtDispatch + ' \u2014 simulation, n\'impacte pas le stock r\u00e9el">\u2192 reste simul\u00e9: <strong>' + (h.stockAtDispatch - h.totalQty) + '</strong></span>' : '')
+      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s pr\u00e9lev\u00e9es</span>'
+      + (h.stockAtDispatch != null ? '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-1)" title="Stock du gadget au moment du dispatch">' + h.stockAtDispatch + ' stock initial</span>'
+      + '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-2)" title="Simulation : stock initial \u2212 unit\u00e9s pr\u00e9lev\u00e9es. N\'impacte pas le stock r\u00e9el.">' + (h.stockAtDispatch - h.totalQty) + ' \u00e0 rester</span>' : '')
       + '</div>'
       + '<div style="display:flex;gap:6px;align-items:center">'
       + '<span style="font-size:0.78rem;color:var(--text-2)">' + new Date(h.ts).toLocaleString('fr-FR') + '</span>'
