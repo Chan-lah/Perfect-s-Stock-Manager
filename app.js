@@ -2524,7 +2524,7 @@ function renderBonRow(b) {
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
     <td class="editable" id="td-bstat-${b.id}"><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
     <td><div style="display:flex;gap:4px">
-      ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:`<button class="btn btn-sm btn-secondary" onclick="advanceBonStatus('${b.id}')" title="Avancer le statut">→</button>`}
+      ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:(b.status==='validé'?`<button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕ Annuler</button>`:`<button class="btn btn-sm btn-success" onclick="reactivateBon('${b.id}')" title="Réactiver ce bon">↻ Réactiver</button>`)}
       <button class="btn btn-sm btn-secondary" onclick="previewBon('${b.id}')">👁</button>
       <button class="btn btn-sm btn-secondary" onclick="printBon('${b.id}')">🖨</button>
       <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${b.id}')" title="PDF">📥</button>
@@ -2535,8 +2535,8 @@ function renderBonRow(b) {
 }
 
 function _handleBonStatusStockChange(b, oldStatus, newStatus) {
-  // brouillon → validé/livré : deduct stock
-  if(oldStatus === 'brouillon' && (newStatus === 'validé' || newStatus === 'livré')) {
+  // brouillon → validé : deduct stock
+  if(oldStatus === 'brouillon' && newStatus === 'validé') {
     for(const l of (b.lignes||[])) {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > art.stock) { notify('Stock insuffisant pour ' + (l.name||'') + ' (Dispo: ' + art.stock + ')','error'); return false; }
@@ -2549,6 +2549,20 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
           id: generateId(), type: 'sortie', ts: Date.now(),
           articleId: art.id, articleName: art.name, qty: l.qty,
           note: 'Bon ' + (b.numero||'') + ' → ' + (b.recipiendaire||''), commercialId: b.commercialId||''
+        });
+      }
+    });
+  }
+  // validé → brouillon : restore stock (bon revient à l'état non engagé)
+  if(oldStatus === 'validé' && newStatus === 'brouillon') {
+    (b.lignes || []).forEach(l => {
+      const art = APP.articles.find(a => a.id === l.articleId);
+      if(art && l.qty > 0) {
+        art.stock += l.qty;
+        APP.mouvements.unshift({
+          id: generateId(), type: 'entree', ts: Date.now(),
+          articleId: art.id, articleName: art.name, qty: l.qty,
+          note: 'Retour brouillon Bon ' + (b.numero||''), commercialId: b.commercialId||''
         });
       }
     });
@@ -2747,7 +2761,7 @@ async function saveBon(existingId) {
     }
     // Deduct new ONLY if needed
     if(_willDeduct) {
-      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
+      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
     }
     Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
     auditLog('UPDATE','bon',bon.id,old,bon);
@@ -2763,7 +2777,7 @@ async function saveBon(existingId) {
     const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1,_versions:[]};
     // Deduct stock ONLY if creating as validé
     if(_newStatus === 'validé') {
-      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.push({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
+      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
     }
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -5377,7 +5391,7 @@ function filterAudit() {
     const name    = _auditEntityName(e.entity, e.entityId);
     const diff    = _auditDiff(e.oldVal, e.newVal);
     const desc = _auditDescription(e);
-    const entityIcon = {article:'📦',bon:'📋',commercial:'👤',fournisseur:'🚛',zone:'🗺️',pdv:'🏪',bon:'📋'}[(e.entity||'').toLowerCase()] || '📝';
+    const entityIcon = {article:'📦',bon:'📋',commercial:'👤',fournisseur:'🚛',zone:'🗺️',pdv:'🏪'}[(e.entity||'').toLowerCase()] || '📝';
     return `
     <div class="audit-row" style="border-left:3px solid ${color}22;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
@@ -8033,8 +8047,9 @@ function validateBon(bonId) {
   if (!_handleBonStatusStockChange(bon, old, 'valid\u00e9')) return;
   bon.status = 'valid\u00e9';
   bon._validatedAt = Date.now();
+  bon._version = (bon._version||1) + 1;
   saveDB();
-  auditLog('VALIDATE', 'bon', bon.numero, {status: old}, {status: bon.status});
+  auditLog('VALIDATE', 'bon', bon.id, {status: old}, {status: bon.status});
   notify('Bon ' + bon.numero + ' valid\u00e9 \u2014 stock pr\u00e9lev\u00e9 \u2713', 'success');
   if (typeof renderBons === 'function') renderBons();
 }
@@ -8042,15 +8057,33 @@ function validateBon(bonId) {
 function cancelBon(bonId) {
   var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
   if (!bon) { notify('Bon introuvable', 'error'); return; }
+  if (bon.status === 'annul\u00e9') { notify('Ce bon est d\u00e9j\u00e0 annul\u00e9', 'info'); return; }
   var wasValidated = (bon.status === 'valid\u00e9');
   if (!confirm('Annuler ce bon ?' + (wasValidated ? ' Le stock sera restaur\u00e9.' : ''))) return;
   var old = bon.status;
   if (!_handleBonStatusStockChange(bon, old, 'annul\u00e9')) return;
   bon.status = 'annul\u00e9';
   bon._cancelledAt = Date.now();
+  bon._version = (bon._version||1) + 1;
   saveDB();
-  auditLog('CANCEL', 'bon', bon.numero, {status: old}, {status: bon.status});
+  auditLog('CANCEL', 'bon', bon.id, {status: old}, {status: bon.status});
   notify('Bon ' + bon.numero + ' annul\u00e9' + (wasValidated ? ' \u2014 stock restaur\u00e9' : '') + ' \u2713', 'info');
+  if (typeof renderBons === 'function') renderBons();
+}
+
+function reactivateBon(bonId) {
+  var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
+  if (!bon) { notify('Bon introuvable', 'error'); return; }
+  if (bon.status !== 'annulé') { notify('Ce bon n’est pas annulé', 'warning'); return; }
+  if (!confirm('Réactiver ce bon ? Le stock sera prélevé à nouveau.')) return;
+  var old = bon.status;
+  if (!_handleBonStatusStockChange(bon, old, 'validé')) return;
+  bon.status = 'validé';
+  bon._validatedAt = Date.now();
+  bon._version = (bon._version||1) + 1;
+  saveDB();
+  auditLog('REACTIVATE', 'bon', bon.id, {status: old}, {status: bon.status});
+  notify('Bon ' + bon.numero + ' réactivé — stock prélevé ✓', 'success');
   if (typeof renderBons === 'function') renderBons();
 }
 
