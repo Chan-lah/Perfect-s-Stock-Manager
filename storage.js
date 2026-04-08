@@ -120,7 +120,13 @@ function _strHash(str) {
 }
 
 // Hashes from last successful cloud save { sectionName: number }
-var _sectionHashes = {};
+// Persisted to localStorage so the granular diff survives page reloads.
+// Without this, every reload triggers a full upload (risk of overwriting
+// sections that other browsers changed in the meantime).
+var _sectionHashes = (function(){
+  try { return JSON.parse(localStorage.getItem('psm_section_hashes') || '{}'); }
+  catch(e) { return {}; }
+})();
 
 // Returns array of changed section names, or null if no previous snapshot (full save)
 function _getChangedSections(dataObj) {
@@ -135,12 +141,13 @@ function _getChangedSections(dataObj) {
   return changed;
 }
 
-// Update hashes after successful save
+// Update hashes after successful save (and persist to localStorage)
 function _updateSectionHashes(dataObj) {
   _SYNC_SECTIONS.forEach(function(s) {
     try { _sectionHashes[s] = _strHash(JSON.stringify(dataObj[s] !== undefined ? dataObj[s] : null)); }
     catch(e) { _sectionHashes[s] = 0; }
   });
+  try { localStorage.setItem('psm_section_hashes', JSON.stringify(_sectionHashes)); } catch(e) {}
 }
 
 async function _doSaveToCloud() {

@@ -317,9 +317,37 @@ async function _handleLogin(e) {
         }
       } catch(e) {}
     } else {
-      // Local is newer or equal: push to cloud in background (non-blocking)
-      // _doSaveToCloud starts real-time sync automatically when upload finishes
-      if (typeof _doSaveToCloud === 'function') {
+      // Local is newer or equal -- but be cautious: only auto-push if local content
+      // is at least as rich as cloud. Otherwise a stale browser could wipe a fresh cloud.
+      var _shouldPush = true;
+      try {
+        if (_cloudTs > 0 && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+          var _cloudSnap = await _firebaseDB.ref('app_data/data').once('value');
+          var _cd = _cloudSnap.val() || {};
+          var _localBons = (APP.bons || []).length;
+          var _cloudBons = (_cd.bons || []).length;
+          var _localArt = (APP.articles || []).length;
+          var _cloudArt = (_cd.articles || []).length;
+          var _localMvt = (APP.mouvements || []).length;
+          var _cloudMvt = (_cd.mouvements || []).length;
+          // If cloud has MORE in any critical section, local is suspicious -> fetch cloud instead
+          if (_cloudBons > _localBons || _cloudArt > _localArt || _cloudMvt > _localMvt) {
+            console.warn('[PSM] Local seems incomplete vs cloud (bons L=' + _localBons + '/C=' + _cloudBons +
+                         ', art L=' + _localArt + '/C=' + _cloudArt +
+                         ', mvt L=' + _localMvt + '/C=' + _cloudMvt + '). Loading cloud instead.');
+            if (typeof _fixFirebaseArrays === 'function') _cd = _fixFirebaseArrays(_cd);
+            var _ub = APP.users ? APP.users.slice() : [];
+            Object.assign(APP, _cd);
+            APP.users = _ub;
+            try {
+              var _ci = localStorage.getItem('psm_images_cache');
+              if (_ci && typeof _restoreImages === 'function') _restoreImages(APP, JSON.parse(_ci));
+            } catch(e) {}
+            _shouldPush = false;
+          }
+        }
+      } catch(ex) { console.warn('[PSM] safety check failed:', ex.message || ex); }
+      if (_shouldPush && typeof _doSaveToCloud === 'function') {
         _doSaveToCloud().catch(function(ex) { console.warn('[PSM] bg cloud push:', ex); });
       }
     }
