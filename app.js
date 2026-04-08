@@ -2942,7 +2942,10 @@ async function saveBon(existingId) {
     if(_oldStatus !== _newStatus) _setBonStatusTimestamp(bon, _newStatus);
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
-    notify('Bon '+bon.numero+' mis à jour','success');
+    // When a validated bon is re-saved, the stock was restored then re-deducted (cancel+reactivate).
+    // Dates (createdAt, _validatedAt) and validator snapshot are intentionally preserved.
+    var _bounced = _wasDeducted && _willDeduct;
+    notify('Bon '+bon.numero+(_bounced ? ' mis à jour — stock recyclé (annulé puis réactivé)' : ' mis à jour'),'success');
     setTimeout(()=>{if(confirm('Imprimer le bon modifié ?'))printBon(bon.id);},300);
   } else {
     var _newStatus = document.getElementById('bon-status').value || 'brouillon';
@@ -7309,6 +7312,25 @@ function _resolveBonRoleSig(bon, role) {
   var person = null;
   var commercial = null;
   if (role === 'demandeur') {
+    // DCM bons (dispatch or manual): demandeur info comes from the validator account
+    if (bon.demandeur && String(bon.demandeur).trim().toUpperCase() === 'DCM') {
+      out.sig       = bon._validatedBySignature || '';
+      out.matricule = bon._validatedByMatricule || '';
+      out.name      = bon._validatedByName     || '';
+      // Live fallback when snapshot is empty (old bons / freshly migrated sigs)
+      if ((!out.sig || !out.matricule) && bon._validatedBy) {
+        var lu = (APP.users || []).find(function(x) {
+          return x.email && x.email.toLowerCase() === String(bon._validatedBy).toLowerCase();
+        });
+        if (lu) {
+          if (!out.sig && lu.signatureKey && typeof _getSignature === 'function') out.sig = _getSignature(lu.signatureKey) || '';
+          if (!out.sig && lu.signature) out.sig = lu.signature;
+          if (!out.matricule) out.matricule = lu.matricule || '';
+          if (!out.name) out.name = lu.name || '';
+        }
+      }
+      return out;
+    }
     if (bon._demandeurAnnuaireId) person = _lookupAnnuaireById(bon._demandeurAnnuaireId);
     if (!person && bon._demandeurType === 'commercial' && bon.commercialId) {
       commercial = (APP.commerciaux||[]).find(function(c){ return c.id === bon.commercialId; });
