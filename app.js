@@ -2492,7 +2492,7 @@ function renderBons() {
     </div>
   </div>
   ${renderBonPipeline()}
-  <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">💡 <strong>Double-cliquez</strong> sur Statut pour modifier · <strong>→</strong> pour avancer</div>
+  <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">💡 <strong>Double-cliquez</strong> sur Statut pour modifier</div>
   <div class="table-wrap"><table>
     <thead><tr><th>${t('bon_number')}</th><th>${t('recipient')}</th><th>${t('gadgets')}</th><th>${t('date')}</th><th>${t('status')}</th><th>${t('actions')}</th></tr></thead>
     <tbody>${filtered.length===0?`<tr><td colspan="6"><div class="empty-state"><p>Aucun bon de sortie</p></div></td></tr>`:filtered.slice().sort((a,b)=>b.createdAt-a.createdAt).map(b=>renderBonRow(b)).join('')}</tbody>
@@ -7648,6 +7648,18 @@ async function validateDispatchV3(articleIds) {
     notify(errors[0], 'error'); return;
   }
 
+  // Global stock constraint: ensure dispatch pool + existing brouillons <= real stock
+  var _constraintErr = null;
+  for (var _ri = 0; _ri < results.length; _ri++) {
+    var _r = results[_ri];
+    var _avail = (typeof _computeAvailableForBon === 'function') ? _computeAvailableForBon(_r.art.id, null) : (_r.art.stock || 0);
+    if (_r.pool > _avail) {
+      _constraintErr = _r.art.name + ' : pool (' + _r.pool + ') > dispo r\u00e9el (' + _avail + '). D\u2019autres bons brouillons engagent d\u00e9j\u00e0 une partie du stock.';
+      break;
+    }
+  }
+  if (_constraintErr) { notify(_constraintErr, 'error'); return; }
+
   var confirmMsg = results.map(function(r) {
     return r.art.name + ' \u00d7' + r.pool + ' \u2192 ' + r.alloc.length + ' commerciaux';
   }).join('\n');
@@ -7691,14 +7703,25 @@ async function validateDispatchV3(articleIds) {
       lignes: bd.lignes,
       status: 'brouillon',
       sigDemandeur: '', sigMKT: '',
-      createdAt: ts, _version: 1, _versions: []
+      createdAt: ts, _version: 1
     };
     APP.bons.push(bon);
     bonIds.push(bon.id);
   }
 
+  // Attach generated bonIds to the dispatch history snapshots (for safe undo)
+  results.forEach(function(r) {
+    var snap = (APP.dispatch.history || []).find(function(h){ return h.ts === ts && h.articleId === r.art.id; });
+    if (!snap) return;
+    snap.bonIds = [];
+    bonIds.forEach(function(bid) {
+      var b = APP.bons.find(function(x){ return x.id === bid; });
+      if (b && (b.lignes||[]).some(function(l){ return l.articleId === r.art.id; })) snap.bonIds.push(bid);
+    });
+  });
+
   saveDB();
-  auditLog('DISPATCH', 'dispatch', results.length + ' gadget(s) dispatched, ' + bonIds.length + ' bon(s) generated');
+  auditLog('DISPATCH', 'dispatch', '', null, { message: results.length + ' gadget(s) dispatched, ' + bonIds.length + ' bon(s) generated', bonIds: bonIds });
   notify('\u2705 Dispatch valid\u00e9 \u2014 ' + results.length + ' gadget(s), ' + bonIds.length + ' bon(s) cr\u00e9\u00e9(s)', 'success');
   renderDispatchPage();
 
@@ -8095,7 +8118,7 @@ function dInitCommercialDispatchFields(c) {
 
 
 // ============================================================
-// ── Bon validation: deduct stock when brouillon -> livr\u00e9 ──
+// ── Bon validation: deduct stock when brouillon -> valid\u00e9 ──
 function validateBon(bonId) {
   var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
   if (!bon) { notify('Bon introuvable', 'error'); return; }
@@ -8150,21 +8173,30 @@ function undoDispatch(histIdx) {
   var hist = APP.dispatch.history || [];
   if(histIdx < 0 || histIdx >= hist.length) return;
   var snap = hist[histIdx];
-  if(!confirm('Annuler le dispatch de ' + snap.articleName + ' (' + snap.totalQty + ' unit\u00e9s) du ' + new Date(snap.ts).toLocaleString('fr-FR') + ' ?\n\nLe stock sera restaur\u00e9 et les mouvements associ\u00e9s supprim\u00e9s.')) return;
-  var art = APP.articles.find(function(a){return a.id===snap.articleId});
-  if(art) art.stock += snap.totalQty;
-  // Supprimer les mouvements de sortie correspondants
-  var snapTs = snap.ts;
-  // Remove matching mouvements (same article, same timestamp range +/- 2s)
-  APP.mouvements = APP.mouvements.filter(function(m) {
-    if(m.type !== 'sortie' || m.articleId !== snap.articleId) return true;
-    if(Math.abs(m.ts - snapTs) > 2000) return true;
-    return false;
+  var ids = snap.bonIds || [];
+  var toDelete = []; var blockers = []; var alreadyGone = 0;
+  ids.forEach(function(bid){
+    var b = (APP.bons||[]).find(function(x){ return x.id === bid; });
+    if(!b) { alreadyGone++; return; }
+    if(b.status === 'valid\u00e9') { blockers.push(b.numero || bid); return; }
+    toDelete.push(b);
+  });
+  if(blockers.length > 0) {
+    notify('Impossible : bon(s) d\u00e9j\u00e0 valid\u00e9(s) \u2014 ' + blockers.join(', ') + '. Annulez-les d\u2019abord.', 'error');
+    return;
+  }
+  var msg = 'Annuler le dispatch de ' + snap.articleName + ' (' + snap.totalQty + ' unit\u00e9s) du ' + new Date(snap.ts).toLocaleString('fr-FR') + ' ?\n\n';
+  if(toDelete.length > 0) msg += toDelete.length + ' bon(s) brouillon seront supprim\u00e9s.';
+  else msg += 'Aucun bon li\u00e9 \u00e0 supprimer (historique seul).';
+  if(!confirm(msg)) return;
+  toDelete.forEach(function(b){
+    auditLog('DELETE', 'bon', b.id, b, null);
+    APP.bons = APP.bons.filter(function(x){ return x.id !== b.id; });
   });
   hist.splice(histIdx, 1);
   saveDB();
-  auditLog('UNDO', 'dispatch', snap.articleName + ' x' + snap.totalQty);
-  notify('Dispatch annul\u00e9 \u2014 stock restaur\u00e9 ✓', 'success');
+  auditLog('UNDO', 'dispatch', snap.articleId || '', null, { article: snap.articleName, totalQty: snap.totalQty, deletedBons: toDelete.length });
+  notify('Dispatch annul\u00e9 \u2014 ' + toDelete.length + ' bon(s) brouillon supprim\u00e9(s) ✓', 'success');
   renderDispatchPage();
 }
 
@@ -8172,6 +8204,11 @@ function undoMouvement(mvtId) {
   var idx = APP.mouvements.findIndex(function(m){return m.id===mvtId});
   if(idx < 0) { notify('Mouvement introuvable','error'); return; }
   var m = APP.mouvements[idx];
+  // Block undo if mouvement was generated by a bon (to avoid stock/bon desync)
+  if (m.note && /Bon /i.test(m.note)) {
+    notify('Ce mouvement provient d\u2019un bon. Annulez ou modifiez le bon concern\u00e9 directement.', 'error');
+    return;
+  }
   if(!confirm('Annuler ce mouvement ?\n' + m.type + ' de ' + m.qty + ' x ' + m.articleName + '\n\nLe stock sera ajust\u00e9 en cons\u00e9quence.')) return;
   var art = APP.articles.find(function(a){return a.id===m.articleId});
   if(art) {
