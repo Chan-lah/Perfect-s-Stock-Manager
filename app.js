@@ -1386,12 +1386,20 @@ function _galDeletePhoto(artId) {
 // ============================================================
 // BON PDF EXPORT
 // ============================================================
-function exportBonPDF(id) {
+async function exportBonPDF(id) {
   const bon = APP.bons.find(b => b.id === id);
   if (!bon) { notify('Bon introuvable', 'error'); return; }
   auditLog('DOWNLOAD', 'bon', bon.numero, null, {format: 'PDF'});
+  // Open popup synchronously to preserve user gesture
   const win = window.open('', '_blank');
   if (!win) { notify('Popup bloqu\u00e9 \u2014 autorisez les popups', 'warning'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PDF \u2014 ' + bon.numero + '</title></head><body style="font-family:Arial,sans-serif;text-align:center;padding:60px 20px;color:#666"><div style="font-size:14px">\u23f3 Chargement des signatures\u2026</div></body></html>');
+  // Wait for sig cache before writing the real PDF body
+  if (typeof _loadSignaturesCache === 'function') {
+    try { await _loadSignaturesCache(); } catch(e) {}
+  }
+  if (win.closed) return;
+  win.document.open();
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PDF \u2014 ' + bon.numero + '</title>'
     + '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;padding:20px;font-family:Arial,sans-serif}'
     + '@media print{body{padding:0}@page{margin:10mm;size:A4}}'
@@ -3214,13 +3222,32 @@ function generateQRSVG(text, color) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" style="border:2px solid ${color};background:white;border-radius:4px">${rects}</svg>`;
 }
 
-function previewBon(id) {
+async function previewBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
-  openModal('modal-bon-preview','Aperçu — '+bon.numero,`<div style="max-height:70vh;overflow:auto">${generateBonHTML(bon)}</div>`,null,'modal-xl');
+  // Open modal immediately with a loading placeholder so the UI is responsive
+  openModal('modal-bon-preview','Aperçu — '+bon.numero,
+    '<div style="text-align:center;padding:40px;color:#888;font-size:13px">⏳ Chargement des signatures…</div>',
+    null,'modal-xl');
+  // Wait for the signature cache so all 3 sig boxes render correctly
+  if (typeof _loadSignaturesCache === 'function') {
+    try { await _loadSignaturesCache(); } catch(e) {}
+  }
+  // Swap in the real content (modal may have been closed in the meantime)
+  var bodyEl = document.querySelector('#active-modal .modal-body');
+  if (bodyEl) bodyEl.innerHTML = `<div style="max-height:70vh;overflow:auto">${generateBonHTML(bon)}</div>`;
 }
-function printBon(id) {
+async function printBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
+  // Open the popup synchronously to preserve the user gesture (popup blockers)
   const win=window.open('','_blank','width=900,height=750');
+  if(!win){ notify('Popup bloquée — autorisez les popups','warning'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon '+bon.numero+'</title></head><body style="font-family:Arial,sans-serif;text-align:center;padding:60px 20px;color:#666"><div style="font-size:14px">⏳ Chargement des signatures…</div></body></html>');
+  // Now wait for the sig cache before writing the real bon HTML
+  if (typeof _loadSignaturesCache === 'function') {
+    try { await _loadSignaturesCache(); } catch(e) {}
+  }
+  if (win.closed) return; // user closed it while we waited
+  win.document.open();
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm}}</style></head><body>${generateBonHTML(bon)}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
   win.document.close();
   _recordBonPrint(bon);
@@ -8678,21 +8705,31 @@ function dInitCommercialDispatchFields(c) {
 var _sigCache = {};
 var _sigCacheLoaded = false;
 var _sigListenerAttached = false;
+var _sigCachePromise = null;
 
-// Load all signatures from RTDB (called after login from _finishAppInit)
+// Load all signatures from RTDB (called after login from _finishAppInit).
+// Idempotent: multiple callers await the same in-flight promise; resolved once.
 async function _loadSignaturesCache() {
+  if (_sigCacheLoaded) return;
+  if (_sigCachePromise) return _sigCachePromise;
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
-  try {
-    var snap = await _firebaseDB.ref('signatures').once('value');
-    var data = snap.val() || {};
-    var count = 0;
-    for (var key in data) {
-      if (data[key] && data[key].data) { _sigCache[key] = data[key].data; count++; }
+  _sigCachePromise = (async function() {
+    try {
+      var snap = await _firebaseDB.ref('signatures').once('value');
+      var data = snap.val() || {};
+      var count = 0;
+      for (var key in data) {
+        if (data[key] && data[key].data) { _sigCache[key] = data[key].data; count++; }
+      }
+      _sigCacheLoaded = true;
+      console.log('[PSM] Sig cache loaded: ' + count + ' signature(s)');
+      _attachSignaturesListener();
+    } catch(e) {
+      console.warn('[PSM] sig cache load failed:', e);
+      _sigCachePromise = null; // allow retry on next call
     }
-    _sigCacheLoaded = true;
-    console.log('[PSM] Sig cache loaded: ' + count + ' signature(s)');
-    _attachSignaturesListener();
-  } catch(e) { console.warn('[PSM] sig cache load failed:', e); }
+  })();
+  return _sigCachePromise;
 }
 
 // Real-time listener: keeps _sigCache in sync across devices
