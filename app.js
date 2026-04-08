@@ -702,6 +702,38 @@ async function _finishAppInit() {
     APP._dispatchSigMigratedAt = Date.now();
     if (_dpFlagged > 0) console.log('[PSM] Phase 9: ' + _dpFlagged + ' bon(s) dispatch flagg\u00e9(s) r\u00e9troactivement');
   }
+  // Phase 10: migrate APP.users[].signature (base64) -> RTDB key (one-time, async, non-blocking)
+  if (!APP._sigMigrationDone) {
+    (async function() {
+      try {
+        if (typeof _uploadSignature !== 'function' || typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
+        var users = APP.users || [];
+        var migrated = 0;
+        for (var i = 0; i < users.length; i++) {
+          var uu = users[i];
+          if (uu && uu.signature && !uu.signatureKey && String(uu.signature).indexOf('data:') === 0) {
+            try {
+              var key = await _uploadSignature(uu.signature, 'sig');
+              uu.signatureKey = key;
+              delete uu.signature;
+              uu._version = (uu._version || 1) + 1;
+              migrated++;
+            } catch(e) {
+              console.warn('[PSM] Phase 10 sig upload failed for ' + (uu.email || uu.id), e);
+              return; // abort -- do NOT mark migration done so we retry next session
+            }
+          }
+        }
+        APP._sigMigrationDone = Date.now();
+        if (migrated > 0) {
+          console.log('[PSM] Phase 10: ' + migrated + ' user signature(s) migr\u00e9e(s) vers RTDB');
+          if (typeof saveDB === 'function') saveDB();
+        } else if (typeof saveDB === 'function') {
+          saveDB(); // mark migration done even if no users had sigs
+        }
+      } catch(err) { console.warn('[PSM] Phase 10 migration error:', err); }
+    })();
+  }
   initGMAData();
   _pruneHistoricalData();
   (APP.commerciaux||[]).forEach(c => dInitCommercialDispatchFields(c));
@@ -6874,19 +6906,31 @@ function openUserModal(userId) {
         <input type="hidden" id="um-photo-data" value="${u?.photo||''}">
       </div>
     </div>
+    ${(()=>{
+      // Phase 10: prefer signatureKey (RTDB), fall back to legacy base64
+      var existingSigSrc = '';
+      if (u && u.signatureKey && typeof _getSignature === 'function') {
+        existingSigSrc = _getSignature(u.signatureKey) || '';
+      }
+      if (!existingSigSrc && u && u.signature) existingSigSrc = u.signature;
+      return `
     <div class="form-group" id="um-sig-section">
       <label>Signature digitalis\u00e9e (optionnel)</label>
       <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">
         <div id="um-sig-preview" style="width:120px;height:50px;background:var(--bg-2);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;border-radius:6px;overflow:hidden">
-          ${u?.signature?`<img src="${u.signature}" style="max-width:120px;max-height:50px;object-fit:contain">`: '<span style="font-size:11px;color:var(--text-3)">Aucune</span>'}
+          ${existingSigSrc ? `<img src="${existingSigSrc}" style="max-width:120px;max-height:50px;object-fit:contain">` : '<span style="font-size:11px;color:var(--text-3)">Aucune</span>'}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
           <button class="btn btn-secondary btn-sm" onclick="document.getElementById('um-sig-input').click()">\uD83D\uDCC1 Importer image</button>
           <button class="btn btn-secondary btn-sm" onclick="openSigDrawCanvas()">\u270D\uFE0F Dessiner signature</button>
+          <button class="btn btn-danger btn-sm" onclick="_umClearSig()">\uD83D\uDDD1 Retirer</button>
         </div>
         <input type="file" id="um-sig-input" accept="image/*" style="display:none" onchange="previewUserSignature(this)">
-        <input type="hidden" id="um-sig-data" value="${u?.signature||''}">
-      </div>
+        <input type="hidden" id="um-sig-data" value="">
+        <input type="hidden" id="um-sig-existing-key" value="${u?.signatureKey||''}">
+        <input type="hidden" id="um-sig-cleared" value="0">
+      </div>`;
+    })()}
       <div id="um-sig-canvas-wrap" style="display:none;margin-top:8px">
         <canvas id="um-sig-canvas" width="400" height="120" style="border:1px solid var(--border);border-radius:6px;background:#fff;cursor:crosshair;max-width:100%"></canvas>
         <div style="display:flex;gap:6px;margin-top:4px">
@@ -6947,6 +6991,7 @@ function previewUserSignature(input) {
   const r = new FileReader();
   r.onload = e => {
     document.getElementById('um-sig-data').value = e.target.result;
+    var clrEl = document.getElementById('um-sig-cleared'); if (clrEl) clrEl.value = '0';
     const prev = document.getElementById('um-sig-preview');
     if(prev) prev.innerHTML = `<img src="${e.target.result}" style="max-width:120px;max-height:50px;object-fit:contain">`;
   };
@@ -6987,10 +7032,19 @@ function saveSigCanvas() {
   if(!canvas) return;
   const dataUrl = canvas.toDataURL('image/png');
   document.getElementById('um-sig-data').value = dataUrl;
+  var clrEl = document.getElementById('um-sig-cleared'); if (clrEl) clrEl.value = '0';
   const prev = document.getElementById('um-sig-preview');
   if(prev) prev.innerHTML = '<img src="' + dataUrl + '" style="max-width:120px;max-height:50px;object-fit:contain">';
   document.getElementById('um-sig-canvas-wrap').style.display = 'none';
   notify('Signature captur\u00e9e \u2713', 'success');
+}
+function _umClearSig() {
+  var dataEl = document.getElementById('um-sig-data');
+  var clrEl = document.getElementById('um-sig-cleared');
+  var prev = document.getElementById('um-sig-preview');
+  if (dataEl) dataEl.value = '';
+  if (clrEl) clrEl.value = '1';
+  if (prev) prev.innerHTML = '<span style="font-size:11px;color:var(--text-3)">Aucune (sera retir\u00e9e)</span>';
 }
 
 async function saveUserModal(userId) {
@@ -7000,10 +7054,42 @@ async function saveUserModal(userId) {
   const pass  = document.getElementById('um-pass')?.value?.trim() || null;
   const role  = document.getElementById('um-role')?.value || 'viewer';
   const photo = document.getElementById('um-photo-data')?.value || null;
-  const sig   = document.getElementById('um-sig-data')?.value || null;
+  const newSigDataUrl = document.getElementById('um-sig-data')?.value || '';
+  const existingSigKey = document.getElementById('um-sig-existing-key')?.value || '';
+  const sigCleared = (document.getElementById('um-sig-cleared')?.value === '1');
   const matricule = document.getElementById('um-matricule')?.value?.trim() || '';
   if (matricule && !_isMatriculeUnique(matricule, userId || null)) {
     notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
+  }
+  // Phase 10: resolve final signatureKey (upload new / delete old / leave alone)
+  let finalSigKey = existingSigKey;
+  let finalSigDataUrl = '';  // for Firebase profile mirror
+  try {
+    if (newSigDataUrl) {
+      // New sig provided -- upload to RTDB, delete old key if any
+      if (existingSigKey && typeof _deleteSignature === 'function') {
+        try { await _deleteSignature(existingSigKey); } catch(e) {}
+      }
+      if (typeof _uploadSignature === 'function') {
+        finalSigKey = await _uploadSignature(newSigDataUrl, 'sig');
+        finalSigDataUrl = newSigDataUrl;
+      } else {
+        finalSigKey = '';
+      }
+    } else if (sigCleared && existingSigKey) {
+      // Explicit removal
+      if (typeof _deleteSignature === 'function') {
+        try { await _deleteSignature(existingSigKey); } catch(e) {}
+      }
+      finalSigKey = '';
+    } else if (existingSigKey && typeof _getSignature === 'function') {
+      // No change -- preserve existing key, resolve dataUrl for profile mirror
+      finalSigDataUrl = _getSignature(existingSigKey) || '';
+    }
+  } catch(e) {
+    console.warn('[PSM] User sig op failed:', e);
+    notify('Erreur signature: ' + (e.message || e), 'error');
+    return;
   }
   if(!name) { notify('Le nom est obligatoire', 'warning'); return; }
   if(!email) { notify('L\'email est obligatoire', 'warning'); return; }
@@ -7039,12 +7125,14 @@ async function saveUserModal(userId) {
         u.name = name; u.email = email; u.role = role; u.permissions = permissions;
         u.matricule = matricule;
         if(photo) u.photo = photo;
-        if(sig) u.signature = sig;
+        u.signatureKey = finalSigKey || '';
+        // Phase 10: drop legacy base64 once we have a key (or were cleared)
+        if (u.signatureKey || sigCleared) delete u.signature;
         u._version = (u._version||1) + 1;
       }
-      // Update Firebase profile (including photo/signature)
+      // Update Firebase profile (mirrors photo + resolved sig dataUrl)
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
-        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, sig); } catch(e) { console.warn('[PSM] profile update:', e); }
+        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
     } else {
       // ── CREATE new user ──
@@ -7056,7 +7144,7 @@ async function saveUserModal(userId) {
       // 2. Create local entry
       var existing = APP.users.find(function(x) { return x.email === email; });
       if(!existing) {
-        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signature: sig||null, permissions: permissions, createdAt: Date.now(), _version: 1 });
+        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
       }
     }
 
@@ -8670,11 +8758,16 @@ function _snapshotValidator(bon) {
     if (u) {
       bon._validatedBy = u.email || u.id || '';
       bon._validatedByName = u.name || u.email || '';
-      bon._validatedBySignature = u.signature || '';
-      // Matricule lives in APP.users (not Firebase profile yet) -- look it up by email
+      // Phase 10: resolve sig -- prefer local user's signatureKey (RTDB), then profile base64, then legacy local base64
       var localUser = (APP.users || []).find(function(x) {
         return x.email && u.email && x.email.toLowerCase() === u.email.toLowerCase();
       });
+      var resolvedSig = '';
+      if (localUser && localUser.signatureKey && typeof _getSignature === 'function') {
+        resolvedSig = _getSignature(localUser.signatureKey) || '';
+      }
+      if (!resolvedSig) resolvedSig = u.signature || (localUser && localUser.signature) || '';
+      bon._validatedBySignature = resolvedSig;
       bon._validatedByMatricule = (localUser && localUser.matricule) || u.matricule || '';
     }
   } catch(e) {}
