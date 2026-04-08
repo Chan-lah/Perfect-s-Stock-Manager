@@ -355,7 +355,7 @@ let APP = {
   backups: [],
   // ── DISPATCH ─────────────────────────────────────────────────
   dispatch: { besoins:{}, entities:[], weights:{pdv:50,zone:20,history:30}, zonePriority:{}, rules:{respectMin:true,respectMax:true}, history:[] },
-  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 5, companyAddress: 'Zone Portuaire, Quai no. 1. Treichville', companyTel: '+225 27 21 75 11 00', companyFax: '', companyEmail: 'marketing@gma.ci', categories: [] }
+  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 180, companyAddress: 'Zone Portuaire, Quai no. 1. Treichville', companyTel: '+225 27 21 75 11 00', companyFax: '', companyEmail: 'marketing@gma.ci', categories: [] }
 };
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).substr(2,6); }
@@ -369,23 +369,57 @@ async function bonNumber() {
   var _yr = new Date().getFullYear();
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
     try {
-      var _res = await _firebaseDB.ref('counters/bons/' + _yr).transaction(function(n) { return (n || 0) + 1; });
+      // Seed cloud counter from local max to avoid collisions on first cloud sync
+      var _localMax = 0;
+      (APP.bons||[]).forEach(function(b){
+        if(b.numero && b.numero.indexOf('BS-' + _yr + '-') === 0) {
+          var n = parseInt(b.numero.split('-').pop()) || 0;
+          if (n > _localMax) _localMax = n;
+        }
+      });
+      var _res = await _firebaseDB.ref('counters/bons/' + _yr).transaction(function(n) {
+        var cur = n || 0;
+        return Math.max(cur, _localMax) + 1;
+      });
       return 'BS-' + _yr + '-' + String(_res.snapshot.val()).padStart(4, '0');
     } catch(e) { console.warn('[PSM] bonNumber tx:', e); }
   }
-  var _n = (APP.bons || []).filter(function(b){ return b.numero && b.numero.startsWith('BS-' + _yr + '-'); }).length;
-  return 'BS-' + _yr + '-' + String(_n + 1).padStart(4, '0');
+  // Local fallback: use max + 1 (not length + 1) to avoid duplicates after deletions
+  var _max = 0;
+  (APP.bons||[]).forEach(function(b){
+    if(b.numero && b.numero.indexOf('BS-' + _yr + '-') === 0) {
+      var n = parseInt(b.numero.split('-').pop()) || 0;
+      if (n > _max) _max = n;
+    }
+  });
+  return 'BS-' + _yr + '-' + String(_max + 1).padStart(4, '0');
 }
 async function cmdOrderNum() {
   var _yr = new Date().getFullYear();
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
     try {
-      var _res = await _firebaseDB.ref('counters/cmds/' + _yr).transaction(function(n) { return (n || 0) + 1; });
+      var _localMax = 0;
+      (APP.commandesFourn||[]).forEach(function(c){
+        if(c.numero && c.numero.indexOf('CF-' + _yr + '-') === 0) {
+          var n = parseInt(c.numero.split('-').pop()) || 0;
+          if (n > _localMax) _localMax = n;
+        }
+      });
+      var _res = await _firebaseDB.ref('counters/cmds/' + _yr).transaction(function(n) {
+        var cur = n || 0;
+        return Math.max(cur, _localMax) + 1;
+      });
       return 'CF-' + _yr + '-' + String(_res.snapshot.val()).padStart(3, '0');
     } catch(e) { console.warn('[PSM] cmdOrderNum tx:', e); }
   }
-  var _n = (APP.commandesFourn || []).filter(function(c){ return c.numero && c.numero.startsWith('CF-' + _yr + '-'); }).length;
-  return 'CF-' + _yr + '-' + String(_n + 1).padStart(3, '0');
+  var _max = 0;
+  (APP.commandesFourn||[]).forEach(function(c){
+    if(c.numero && c.numero.indexOf('CF-' + _yr + '-') === 0) {
+      var n = parseInt(c.numero.split('-').pop()) || 0;
+      if (n > _max) _max = n;
+    }
+  });
+  return 'CF-' + _yr + '-' + String(_max + 1).padStart(3, '0');
 }
 function downloadFile(content, filename, type) {
   const blob = new Blob([content], {type}); const a = document.createElement('a');
@@ -2165,7 +2199,7 @@ function attachArticleEditors(a) {
         const old={...a};
         if(f.key==='stock'||f.key==='stockMin'||f.key==='price') a[f.key]=parseFloat(newVal)||0;
         else a[f.key]=newVal;
-        auditLog('edit','article',a.id,{[f.key]:oldVal},{[f.key]:a[f.key]});
+        auditLog('EDIT','article',a.id,{[f.key]:oldVal},{[f.key]:a[f.key]});
         saveDB(); updateAlertBadge();
         // Re-render entire articles page to guarantee visual refresh
         if(currentPage==='articles') renderArticles();
@@ -2214,10 +2248,10 @@ function openArticleModal(id) {
     if(a){
       const old={...a};
       Object.assign(a,{name,code:document.getElementById('f-code').value,category:document.getElementById('f-cat').value,unit:document.getElementById('f-unit').value, fournisseurId:document.getElementById('f-fournisseur')?.value||null,stock:parseFloat(document.getElementById('f-stock').value)||0,stockMin:parseFloat(document.getElementById('f-min').value)||0,price:parseFloat(document.getElementById('f-price').value)||0,description:document.getElementById('f-desc').value,image:imgData||a.image||''});
-      auditLog('edit','article',a.id,old,a);
+      auditLog('EDIT','article',a.id,old,a);
     } else {
       const newA={id:generateId(),name,code:document.getElementById('f-code').value,category:document.getElementById('f-cat').value,unit:document.getElementById('f-unit').value,fournisseurId:document.getElementById('f-fournisseur')?.value||null,stock:parseFloat(document.getElementById('f-stock').value)||0,stockMin:parseFloat(document.getElementById('f-min').value)||0,price:parseFloat(document.getElementById('f-price').value)||0,description:document.getElementById('f-desc').value,image:imgData,createdAt:Date.now(),_version:1,_versions:[]};
-      APP.articles.push(newA); auditLog('create','article',newA.id,null,newA);
+      APP.articles.push(newA); auditLog('CREATE','article',newA.id,null,newA);
     }
     saveDB(); closeModal(); filterArticles(); updateAlertBadge();
     notify(id?'Gadget modifié ✓':'Gadget créé ✓','success');
@@ -2240,9 +2274,19 @@ function previewArticleImg(input) {
 }
 
 function deleteArticle(id) {
+  // Refuse deletion if article is referenced by any bon
+  var refBons = (APP.bons||[]).filter(function(b){
+    return (b.lignes||[]).some(function(l){ return l.articleId === id; });
+  });
+  if (refBons.length > 0) {
+    var nums = refBons.slice(0,5).map(function(b){ return b.numero || b.id; }).join(', ');
+    var more = refBons.length > 5 ? ' (+' + (refBons.length-5) + ')' : '';
+    notify('Impossible : ce gadget est référencé par ' + refBons.length + ' bon(s) : ' + nums + more, 'error');
+    return;
+  }
   if(!confirm('Supprimer ce gadget ?')) return;
   const idx=APP.articles.findIndex(a=>a.id===id); if(idx<0) return;
-  auditLog('delete','article',id,APP.articles[idx],null);
+  auditLog('DELETE','article',id,APP.articles[idx],null);
   APP.articles.splice(idx,1);
   saveDB(); filterArticles(); updateAlertBadge();
   notify('Gadget supprimé','success');
@@ -2486,7 +2530,6 @@ function renderBons() {
     <div class="flex-center gap-8">
       <button class="btn btn-secondary btn-sm" onclick="openVerifyCodeModal()">🔐 Vérifier</button>
       <button class="btn btn-secondary btn-sm" onclick="renderStockPredictions()">📊 Réappro</button>
-      <button class="btn btn-secondary btn-sm" onclick="openBulkBonModal()">📂 Import CSV</button>
       <button class="btn btn-secondary btn-sm" onclick="exportBonsJSON()">📥 Export</button>
       <button class="btn btn-primary" onclick="openBonModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouveau bon</button>
     </div>
@@ -2626,7 +2669,7 @@ function attachBonEditors(b) {
       b.status=v;
       _setBonStatusTimestamp(b, v);
       b._version=(b._version||1)+1;
-      auditLog('edit','bon',b.id,{status:old},{status:v}); saveDB(); updateAlertBadge();
+      auditLog('EDIT','bon',b.id,{status:old},{status:v}); saveDB(); updateAlertBadge();
       const row=document.getElementById('bon-row-'+b.id);
       if(row){row.outerHTML=renderBonRow(b);attachBonEditors(b);}
     });
@@ -3398,7 +3441,7 @@ function attachComEditors(c) {
     td.ondblclick=()=>{
       const old=c[f.key];
       makeEditable(td,c[f.key]||'','text',null,(v)=>{
-        c[f.key]=v; auditLog('edit','commercial',c.id,{[f.key]:old},{[f.key]:v}); saveDB();
+        c[f.key]=v; auditLog('EDIT','commercial',c.id,{[f.key]:old},{[f.key]:v}); saveDB();
         renderCommerciaux();
       });
     };
@@ -3545,12 +3588,12 @@ function saveCommercial(existingId) {
     const old = {...c};
     Object.assign(c, fields);
     if(photo) c.photo = photo;
-    auditLog('edit','commercial',c.id,old,c);
+    auditLog('EDIT','commercial',c.id,old,c);
     notify('Commercial mis à jour ✓','success');
   } else {
     const nc = {id:generateId(),...fields,dispatchCustomRate:null,dispatchRateLocked:false,photo:photo||'',createdAt:Date.now(),_version:1};
     APP.commerciaux.push(nc);
-    auditLog('create','commercial',nc.id,null,nc);
+    auditLog('CREATE','commercial',nc.id,null,nc);
     notify('Commercial ajouté ✓','success');
   }
   // Sync real PDV records with Boul/Dist values
@@ -3566,7 +3609,7 @@ function deleteCommercial(id) {
   if(!confirm('Supprimer ce commercial ? Les PDV associés seront désassignés.')) return;
   (APP.pdv||[]).forEach(p=>{ if(p.commercialId===id) p.commercialId=''; });
   const idx = APP.commerciaux.findIndex(c=>c.id===id); if(idx<0) return;
-  auditLog('delete','commercial',id,APP.commerciaux[idx],null);
+  auditLog('DELETE','commercial',id,APP.commerciaux[idx],null);
   APP.commerciaux.splice(idx,1); saveDB(); renderCommerciaux();
   notify('Commercial supprimé','warning');
 }
@@ -4064,7 +4107,7 @@ function attachFournEditors(f) {
     td.ondblclick=()=>{
       const old=f[fl.key];
       makeEditable(td,f[fl.key]||'','text',null,(v)=>{
-        f[fl.key]=v; auditLog('edit','fournisseur',f.id,{[fl.key]:old},{[fl.key]:v}); saveDB();
+        f[fl.key]=v; auditLog('EDIT','fournisseur',f.id,{[fl.key]:old},{[fl.key]:v}); saveDB();
         renderFournisseurs();
       });
     };
@@ -4090,10 +4133,10 @@ function openFournModal(id) {
     if(f){
       const old={...f};
       Object.assign(f,{nom,entreprise,contact:document.getElementById('fn-contact').value,tel:document.getElementById('fn-tel').value,adresse:document.getElementById('fn-adresse').value});
-      auditLog('edit','fournisseur',f.id,old,f); notify('Fournisseur mis à jour','success');
+      auditLog('EDIT','fournisseur',f.id,old,f); notify('Fournisseur mis à jour','success');
     } else {
       const nf={id:generateId(),nom,entreprise,contact:document.getElementById('fn-contact').value,tel:document.getElementById('fn-tel').value,adresse:document.getElementById('fn-adresse').value,createdAt:Date.now()};
-      APP.fournisseurs.push(nf); auditLog('create','fournisseur',nf.id,null,nf); notify('Fournisseur ajouté','success');
+      APP.fournisseurs.push(nf); auditLog('CREATE','fournisseur',nf.id,null,nf); notify('Fournisseur ajouté','success');
     }
     saveDB(); closeModal(); renderFournisseurs();
   });
@@ -4102,7 +4145,7 @@ function openFournModal(id) {
 function deleteFourn(id) {
   if(!confirm('Supprimer ce fournisseur ?')) return;
   const idx=APP.fournisseurs.findIndex(f=>f.id===id); if(idx<0) return;
-  auditLog('delete','fournisseur',id,APP.fournisseurs[idx],null);
+  auditLog('DELETE','fournisseur',id,APP.fournisseurs[idx],null);
   APP.fournisseurs.splice(idx,1); saveDB(); renderFournisseurs();
   notify('Fournisseur supprimé','success');
 }
@@ -4134,7 +4177,7 @@ function addFournArticle(fournId) {
   const artId = sel?.value; if(!artId) { notify('Sélectionnez un article','warning'); return; }
   const art = APP.articles.find(a=>a.id===artId); if(!art) return;
   art.fournisseurId = fournId;
-  auditLog('edit','article',art.id,{fournisseurId:null},{fournisseurId:fournId});
+  auditLog('EDIT','article',art.id,{fournisseurId:null},{fournisseurId:fournId});
   saveDB(); notify(art.name+' assigné ✓','success');
   openFournArticlesModal(fournId);
 }
@@ -4142,7 +4185,7 @@ function addFournArticle(fournId) {
 function removeFournArticle(fournId, artId) {
   const art = APP.articles.find(a=>a.id===artId); if(!art) return;
   art.fournisseurId = null;
-  auditLog('edit','article',art.id,{fournisseurId:fournId},{fournisseurId:null});
+  auditLog('EDIT','article',art.id,{fournisseurId:fournId},{fournisseurId:null});
   saveDB(); notify(art.name+' retiré','info');
   openFournArticlesModal(fournId);
 }
@@ -4794,7 +4837,7 @@ function openReceptionModal(cmdId) {
     });
 
     c.status = calcCmdStatus(c);
-    auditLog('edit', 'commandeFourn', c.id, null, { status: c.status });
+    auditLog('EDIT', 'commandeFourn', c.id, null, { status: c.status });
     saveDB(); closeModal();
     // Re-render full dashboard (including supplier gauge-circles)
     renderFournDashboard();
@@ -4887,7 +4930,7 @@ function openEditCmdModal(cmdId) {
     if (remaining.length > 0) c.lignes = remaining;
 
     c.status = calcCmdStatus(c);
-    auditLog('edit', 'commandeFourn', c.id, null, c);
+    auditLog('EDIT', 'commandeFourn', c.id, null, c);
     saveDB(); closeModal(); renderFournDashboard(); updateAlertBadge();
     notify('Commande modifi\u00e9e', 'success');
   }, 'modal-lg');
@@ -4924,7 +4967,7 @@ function deleteCmd(cmdId) {
   if (!confirm('Supprimer cette commande ?')) return;
   var idx = (APP.commandesFourn||[]).findIndex(function(c){ return c.id === cmdId; });
   if (idx < 0) return;
-  auditLog('delete', 'commandeFourn', cmdId, APP.commandesFourn[idx], null);
+  auditLog('DELETE', 'commandeFourn', cmdId, APP.commandesFourn[idx], null);
   APP.commandesFourn.splice(idx, 1);
   saveDB(); renderFournDashboard(); updateAlertBadge();
   notify('Commande supprim\u00e9e', 'success');
@@ -4946,7 +4989,7 @@ async function duplicateCmd(cmdId) {
   (dup.lignes||[]).forEach(function(l) { l.qteRecue = 0; l.receptions = []; });
   if (!APP.commandesFourn) APP.commandesFourn = [];
   APP.commandesFourn.push(dup);
-  auditLog('create', 'commandeFourn', dup.id, null, dup);
+  auditLog('CREATE', 'commandeFourn', dup.id, null, dup);
   saveDB(); renderFournDashboard(); updateAlertBadge();
   notify('Commande dupliqu\u00e9e: ' + dup.numero, 'success');
 }
@@ -4996,7 +5039,7 @@ function _confirmDuplicateCmd() {
   };
   if (!APP.commandesFourn) APP.commandesFourn = [];
   APP.commandesFourn.push(cmd);
-  auditLog('create', 'commandeFourn', cmd.id, null, cmd);
+  auditLog('CREATE', 'commandeFourn', cmd.id, null, cmd);
   saveDB(); renderFournDashboard(); updateAlertBadge();
   notify('Commande ' + cmd.numero + ' créée ✓', 'success');
   window._pendingCmdData = null;
@@ -5097,7 +5140,7 @@ async function openNewCmdModal(prefFournId, preselectedArts) {
     }
 
     APP.commandesFourn.push(cmd);
-    auditLog('create', 'commandeFourn', cmd.id, null, cmd);
+    auditLog('CREATE', 'commandeFourn', cmd.id, null, cmd);
     saveDB(); closeModal(); renderFournDashboard(); updateAlertBadge();
     notify('Commande ' + cmd.numero + ' cr\u00e9\u00e9e \u2713', 'success');
   }, 'modal-lg');
@@ -5949,7 +5992,7 @@ function renderSettings() {
       <div class="stat-row"><span class="stat-label">Commerciaux</span><span class="stat-val">${APP.commerciaux.length}</span></div>
       <div class="stat-row"><span class="stat-label">Fournisseurs</span><span class="stat-val">${APP.fournisseurs.length}</span></div>
       <div class="stat-row"><span class="stat-label">Entrées audit</span><span class="stat-val">${APP.audit.length}</span></div>
-      <div class="stat-row"><span class="stat-label">Backups auto</span><span class="stat-val">${APP.backups.length}/5</span></div>
+      <div class="stat-row"><span class="stat-label">Backups auto</span><span class="stat-val">${APP.backups.length}/3</span></div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
         <button class="btn btn-secondary" onclick="exportAllJSON()">⬇ Export global JSON</button>
         <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆ Import JSON</button>
@@ -5978,18 +6021,18 @@ function renderSettings() {
       <div class="form-group">
         <label>Fréquence</label>
         <select id="set-backup-interval" style="margin-bottom:8px">
-          <option value="0" ${(s.backupInterval||5)==0?'selected':''}>Désactivée</option>
-          <option value="1" ${(s.backupInterval||5)==1?'selected':''}>1 minute</option>
-          <option value="5" ${(s.backupInterval||5)==5?'selected':''}>5 minutes</option>
-          <option value="15" ${(s.backupInterval||5)==15?'selected':''}>15 minutes</option>
-          <option value="30" ${(s.backupInterval||5)==30?'selected':''}>30 minutes</option>
-          <option value="60" ${(s.backupInterval||5)==60?'selected':''}>1 heure</option>
+          <option value="0" ${(s.backupInterval||180)==0?'selected':''}>Désactivée</option>
+          <option value="60" ${(s.backupInterval||180)==60?'selected':''}>1 heure</option>
+          <option value="180" ${(s.backupInterval||180)==180?'selected':''}>3 heures</option>
+          <option value="360" ${(s.backupInterval||180)==360?'selected':''}>6 heures</option>
+          <option value="720" ${(s.backupInterval||180)==720?'selected':''}>12 heures</option>
+          <option value="1440" ${(s.backupInterval||180)==1440?'selected':''}>1 jour</option>
         </select>
       </div>
       <button class="btn btn-secondary btn-sm" onclick="manualBackup()">💾 Sauvegarder maintenant</button> <button class="btn btn-secondary btn-sm" onclick="validateData()">🔎 Vérifier les données</button>
     </div>
     <div class="card">
-      <div class="card-header"><span class="card-title">📦 Backups (${APP.backups.length}/10)</span></div>
+      <div class="card-header"><span class="card-title">📦 Backups (${APP.backups.length}/3)</span></div>
       ${APP.backups.length?APP.backups.slice().reverse().map(b=>`<div class="stat-row"><span class="stat-label">${fmtDateTime(b.ts)} · ${Math.round(b.size/1024)}KB</span><button class="btn btn-sm btn-secondary" onclick="restoreSpecificBackup('${b.id}')">Restaurer</button></div>`).join(''):'<div class="empty-state"><p>Aucun backup encore</p></div>'}
     </div>
   </div>

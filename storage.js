@@ -5,7 +5,6 @@
 // ============================================================
 
 // ── Online / Offline Mode ──────────────────────────────────
-let _onlineMode = false; // false = local, true = cloud (Firebase)
 let _isConnected = navigator.onLine;
 
 // Firebase Realtime DB converts arrays to objects {0:..., 1:..., 2:...}
@@ -42,7 +41,7 @@ function _onOnlineStatusChange() {
   }
   if (!_isConnected) {
     _updateSyncStatus('offline');
-    if (_onlineMode && typeof notify === 'function') notify('Connexion perdue \u2014 sauvegarde locale active', 'warning');
+    if (typeof notify === 'function') notify('Connexion perdue \u2014 sauvegarde locale active', 'warning');
   } else {
     _updateSyncStatus('synced');
   }
@@ -97,28 +96,8 @@ function _updateSyncStatus(state) {
   }
 }
 
-function setOnlineMode(enabled) {
-  _onlineMode = !!enabled;
-  if (typeof APP !== 'undefined' && APP.settings) {
-    APP.settings._onlineMode = _onlineMode;
-  }
-  if (_onlineMode && _isConnected) {
-    // Sync with Firebase
-    _saveToCloud();
-  }
-  if (typeof notify === 'function') {
-    notify(_onlineMode ? 'Mode en ligne activ\u00e9' : 'Mode hors ligne', 'info');
-  }
-}
-
 // ── Cloud sync (Firebase Realtime Database) ─────────────
-var _cloudSaveTimer = null;
-
-async function _saveToCloud() {
-  // Debounce cloud saves (5 seconds)
-  clearTimeout(_cloudSaveTimer);
-  _cloudSaveTimer = setTimeout(_doSaveToCloud, 5000);
-}
+// Note: cloud sync is now driven exclusively by saveDB() which debounces _doSaveToCloud directly.
 
 var _cloudSaving = false;
 var _cloudSaveQueue = null; // pending save promise
@@ -272,6 +251,8 @@ async function _loadFromCloud() {
     var cloudData = cloudEntry.data || null;
 
     if (cloudData) {
+      // Fix Firebase arrays-as-objects (symmetric with realtime sync)
+      if (typeof _fixFirebaseArrays === 'function') cloudData = _fixFirebaseArrays(cloudData);
       // Preserve current users before cloud overwrite (roles come from Firebase profiles)
       var _savedUsers = APP.users ? APP.users.slice() : [];
       // Cloud is authoritative for business data
@@ -350,12 +331,13 @@ function startRealtimeSync() {
           _restoreImages(APP, JSON.parse(cachedImgs));
         }
       } catch(e) {}
-      // Re-render current page
-      if (typeof showPage === 'function' && typeof currentPage !== 'undefined') {
+      // Re-render current page UNLESS user has a modal open (would lose form data)
+      var _modalOpen = !!document.getElementById('active-modal');
+      if (!_modalOpen && typeof showPage === 'function' && typeof currentPage !== 'undefined') {
         showPage(currentPage);
       }
       if (typeof updateUserBadge === 'function') updateUserBadge();
-      if (typeof notify === 'function') notify('\u2601 Donn\u00e9es mises \u00e0 jour', 'info');
+      if (typeof notify === 'function') notify(_modalOpen ? '\u2601 Donn\u00e9es mises \u00e0 jour (modal ouvert \u2014 fermez pour rafra\u00eechir)' : '\u2601 Donn\u00e9es mises \u00e0 jour', 'info');
     }
   });
 
@@ -501,7 +483,7 @@ let _backupTimer = null;
 let _savedDataLoaded = false; // true si des données ont été chargées depuis une sauvegarde
 function startBackupScheduler() {
   if(_backupTimer) clearInterval(_backupTimer);
-  const min = parseInt(APP.settings.backupInterval)||5;
+  const min = parseInt(APP.settings.backupInterval)||180;
   if(min > 0) _backupTimer = setInterval(() => autoBackup(true), min * 60000);
 }
 function autoBackup(silent) {
@@ -515,12 +497,12 @@ function autoBackup(silent) {
   } catch(e) { bkData = JSON.stringify({error:'backup too large'}); }
   var bk = { id:generateId(), ts:Date.now(), data:bkData, size:bkData.length };
   APP.backups.unshift(bk);
-  // Garder seulement les 5 dernières versions
-  if(APP.backups.length > 5) APP.backups = APP.backups.slice(0, 5);
+  // Garder seulement les 3 dernières versions
+  if(APP.backups.length > 3) APP.backups = APP.backups.slice(0, 3);
   saveDB();
   // Sauvegarder aussi en fichier si disponible
   if(_dirHandle) _saveBackupToFile(bk);
-  if(!silent) notify('Backup créé (' + APP.backups.length + '/5) ✓','success');
+  if(!silent) notify('Backup créé (' + APP.backups.length + '/3) ✓','success');
 }
 
 async function _saveBackupToFile(bk) {
@@ -539,7 +521,7 @@ async function _saveBackupToFile(bk) {
       if(entry.kind === 'file' && entry.name.startsWith('backup_')) files.push(entry.name);
     }
     files.sort();
-    while(files.length > 5) {
+    while(files.length > 3) {
       await bkFolder.removeEntry(files.shift());
     }
   } catch(e) { console.warn('[PSM] backup file:', e); }
@@ -963,18 +945,6 @@ window.addEventListener('beforeunload', function(e) {
     e.returnValue = "Aucun dossier de sauvegarde configur\u00e9. Vos modifications risquent d'etre perdues.";
   }
 });
-
-
-// ── Augmented saveDB: route to cloud when online mode ───
-(function() {
-  var _origSaveDB = saveDB;
-  saveDB = function() {
-    _origSaveDB();
-    if (_onlineMode && _isConnected) {
-      _saveToCloud();
-    }
-  };
-})();
 
 
 // ── Ctrl+S: Save to Firebase cloud ──────────────────────
