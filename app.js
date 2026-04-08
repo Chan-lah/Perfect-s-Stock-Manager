@@ -515,6 +515,7 @@ const ICONS = {
 
 let currentPage = null;
 let _bonStatusFilter = null;
+let _bonShowAll = false;
 
 const BON_STATUSES = [
   { key: 'brouillon', label: 'Brouillon', color: 'badge-yellow', icon: '📝' },
@@ -793,10 +794,6 @@ function renderSidebar() {
     if(p.id === 'fourn-dashboard') {
       const pending = (APP.commandesFourn||[]).filter(c=>c.status==='pending'||c.status==='partial').length;
       if(pending > 0) item.innerHTML += `<span class="sb-badge" id="badge-commandes" style="background:var(--warning)">${pending}</span>`;
-    }
-    if(p.id === 'analytics') {
-      const frauds = detectFraud();
-      if(frauds.length > 0) item.innerHTML += `<span class="sb-badge" id="badge-fraud" style="background:var(--warning)">!</span>`;
     }
     item.onclick = function(){ showPage(p.id); };
     item.oncontextmenu = function(ev) {
@@ -1102,9 +1099,6 @@ function updateAlertBadge() {
       _notifSentAlerts.add(_nkey);
     }
   });
-  const frauds = detectFraud();
-  const fb = document.getElementById('badge-fraud');
-  if(fb) { fb.style.display = frauds.length ? '' : 'none'; }
   const pendingCmds = (APP.commandesFourn||[]).filter(c=>c.status==='pending'||c.status==='partial').length;
   const cb = document.getElementById('badge-commandes');
   if(cb) { cb.textContent = pendingCmds; cb.style.display = pendingCmds ? '' : 'none'; }
@@ -2500,7 +2494,8 @@ function _buildBonsHistoryRows(list) {
       + '<div><strong>Date bon:</strong> ' + (b.date || fmtDate(b.createdAt)) + '</div>'
       + '</div>'
       + '<div style="margin-top:6px;font-size:0.8rem;color:var(--text-1)"><strong>Gadgets:</strong> ' + (gadgets || 'Aucun') + '</div>'
-      + (actionDate ? '<div style="margin-top:4px;font-size:0.72rem;color:var(--text-2)">' + (isValid ? 'Valid\u00e9' : 'Annul\u00e9') + ' le ' + new Date(actionDate).toLocaleString('fr-FR') + '</div>' : '')
+      + (actionDate ? '<div style="margin-top:4px;font-size:0.72rem;color:var(--text-2)">' + (isValid ? 'Valid\u00e9' : 'Annul\u00e9') + ' le ' + new Date(actionDate).toLocaleString('fr-FR') + (isValid && b._validatedByName ? ' par <strong>' + b._validatedByName + '</strong>' : (!isValid && b._cancelledByName ? ' par <strong>' + b._cancelledByName + '</strong>' : '')) + '</div>' : '')
+      + ((b._printHistory && b._printHistory.length) ? '<div style="margin-top:2px;font-size:0.72rem;color:var(--text-2)">\ud83d\udda8 Imprim\u00e9 ' + b._printHistory.length + '\u00d7 \u2014 derni\u00e8re le ' + new Date(b._printHistory[b._printHistory.length-1].ts).toLocaleString('fr-FR') + ' par ' + (b._printHistory[b._printHistory.length-1].byName || '?') + '</div>' : '')
       + '</div>';
   });
   return html;
@@ -2521,13 +2516,27 @@ function _filterBonsHistory() {
 }
 
 function renderBons() {
-  const filtered = _bonStatusFilter
-    ? APP.bons.filter(b => (b.status||'brouillon') === _bonStatusFilter)
-    : APP.bons;
+  const _bStartOfDay = new Date(); _bStartOfDay.setHours(0,0,0,0);
+  const _bDayMs = _bStartOfDay.getTime();
+  let filtered;
+  if(_bonStatusFilter) {
+    filtered = APP.bons.filter(b => (b.status||'brouillon') === _bonStatusFilter);
+  } else if(_bonShowAll) {
+    filtered = APP.bons;
+  } else {
+    filtered = APP.bons.filter(b => {
+      var s = b.status || 'brouillon';
+      if(s === 'brouillon') return true;
+      var ts = b._validatedAt || b._cancelledAt || b.createdAt || 0;
+      return ts >= _bDayMs;
+    });
+  }
+  const _hiddenCount = APP.bons.length - filtered.length;
   document.getElementById('content').innerHTML = `
   <div class="flex-between mb-16">
     <div class="page-title">${t('bons')}</div>
     <div class="flex-center gap-8">
+      <button class="btn btn-secondary btn-sm" onclick="renderBonsHistory()">📚 Historique</button>
       <button class="btn btn-secondary btn-sm" onclick="openVerifyCodeModal()">🔐 Vérifier</button>
       <button class="btn btn-secondary btn-sm" onclick="renderStockPredictions()">📊 Réappro</button>
       <button class="btn btn-secondary btn-sm" onclick="exportBonsJSON()">📥 Export</button>
@@ -2535,7 +2544,11 @@ function renderBons() {
     </div>
   </div>
   ${renderBonPipeline()}
-  <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">💡 <strong>Double-cliquez</strong> sur Statut pour modifier</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--text-2);margin-bottom:12px;flex-wrap:wrap">
+    <div>💡 <strong>Double-cliquez</strong> sur Statut pour modifier</div>
+    ${(!_bonStatusFilter && !_bonShowAll && _hiddenCount > 0) ? `<div style="display:flex;align-items:center;gap:8px"><span style="font-style:italic">${_hiddenCount} bon(s) plus ancien(s) masqué(s)</span><button class="btn btn-sm btn-secondary" onclick="_bonShowAll=true;renderBons()">👁 Tout afficher</button></div>` : ''}
+    ${(_bonShowAll && !_bonStatusFilter) ? `<button class="btn btn-sm btn-secondary" onclick="_bonShowAll=false;renderBons()">🎯 Vue active uniquement</button>` : ''}
+  </div>
   <div class="table-wrap"><table>
     <thead><tr><th>${t('bon_number')}</th><th>${t('recipient')}</th><th>${t('gadgets')}</th><th>${t('date')}</th><th>${t('status')}</th><th>${t('actions')}</th></tr></thead>
     <tbody>${filtered.length===0?`<tr><td colspan="6"><div class="empty-state"><p>Aucun bon de sortie</p></div></td></tr>`:filtered.slice().sort((a,b)=>b.createdAt-a.createdAt).map(b=>renderBonRow(b)).join('')}</tbody>
@@ -2563,8 +2576,8 @@ function renderBonRow(b) {
 }
 
 function _setBonStatusTimestamp(b, newStatus) {
-  if (newStatus === 'validé') b._validatedAt = Date.now();
-  if (newStatus === 'annulé') b._cancelledAt = Date.now();
+  if (newStatus === 'validé') { b._validatedAt = Date.now(); _snapshotValidator(b); }
+  if (newStatus === 'annulé') { b._cancelledAt = Date.now(); _snapshotCanceller(b); }
 }
 
 function _computeAvailableForBon(articleId, excludeBonId) {
@@ -2918,42 +2931,65 @@ function generateConfirmCode(bon) {
 
 function openVerifyCodeModal() { verifyBonCode(); }
 function verifyBonCode() {
-  openModal('verify-code', 'Vérifier un code de bon', `
-    <div class="form-group">
-      <label>Numéro du bon</label>
-      <select id="vc-bon" onchange="vcAutoCode()">
-        <option value="">— Sélectionner un bon —</option>
-        ${APP.bons.map(b=>'<option value="'+b.id+'">'+b.numero+' — '+(b.recipiendaire||'')+'</option>').join('')}
-      </select>
+  openModal('verify-code', '🔐 Vérifier un code de bon', `
+    <div style="text-align:center;margin-bottom:14px;font-size:13px;color:var(--text-2)">
+      Saisissez le code de vérification à 6 caractères imprimé sur le bon. Le système retrouvera automatiquement le bon associé.
     </div>
     <div class="form-group">
-      <label>Code de vérification saisi</label>
-      <input id="vc-input" maxlength="6" placeholder="Ex: A1B2C3" style="text-transform:uppercase;font-size:18px;letter-spacing:4px;font-weight:700;text-align:center">
+      <label>Code de vérification</label>
+      <input id="vc-input" maxlength="6" placeholder="A1B2C3" style="text-transform:uppercase;font-size:24px;letter-spacing:8px;font-weight:700;text-align:center;font-family:monospace">
     </div>
-    <div id="vc-result" style="padding:12px;text-align:center;font-size:14px"></div>
-  `);
+    <div id="vc-result" style="margin-top:12px"></div>
+  `, null, 'modal-md');
   const inp = document.getElementById('vc-input');
-  if(inp) inp.addEventListener('input', function(){ this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,''); vcCheck(); });
-}
-function vcAutoCode() {
-  const bonId = document.getElementById('vc-bon')?.value;
-  document.getElementById('vc-input').value = '';
-  document.getElementById('vc-result').innerHTML = '';
-  if(bonId) document.getElementById('vc-input').focus();
-}
-function vcCheck() {
-  const bonId = document.getElementById('vc-bon')?.value;
-  const input = document.getElementById('vc-input')?.value?.trim().toUpperCase();
-  const resEl = document.getElementById('vc-result');
-  if(!bonId || !input || input.length < 6) { resEl.innerHTML = ''; return; }
-  const bon = APP.bons.find(b=>b.id===bonId);
-  if(!bon) { resEl.innerHTML = '<span style="color:var(--danger)">Bon introuvable</span>'; return; }
-  const expected = generateConfirmCode(bon);
-  if(input === expected) {
-    resEl.innerHTML = '<div style="color:var(--success);font-weight:700;font-size:16px">\u2705 CODE VALIDE</div><div style="font-size:12px;color:var(--text-2);margin-top:4px">Bon ' + bon.numero + ' authentifi\u00e9 — ' + (bon.recipiendaire||'') + '</div>';
-  } else {
-    resEl.innerHTML = '<div style="color:var(--danger);font-weight:700;font-size:16px">\u274c CODE INVALIDE</div><div style="font-size:12px;color:var(--text-2);margin-top:4px">Le code ne correspond pas au bon s\u00e9lectionn\u00e9</div>';
+  if(inp) {
+    inp.addEventListener('input', function(){
+      this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      vcCheck();
+    });
+    setTimeout(function(){ inp.focus(); }, 100);
   }
+}
+function vcAutoCode() {} // legacy stub -- kept for backward compat
+function vcCheck() {
+  const input = (document.getElementById('vc-input')?.value || '').trim().toUpperCase();
+  const resEl = document.getElementById('vc-result');
+  if(!resEl) return;
+  if(input.length < 6) { resEl.innerHTML = ''; return; }
+  var match = null;
+  for(var i=0; i<(APP.bons||[]).length; i++) {
+    if(generateConfirmCode(APP.bons[i]) === input) { match = APP.bons[i]; break; }
+  }
+  if(!match) {
+    resEl.innerHTML = '<div style="padding:14px;background:rgba(220,53,69,0.1);border:1px solid var(--danger);border-radius:6px;color:var(--danger);text-align:center;font-weight:600">❌ CODE INVALIDE — aucun bon ne correspond à ce code</div>';
+    return;
+  }
+  var validatedAt = match._validatedAt ? new Date(match._validatedAt).toLocaleString('fr-FR') : '—';
+  var validatorName = match._validatedByName || '<em style="color:var(--text-2)">Non renseigné</em>';
+  var prints = (match._printHistory || []).length;
+  var lastPrintInfo = '—';
+  if(prints) {
+    var lp = match._printHistory[prints-1];
+    lastPrintInfo = new Date(lp.ts).toLocaleString('fr-FR') + ' par ' + (lp.byName || '?');
+  }
+  var stColor = match.status === 'validé' ? 'var(--success)' : (match.status === 'annulé' ? 'var(--danger)' : 'var(--warning)');
+  resEl.innerHTML = '<div style="padding:14px;background:rgba(40,167,69,0.08);border:1px solid var(--success);border-radius:6px">'
+    + '<div style="text-align:center;font-size:18px;font-weight:700;color:var(--success);margin-bottom:12px">✅ CODE VALIDE</div>'
+    + '<div style="display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">'
+    + '<strong>Bon :</strong><span style="font-family:monospace;color:var(--accent);font-weight:700">' + match.numero + '</span>'
+    + '<strong>Statut :</strong><span style="color:' + stColor + ';font-weight:700">' + (match.status||'brouillon') + '</span>'
+    + '<strong>Destinataire :</strong><span>' + (match.recipiendaire || '—') + '</span>'
+    + '<strong>Demandeur :</strong><span>' + (match.demandeur || '—') + '</span>'
+    + '<strong>Objet :</strong><span>' + (match.objet || '—') + '</span>'
+    + '<strong>Validé le :</strong><span>' + validatedAt + '</span>'
+    + '<strong>Validé par :</strong><span style="font-weight:600">' + validatorName + '</span>'
+    + '<strong>Impressions :</strong><span>' + prints + (prints ? ' fois — dernière : ' + lastPrintInfo : ' (jamais imprimé)') + '</span>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;justify-content:center">'
+    + '<button class="btn btn-sm btn-primary" onclick="closeModal();previewBon(\''+match.id+'\')">👁 Voir le bon</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="printBon(\''+match.id+'\')">🖨 Réimprimer</button>'
+    + '</div>'
+    + '</div>';
 }
 
 function generateBonHTML(bon, overrides) {
@@ -3037,7 +3073,15 @@ function generateBonHTML(bon, overrides) {
         <td style="width:34%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Gestionnaire</div>
-          ${(()=>{ const u=_currentUser(); return u&&u.signature?`<img src="${u.signature}" style="max-height:45px;display:block;margin:0 auto">`:''; })()}
+          ${(()=>{
+            var sig = bon._validatedBySignature || '';
+            var name = bon._validatedByName || '';
+            if(!sig){ var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
+            var out = '';
+            if(sig) out += `<img src="${sig}" style="max-height:45px;display:block;margin:0 auto">`;
+            if(name) out += `<div style="font-size:10px;color:#222;text-align:center;margin-top:2px;font-style:italic">${name}</div>`;
+            return out;
+          })()}
         </td>
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
@@ -3072,7 +3116,9 @@ function printBon(id) {
   const win=window.open('','_blank','width=900,height=750');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm}}</style></head><body>${generateBonHTML(bon)}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
   win.document.close();
+  _recordBonPrint(bon);
   auditLog('PRINT','bon',bon.id,null,{numero:bon.numero});
+  saveDB();
 }
 function exportBonsJSON() {
   downloadFile(JSON.stringify({bons:APP.bons,exportedAt:Date.now()},null,2),'bons-export-'+Date.now()+'.json','application/json');
@@ -5200,31 +5246,6 @@ function addFragRow() {}
 // ============================================================
 // ANALYTICS IA
 // ============================================================
-function detectFraud() {
-  const frauds=[];
-  const window30d=Date.now()-30*86400000;
-  APP.commerciaux.forEach(com=>{
-    const sorties=APP.mouvements.filter(m=>m.type==='sortie'&&m.commercialId===com.id&&m.ts>window30d);
-    if(sorties.length<3) return;
-    const artCount={};
-    sorties.forEach(s=>{artCount[s.articleId]=(artCount[s.articleId]||[]).concat(s);});
-    Object.entries(artCount).forEach(([artId,mvts])=>{
-      if(mvts.length>=3){
-        const totalQty=mvts.reduce((s,m)=>s+m.qty,0);
-        const artName=mvts[0].articleName;
-        const days=new Set(mvts.map(m=>new Date(m.ts).toDateString())).size;
-        frauds.push({comId:com.id,comName:com.prenom+' '+com.nom,artId,artName,count:mvts.length,totalQty,days,level:mvts.length>=5?'high':'medium'});
-      }
-    });
-    const last7d=sorties.filter(s=>s.ts>Date.now()-7*86400000);
-    if(last7d.length>=5){
-      if(!frauds.find(f=>f.comId===com.id&&f.type==='frequency'))
-        frauds.push({comId:com.id,comName:com.prenom+' '+com.nom,type:'frequency',count:last7d.length,totalQty:last7d.reduce((s,m)=>s+m.qty,0),level:'high',note:'Fréquence élevée sur 7 jours'});
-    }
-  });
-  return frauds;
-}
-
 function getTopArticles(limit=5) {
   const w30=Date.now()-30*86400000, artQty={};
   APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>w30).forEach(m=>{
@@ -5274,7 +5295,7 @@ function getSuggestions() {
 }
 
 function renderAnalytics() {
-  const frauds=detectFraud(), topArts=getTopArticles(), agents=getActiveAgents();
+  const topArts=getTopArticles(), agents=getActiveAgents();
   const ratio=getEntryExitRatio(), predictions=predictShortages(), suggestions=getSuggestions();
   document.getElementById('content').innerHTML=`
   <div class="page-header">
@@ -5286,15 +5307,9 @@ function renderAnalytics() {
     <div class="card"><div class="card-header"><span class="card-title">Ratio E/S</span></div><div class="kpi-value" style="color:${parseFloat(ratio.ratio)<1?'var(--danger)':parseFloat(ratio.ratio)>1.5?'var(--success)':'var(--warning)'}">${ratio.ratio}</div><div class="kpi-change">entrées par sortie</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Balance</span></div><div class="kpi-value" style="color:${ratio.balance>=0?'var(--success)':'var(--danger)'}">${ratio.balance>=0?'+':''}${ratio.balance}</div><div class="kpi-change">unités net</div></div>
   </div>
-  <div class="grid-2 mb-16">
-    <div class="card">
-      <div class="card-header"><span class="card-title">🚨 Détection de fraude</span>${frauds.length?`<span class="badge badge-red">${frauds.length} alerte${frauds.length>1?'s':''}</span>`:`<span class="badge badge-green">Aucune alerte</span>`}</div>
-      ${frauds.length===0?'<div class="empty-state"><p>✅ Aucun comportement suspect détecté</p></div>':frauds.map(f=>`<div class="fraud-alert"><div class="fraud-alert-title">${f.level==='high'?'🔴':'🟡'} ${f.comName}</div><div class="fraud-alert-detail">${f.note||`<strong>${f.count} sorties</strong> de "${f.artName}" — total: ${f.totalQty} unités sur ${f.days||1} jour${(f.days||1)>1?'s':''}`}</div><div style="font-size:11px;color:var(--text-2);margin-top:4px">Risque: <strong style="color:${f.level==='high'?'var(--danger)':'var(--warning)'}">${f.level==='high'?'ÉLEVÉ':'MOYEN'}</strong></div></div>`).join('')}
-    </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">👑 Agents les plus actifs</span><span style="font-size:11px;color:var(--text-2)">30 jours</span></div>
-      ${agents.length===0?'<div class="empty-state"><p>Aucune activité</p></div>':agents.map((a,i)=>{const max=agents[0].qty||1;return`<div class="rank-item"><div class="rank-num ${i===0?'top':''}">${i+1}</div><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${a.name}</div><div class="progress-bar"><div class="progress-fill" style="width:${a.qty/max*100}%;background:${i===0?'var(--warning)':'var(--accent)'}"></div></div></div><div class="text-right" style="margin-left:12px"><div style="font-weight:700;font-size:13px">${a.qty}</div><div style="font-size:11px;color:var(--text-2)">${a.bons} bons</div></div></div>`;}).join('')}
-    </div>
+  <div class="card mb-16">
+    <div class="card-header"><span class="card-title">👑 Agents les plus actifs</span><span style="font-size:11px;color:var(--text-2)">30 jours</span></div>
+    ${agents.length===0?'<div class="empty-state"><p>Aucune activité</p></div>':agents.map((a,i)=>{const max=agents[0].qty||1;return`<div class="rank-item"><div class="rank-num ${i===0?'top':''}">${i+1}</div><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${a.name}</div><div class="progress-bar"><div class="progress-fill" style="width:${a.qty/max*100}%;background:${i===0?'var(--warning)':'var(--accent)'}"></div></div></div><div class="text-right" style="margin-left:12px"><div style="font-weight:700;font-size:13px">${a.qty}</div><div style="font-size:11px;color:var(--text-2)">${a.bons} bons</div></div></div>`;}).join('')}
   </div>
   <div class="grid-2 mb-16">
     <div class="card">
@@ -6593,7 +6608,7 @@ function runSmartSearch(q) {
       results.push({type:'mouvement',icon:m.type==='entree'?'📥':'📤',color:m.type==='entree'?'#2ed573':'#ff4757',title:(m.type==='entree'?'Entr\u00e9e':'Sortie')+' \u2014 '+(m.articleName||''),sub:'Qty: '+m.qty+' \u00b7 '+fmtDate(m.ts)+(m.note?' \u00b7 '+m.note:''),action:function(){closeSmartSearch();showPage('mouvements');}});
     }
   });
-  if(fuzzyMatch('fraude',q)||fuzzyMatch('analytique',q)||fuzzyMatch('analyse',q)) results.push({type:'page',icon:'🧠',color:'#9b59b6',title:'Analytique',sub:'Fraude, prédictions, top gadgets',action:()=>{closeSmartSearch();showPage('analytics');}});
+  if(fuzzyMatch('analytique',q)||fuzzyMatch('analyse',q)) results.push({type:'page',icon:'🧠',color:'#9b59b6',title:'Analytique',sub:'Prédictions, top gadgets, agents actifs',action:()=>{closeSmartSearch();showPage('analytics');}});
   if(!results.length){container.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px">Aucun résultat pour "<strong>${q}</strong>"</div>`;return;}
   container.innerHTML=results.slice(0,8).map((r,i)=>`
     <div class="search-result-item" id="sr-${i}" onclick="r${i}()" data-idx="${i}">
@@ -8161,6 +8176,42 @@ function dInitCommercialDispatchFields(c) {
 
 
 // ============================================================
+// -- Validator/canceller snapshot + print history helpers --
+function _snapshotValidator(bon) {
+  try {
+    var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+    if (u) {
+      bon._validatedBy = u.email || u.id || '';
+      bon._validatedByName = u.name || u.email || '';
+      bon._validatedBySignature = u.signature || '';
+    }
+  } catch(e) {}
+}
+function _snapshotCanceller(bon) {
+  try {
+    var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+    if (u) {
+      bon._cancelledBy = u.email || u.id || '';
+      bon._cancelledByName = u.name || u.email || '';
+    }
+  } catch(e) {}
+}
+function _recordBonPrint(bon) {
+  try {
+    var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+    var entry = {
+      ts: Date.now(),
+      by: u ? (u.email || u.id || '') : '',
+      byName: u ? (u.name || u.email || '') : ''
+    };
+    if (!Array.isArray(bon._printHistory)) bon._printHistory = [];
+    bon._printHistory.push(entry);
+    bon._printedAt = entry.ts;
+    bon._printCount = (bon._printCount || 0) + 1;
+  } catch(e) {}
+}
+
+// ============================================================
 // ── Bon validation: deduct stock when brouillon -> valid\u00e9 ──
 function validateBon(bonId) {
   var bon = (APP.bons||[]).find(function(b){ return b.id === bonId; });
@@ -8171,6 +8222,7 @@ function validateBon(bonId) {
   if (!_handleBonStatusStockChange(bon, old, 'valid\u00e9')) return;
   bon.status = 'valid\u00e9';
   bon._validatedAt = Date.now();
+  _snapshotValidator(bon);
   bon._version = (bon._version||1) + 1;
   saveDB();
   auditLog('VALIDATE', 'bon', bon.id, {status: old}, {status: bon.status});
@@ -8188,6 +8240,7 @@ function cancelBon(bonId) {
   if (!_handleBonStatusStockChange(bon, old, 'annul\u00e9')) return;
   bon.status = 'annul\u00e9';
   bon._cancelledAt = Date.now();
+  _snapshotCanceller(bon);
   bon._version = (bon._version||1) + 1;
   saveDB();
   auditLog('CANCEL', 'bon', bon.id, {status: old}, {status: bon.status});
@@ -8204,6 +8257,7 @@ function reactivateBon(bonId) {
   if (!_handleBonStatusStockChange(bon, old, 'validé')) return;
   bon.status = 'validé';
   bon._validatedAt = Date.now();
+  _snapshotValidator(bon);
   bon._version = (bon._version||1) + 1;
   saveDB();
   auditLog('REACTIVATE', 'bon', bon.id, {status: old}, {status: bon.status});
