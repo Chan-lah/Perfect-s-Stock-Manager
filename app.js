@@ -1224,6 +1224,8 @@ function openModal(id, title, body, onConfirm, sizeClass='') {
 function closeModal() {
   const m = document.getElementById('active-modal');
   if(m) { m.classList.remove('show'); setTimeout(() => m.remove(), 200); }
+  // Run optional cleanup hook (used by activity log to detach Firebase listeners)
+  try { if (typeof window._modalCloseCleanup === 'function') { window._modalCloseCleanup(); window._modalCloseCleanup = null; } } catch(e) {}
 }
 function openGenericModal(title, bodyHtml) {
   openModal('generic-modal', title, bodyHtml, null, 'modal-xl');
@@ -3154,8 +3156,19 @@ function generateBonHTML(bon, overrides) {
             var matricule = bon._validatedByMatricule || '';
             var name = bon._validatedByName || '';
             var validatedAt = bon._validatedAt || 0;
-            // Live fallback only for non-validated bons (preview before validation)
-            if(!sig && bon.status !== 'validé'){ var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
+            // Live fallback (works for old validated bons whose snapshot was empty):
+            // 1) Look up validator by stored email in APP.users -> resolve signatureKey via RTDB
+            if (!sig && bon._validatedBy) {
+              var lu = (APP.users || []).find(function(x) { return x.email && x.email.toLowerCase() === String(bon._validatedBy).toLowerCase(); });
+              if (lu) {
+                if (lu.signatureKey && typeof _getSignature === 'function') sig = _getSignature(lu.signatureKey) || '';
+                if (!sig && lu.signature) sig = lu.signature;
+                if (!matricule && lu.matricule) matricule = lu.matricule;
+                if (!name) name = lu.name || '';
+              }
+            }
+            // 2) Last resort: current user (for non-validated preview)
+            if (!sig && bon.status !== 'validé') { var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
             var out = '';
             if(sig) out += `<img src="${sig}" style="max-height:45px;display:block;margin:0 auto">`;
             if(bon.status === 'validé') {
@@ -7413,19 +7426,32 @@ function _findUserIdByEmail(email) {
 
 function _watchPresence() {
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
-  _firebaseDB.ref('profiles').on('value', function(snap) {
+  // Detach any prior listener attached on previous render
+  try { _firebaseDB.ref('profiles').off('value', _watchPresence._cb); } catch(e) {}
+  _watchPresence._cb = function(snap) {
     if (!snap || !snap.exists()) return;
-    snap.forEach(function(child) {
-      var _data = child.val() || {};
-      var _isOnline = _data.online === true;
-      var _lastSeen = _data.lastSeen;
-      var _dot = document.getElementById('presence-dot-' + child.key);
-      if (_dot) {
-        _dot.style.background = _isOnline ? '#22c55e' : '#6b7280';
-        _dot.title = _isOnline ? 'En ligne' : (_lastSeen ? ('Vu le ' + (typeof fmtDateTime === 'function' ? fmtDateTime(_lastSeen) : new Date(_lastSeen).toLocaleString())) : 'Hors ligne');
-      }
+    var data = snap.val() || {};
+    // Build email -> {online, lastSeen} map
+    var byEmail = {};
+    Object.keys(data).forEach(function(uid) {
+      var p = data[uid] || {};
+      if (p.email) byEmail[String(p.email).toLowerCase()] = { online: p.online === true, lastSeen: p.lastSeen };
     });
-  });
+    // Update each local user's dot
+    (APP.users || []).forEach(function(uu) {
+      var info = uu.email ? byEmail[String(uu.email).toLowerCase()] : null;
+      var dot = document.getElementById('presence-dot-' + uu.id);
+      if (!dot) return;
+      var isOnline = info && info.online;
+      dot.style.background = isOnline ? '#22c55e' : '#6b7280';
+      dot.title = isOnline
+        ? 'En ligne'
+        : (info && info.lastSeen
+            ? ('Vu le ' + (typeof fmtDateTime === 'function' ? fmtDateTime(info.lastSeen) : new Date(info.lastSeen).toLocaleString()))
+            : 'Hors ligne');
+    });
+  };
+  _firebaseDB.ref('profiles').on('value', _watchPresence._cb);
 }
 
 function renderAdminPage() {
@@ -7713,53 +7739,90 @@ function _showActivityLog() {
     { label: 'Fermer', cls: 'btn-secondary', onclick: 'closeModal()' }
   ]);
 
-  // Load presence from Firebase
+  // ── Real-time presence + activity_log subscription (Firebase) ──
+  var _alPresenceCb = null;
+  var _alActivityCb = null;
+  var _alSeenKeys = {}; // dedupe activity_log keys
+
+  function _alUpdatePresence(data) {
+    var byEmail = {};
+    Object.keys(data || {}).forEach(function(uid) {
+      var p = (data || {})[uid] || {};
+      if (p.email) byEmail[String(p.email).toLowerCase()] = { online: p.online === true, lastSeen: p.lastSeen };
+    });
+    (APP.users || []).forEach(function(uu) {
+      var info = uu.email ? byEmail[String(uu.email).toLowerCase()] : null;
+      var dot = document.getElementById('al-dot-' + uu.id);
+      var stat = document.getElementById('al-status-' + uu.id);
+      if (!dot || !stat) return;
+      var isOnline = info && info.online;
+      dot.style.background = isOnline ? '#22c55e' : '#6b7280';
+      stat.textContent = isOnline
+        ? 'En ligne'
+        : (info && info.lastSeen ? ('Vu ' + fmtDateTime(info.lastSeen)) : 'Hors ligne');
+      stat.style.color = isOnline ? '#22c55e' : 'var(--text-2)';
+    });
+  }
+
+  function _alAppendActivityRow(l) {
+    // l: { user_email, action, details, created_at }
+    var ts = l.created_at ? new Date(l.created_at).getTime() : Date.now();
+    var isLogin = l.action === 'login' || l.action === 'logout';
+    // Pick the right table: connections or autres activites
+    var tables = document.querySelectorAll('#active-modal table');
+    if (!tables.length) return;
+    var targetTbody = null;
+    if (isLogin && tables[0]) targetTbody = tables[0].querySelector('tbody');
+    else if (!isLogin && tables[1]) targetTbody = tables[1].querySelector('tbody');
+    else if (tables[0]) targetTbody = tables[0].querySelector('tbody');
+    if (!targetTbody) return;
+    var row = document.createElement('tr');
+    row.style.borderTop = '1px solid var(--border)';
+    row.style.background = 'rgba(34,197,94,.07)';
+    if (isLogin) {
+      var loginBadge = '<span class="badge" style="background:' + (l.action==='login'?'rgba(34,197,94,.2);color:#22c55e':'rgba(239,68,68,.2);color:#ef4444') + '">' + (l.action==='login'?'\u25b2 Connexion':'\u25bc D\u00e9connexion') + '</span>';
+      row.innerHTML = '<td style="padding:6px;white-space:nowrap;font-family:monospace;font-size:11px">' + fmtDateTime(ts) + '</td>'
+        + '<td style="padding:6px;font-weight:600">' + (l.user_email || '\u2014') + '</td>'
+        + '<td style="padding:6px">' + loginBadge + '</td>'
+        + '<td style="padding:6px;color:var(--text-2);font-size:11px">' + (l.details || '') + '</td>';
+    } else {
+      row.innerHTML = '<td style="padding:6px;white-space:nowrap;font-family:monospace;font-size:11px">' + fmtDateTime(ts) + '</td>'
+        + '<td style="padding:6px">' + (l.user_email || '\u2014') + '</td>'
+        + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
+        + '<td style="padding:6px;color:var(--text-2);font-size:11px">' + (l.details || '') + '</td>';
+    }
+    targetTbody.insertBefore(row, targetTbody.firstChild);
+    // Fade highlight back to normal
+    setTimeout(function() { row.style.transition = 'background 1.2s'; row.style.background = 'transparent'; }, 80);
+  }
+
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-    _firebaseDB.ref('profiles').once('value').then(function(snap) {
-      var data = snap.val() || {};
-      users.forEach(function(uu) {
-        // Find profile by email match
-        for (var uid in data) {
-          var p = data[uid];
-          if (p.email === uu.email) {
-            var dot = document.getElementById('al-dot-' + uu.id);
-            var stat = document.getElementById('al-status-' + uu.id);
-            if (dot && stat) {
-              if (p.online === true) {
-                dot.style.background = '#22c55e';
-                stat.textContent = 'En ligne';
-                stat.style.color = '#22c55e';
-              } else {
-                dot.style.background = '#6b7280';
-                stat.textContent = p.lastSeen ? ('Vu ' + fmtDateTime(p.lastSeen)) : 'Hors ligne';
-                stat.style.color = 'var(--text-2)';
-              }
-            }
-            break;
-          }
-        }
-      });
+    // Presence: live listener
+    _alPresenceCb = function(snap) { _alUpdatePresence(snap.val() || {}); };
+    _firebaseDB.ref('profiles').on('value', _alPresenceCb);
+
+    // Activity log: prime with last 100 then subscribe to child_added
+    _firebaseDB.ref('activity_log').orderByChild('created_at').limitToLast(100).once('value').then(function(snap) {
+      var entries = [];
+      snap.forEach(function(c) { _alSeenKeys[c.key] = true; entries.push(c.val()); });
+      // entries are oldest->newest in snap order; render so newest ends up on top
+      entries.forEach(function(l) { if (l) _alAppendActivityRow(l); });
+      // Now subscribe to new ones
+      _alActivityCb = function(c) {
+        if (_alSeenKeys[c.key]) return;
+        _alSeenKeys[c.key] = true;
+        var l = c.val(); if (l) _alAppendActivityRow(l);
+      };
+      _firebaseDB.ref('activity_log').orderByChild('created_at').limitToLast(50).on('child_added', _alActivityCb);
     }).catch(function() {});
   }
 
-  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser && typeof _adminGetActivityLog === 'function') {
-    _adminGetActivityLog(100).then(function(cloudLogs) {
-      if (cloudLogs && cloudLogs.length > 0) {
-        var tbody = document.querySelector('#modal .modal-body tbody');
-        if (tbody) {
-          cloudLogs.forEach(function(l) {
-            var row = document.createElement('tr');
-            row.style.borderTop = '1px solid var(--border)';
-            row.innerHTML = '<td style="padding:6px;white-space:nowrap">' + (l.created_at ? new Date(l.created_at).toLocaleString('fr') : '') + '</td>'
-              + '<td style="padding:6px">' + (l.user_email || '') + '</td>'
-              + '<td style="padding:6px"><span class="badge">' + l.action + '</span></td>'
-              + '<td style="padding:6px;color:var(--text-2)">' + (l.details || '') + '</td>';
-            tbody.appendChild(row);
-          });
-        }
-      }
-    }).catch(function() {});
-  }
+  // Register cleanup so listeners detach when the modal closes
+  window._modalCloseCleanup = function() {
+    try { if (_firebaseDB && _alPresenceCb) _firebaseDB.ref('profiles').off('value', _alPresenceCb); } catch(e) {}
+    try { if (_firebaseDB && _alActivityCb) _firebaseDB.ref('activity_log').off('child_added', _alActivityCb); } catch(e) {}
+    _alPresenceCb = null; _alActivityCb = null; _alSeenKeys = {};
+  };
 }
 
 // ============================================================
