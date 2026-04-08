@@ -3105,11 +3105,12 @@ function generateBonHTML(bon, overrides) {
     </tr>`).join('');
   const blankCount=Math.max(0,minRows-(bon.lignes||[]).length);
   const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:10px;border:1px solid #555;height:28px"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td></tr>`).join('');
-  // DON detection: when motif starts with "DON" we swap content of left/right sig cells
-  // Left  (Demandeur/Commercial) -> shows Gestionnaire (validator) info
-  // Middle(Gestionnaire)         -> unchanged, still Gestionnaire
-  // Right (Réceptionnaire)         -> shows the bon's Demandeur info instead of recipient
-  const _isDonBon = String(bon.objet||'').trim().toUpperCase().indexOf('DON') === 0;
+  // Auto-fill detection: when motif starts with "DON" or "DOTATION" (any case),
+  // the gestionnaire (validator) is essentially the donor, so:
+  //  - Demandeur/Commercial cell -> shows Gestionnaire info
+  //  - Gestionnaire cell         -> unchanged, still Gestionnaire
+  //  - Receptionnaire cell       -> annuaire lookup (or just date if nothing)
+  const _isAutoFillBon = /^(DON\b|DOTATION)/i.test(String(bon.objet||'').trim());
   return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:900px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
       <tr>
@@ -3162,7 +3163,7 @@ function generateBonHTML(bon, overrides) {
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px">
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:8px">Demandeur / Commercial</div>
-          ${_isDonBon ? _renderBonGestionnaireSigBox(bon) : _renderBonSigBox(bon, 'demandeur')}
+          ${_isAutoFillBon ? _renderBonGestionnaireSigBox(bon) : _renderBonSigBox(bon, 'demandeur')}
         </td>
         <td style="width:34%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
@@ -3172,7 +3173,7 @@ function generateBonHTML(bon, overrides) {
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Réceptionnaire</div>
-          ${_isDonBon ? '' : _renderBonSigBox(bon, 'recipiendaire')}
+          ${_renderBonSigBox(bon, 'recipiendaire')}
         </td>
       </tr>
     </table>
