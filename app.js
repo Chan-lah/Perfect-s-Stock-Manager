@@ -3105,6 +3105,11 @@ function generateBonHTML(bon, overrides) {
     </tr>`).join('');
   const blankCount=Math.max(0,minRows-(bon.lignes||[]).length);
   const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:10px;border:1px solid #555;height:28px"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td></tr>`).join('');
+  // DON detection: when motif starts with "DON" we swap content of left/right sig cells
+  // Left  (Demandeur/Commercial) -> shows Gestionnaire (validator) info
+  // Middle(Gestionnaire)         -> unchanged, still Gestionnaire
+  // Right (Réceptionnaire)         -> shows the bon's Demandeur info instead of recipient
+  const _isDonBon = String(bon.objet||'').trim().toUpperCase().indexOf('DON') === 0;
   return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:900px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
       <tr>
@@ -3157,50 +3162,17 @@ function generateBonHTML(bon, overrides) {
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px">
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:8px">Demandeur / Commercial</div>
-          ${_renderBonSigBox(bon, 'demandeur')}
+          ${_isDonBon ? _renderBonGestionnaireSigBox(bon) : _renderBonSigBox(bon, 'demandeur')}
         </td>
         <td style="width:34%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Gestionnaire</div>
-          ${(()=>{
-            var sig = bon._validatedBySignature || '';
-            var matricule = bon._validatedByMatricule || '';
-            var name = bon._validatedByName || '';
-            var validatedAt = bon._validatedAt || 0;
-            // Live fallback (works for old validated bons whose snapshot was empty):
-            // 1) Look up validator by stored email in APP.users -> resolve signatureKey via RTDB
-            if (!sig && bon._validatedBy) {
-              var lu = (APP.users || []).find(function(x) { return x.email && x.email.toLowerCase() === String(bon._validatedBy).toLowerCase(); });
-              if (lu) {
-                if (lu.signatureKey && typeof _getSignature === 'function') sig = _getSignature(lu.signatureKey) || '';
-                if (!sig && lu.signature) sig = lu.signature;
-                if (!matricule && lu.matricule) matricule = lu.matricule;
-                if (!name) name = lu.name || '';
-              }
-            }
-            // 2) Last resort: current user (for non-validated preview)
-            if (!sig && bon.status !== 'validé') { var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
-            var out = '';
-            if(sig) out += `<img src="${sig}" style="max-height:45px;display:block;margin:0 auto">`;
-            if(bon.status === 'validé') {
-              if(validatedAt) {
-                var d = new Date(validatedAt);
-                var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
-                out += `<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">${dStr}</div>`;
-              }
-              if(matricule) {
-                out += `<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ${matricule}</div>`;
-              } else if(name) {
-                out += `<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">${name}</div>`;
-              }
-            }
-            return out;
-          })()}
+          ${_renderBonGestionnaireSigBox(bon)}
         </td>
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Réceptionnaire</div>
-          ${_renderBonSigBox(bon, 'recipiendaire')}
+          ${_isDonBon ? _renderBonSigBox(bon, 'demandeur') : _renderBonSigBox(bon, 'recipiendaire')}
         </td>
       </tr>
     </table>
@@ -7390,6 +7362,21 @@ function _resolveBonRoleSig(bon, role) {
     out.sig = bon.sigDemandeur;
     if (!out.name) out.name = bon.demandeur || '';
   }
+  // Diagnostic: when sig still missing on a validated bon, log details so we
+  // can identify which annuaire entries / validators are incomplete.
+  if (!out.sig && bon && bon.status === 'validé') {
+    try {
+      console.log('[PSM-SIG]', bon.numero, role, 'MISSING', {
+        personId: out.personId,
+        name: out.name,
+        matricule: out.matricule,
+        bonDemandeur: bon.demandeur,
+        bonRecipiendaire: bon.recipiendaire,
+        demandeurAnnuaireId: bon._demandeurAnnuaireId,
+        recipiendaireAnnuaireId: bon._recipiendaireAnnuaireId
+      });
+    } catch(e) {}
+  }
   return out;
 }
 // Render a signature box body (sig img + optional date/matricule for validated bons)
@@ -7411,6 +7398,47 @@ function _renderBonSigBox(bon, role) {
       out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + info.matricule + '</div>';
     } else if (info.name) {
       out += '<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">' + info.name + '</div>';
+    }
+  }
+  return out;
+}
+// Render the gestionnaire (validator) signature box.
+// Used by the middle cell on every bon, AND by the left cell when objet starts with DON.
+function _renderBonGestionnaireSigBox(bon) {
+  if (!bon) return '';
+  var sig = bon._validatedBySignature || '';
+  var matricule = bon._validatedByMatricule || '';
+  var name = bon._validatedByName || '';
+  var validatedAt = bon._validatedAt || 0;
+  // Live fallback (works for old validated bons whose snapshot was empty):
+  // 1) Look up validator by stored email in APP.users -> resolve signatureKey via RTDB
+  if (!sig && bon._validatedBy) {
+    var lu = (APP.users || []).find(function(x) { return x.email && x.email.toLowerCase() === String(bon._validatedBy).toLowerCase(); });
+    if (lu) {
+      if (lu.signatureKey && typeof _getSignature === 'function') sig = _getSignature(lu.signatureKey) || '';
+      if (!sig && lu.signature) sig = lu.signature;
+      if (!matricule && lu.matricule) matricule = lu.matricule;
+      if (!name) name = lu.name || '';
+    }
+  }
+  // 2) Last resort: current user (for non-validated preview)
+  if (!sig && bon.status !== 'validé') { var u = (typeof _currentUser==='function'?_currentUser():null); if (u) { sig = u.signature || ''; if (!name) name = u.name || ''; } }
+  // Diagnostic: log when validated bon still has no sig
+  if (!sig && bon.status === 'validé') {
+    try { console.log('[PSM-SIG]', bon.numero, 'gestionnaire MISSING', { validatedBy: bon._validatedBy, hasMatricule: !!matricule }); } catch(e) {}
+  }
+  var out = '';
+  if (sig) out += '<img src="' + sig + '" style="max-height:45px;display:block;margin:0 auto">';
+  if (bon.status === 'validé') {
+    if (validatedAt) {
+      var d = new Date(validatedAt);
+      var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+      out += '<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">' + dStr + '</div>';
+    }
+    if (matricule) {
+      out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + matricule + '</div>';
+    } else if (name) {
+      out += '<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">' + name + '</div>';
     }
   }
   return out;
