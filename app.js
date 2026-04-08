@@ -7293,11 +7293,21 @@ function _isMatriculeUnique(matricule, ignoreId) {
 // ============================================================
 function _lookupAnnuaireByName(name) {
   if (!name) return null;
-  var key = String(name).trim().toLowerCase();
-  if (!key) return null;
-  return ((APP && APP.annuaire) || []).find(function(p) {
-    var full = ((p.prenom||'') + ' ' + (p.nom||'')).trim().toLowerCase();
-    return full === key;
+  var tokens = String(name).trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return null;
+  var list = (APP && APP.annuaire) || [];
+  // Pass 1: all tokens must match (in any order) the union of prenom + nom tokens
+  var hit = list.find(function(p) {
+    var personTokens = ((p.prenom||'') + ' ' + (p.nom||'')).toLowerCase().split(/\s+/).filter(Boolean);
+    if (personTokens.length !== tokens.length) return false;
+    return tokens.every(function(t) { return personTokens.indexOf(t) !== -1; });
+  });
+  if (hit) return hit;
+  // Pass 2: fallback -- match by single distinctive token (last word, often the family name)
+  var lastToken = tokens[tokens.length - 1];
+  return list.find(function(p) {
+    return String(p.nom||'').toLowerCase() === lastToken
+        || String(p.prenom||'').toLowerCase() === lastToken;
   }) || null;
 }
 function _lookupAnnuaireById(id) {
@@ -7412,6 +7422,24 @@ function _renderBonGestionnaireSigBox(bon) {
   var name = bon._validatedByName || '';
   var validatedAt = bon._validatedAt || 0;
   // Live fallback (works for old validated bons whose snapshot was empty):
+  // 0) If snapshot is fully empty, try to recover validator email from audit log
+  if (!sig && !bon._validatedBy) {
+    try {
+      var ve = (APP.audit || [])
+        .filter(function(a){ return a.entity==='bon' && a.entityId===bon.id && a.type==='VALIDATE'; })
+        .sort(function(a,b){ return b.ts-a.ts; })[0];
+      if (ve && ve.userEmail) {
+        var luA = (APP.users || []).find(function(x){ return x.email && x.email.toLowerCase() === String(ve.userEmail).toLowerCase(); });
+        if (luA) {
+          if (luA.signatureKey && typeof _getSignature === 'function') sig = _getSignature(luA.signatureKey) || '';
+          if (!sig && luA.signature) sig = luA.signature;
+          if (!matricule) matricule = luA.matricule || '';
+          if (!name) name = luA.name || '';
+          if (!validatedAt && ve.ts) validatedAt = ve.ts;
+        }
+      }
+    } catch(e) {}
+  }
   // 1) Look up validator by stored email in APP.users -> resolve signatureKey via RTDB
   if (!sig && bon._validatedBy) {
     var lu = (APP.users || []).find(function(x) { return x.email && x.email.toLowerCase() === String(bon._validatedBy).toLowerCase(); });
@@ -8922,6 +8950,42 @@ function _snapshotValidator(bon) {
       bon._validatedByMatricule = (localUser && localUser.matricule) || u.matricule || '';
     }
   } catch(e) {}
+}
+// One-time backfill for old validated bons missing the validator snapshot.
+// Matches each orphan bon to its VALIDATE audit entry to find the real validator.
+// Returns { fixed, failed, failures } and saves DB if anything was fixed.
+// Usage: open console, type _backfillBonValidators()
+function _backfillBonValidators() {
+  var fixed = 0, failed = 0, failures = [];
+  (APP.bons || []).forEach(function(bon) {
+    if (bon.status !== 'validé') return;
+    if (bon._validatedBy) return; // already has snapshot
+    var entries = (APP.audit || [])
+      .filter(function(a) { return a.entity === 'bon' && a.entityId === bon.id && a.type === 'VALIDATE'; })
+      .sort(function(a, b) { return b.ts - a.ts; });
+    if (!entries.length) { failed++; failures.push(bon.numero + ' (no VALIDATE entry)'); return; }
+    var entry = entries[0];
+    var email = entry.userEmail;
+    if (!email) { failed++; failures.push(bon.numero + ' (no userEmail in audit)'); return; }
+    var user = (APP.users || []).find(function(u) {
+      return u.email && u.email.toLowerCase() === email.toLowerCase();
+    });
+    if (!user) { failed++; failures.push(bon.numero + ' (user not found: ' + email + ')'); return; }
+    // Resolve sig: signatureKey cache first, then inline base64
+    var sig = '';
+    if (user.signatureKey && typeof _getSignature === 'function') sig = _getSignature(user.signatureKey) || '';
+    if (!sig && user.signature) sig = user.signature;
+    bon._validatedBy = user.email;
+    bon._validatedByName = user.name || user.email;
+    bon._validatedByMatricule = user.matricule || '';
+    bon._validatedBySignature = sig;
+    if (!bon._validatedAt) bon._validatedAt = entry.ts;
+    fixed++;
+  });
+  if (fixed > 0) saveDB();
+  console.log('[BACKFILL] fixed:', fixed, 'failed:', failed);
+  if (failures.length) console.log('[BACKFILL] failures:', failures);
+  return { fixed: fixed, failed: failed, failures: failures };
 }
 function _snapshotCanceller(bon) {
   try {
