@@ -482,6 +482,7 @@ const PAGES = [
   { id:'territoire',      label:'Zones & Secteurs',   icon:'map',       section:null },
   { id:'pdv',             label:'Points de Vente',    icon:'store',     section:null },
   { id:'fournisseurs',    label:'Fournisseurs',       icon:'truck',     section:null },
+  { id:'annuaire',        label:'Annuaire',           icon:'users',     section:null },
   { id:'fourn-dashboard', label:'Suivi livraisons',   icon:'clipboard', section:null },
   { id:'gma-catalogue',   label:'Catalogue GMA',      icon:'star',      section:'GMA' },
   { id:'analytics',       label:'Analytique',      icon:'brain',     section:'INTELLIGENCE' },
@@ -685,6 +686,22 @@ async function _finishAppInit() {
   if(!APP.articles) APP.articles = [];
   if(!APP.bons) APP.bons = [];
   if(!APP.fournisseurs) APP.fournisseurs = [];
+  if(!APP.annuaire) APP.annuaire = [];
+  // Phase 9: backfill _isDispatch flag on existing bons (one-time)
+  if (!APP._dispatchSigMigratedAt) {
+    var _dpBonIds = {};
+    ((APP.dispatch && APP.dispatch.history) || []).forEach(function(snap) {
+      if (snap && Array.isArray(snap.bonIds)) {
+        snap.bonIds.forEach(function(bid) { _dpBonIds[bid] = true; });
+      }
+    });
+    var _dpFlagged = 0;
+    (APP.bons || []).forEach(function(b) {
+      if (_dpBonIds[b.id] && !b._isDispatch) { b._isDispatch = true; _dpFlagged++; }
+    });
+    APP._dispatchSigMigratedAt = Date.now();
+    if (_dpFlagged > 0) console.log('[PSM] Phase 9: ' + _dpFlagged + ' bon(s) dispatch flagg\u00e9(s) r\u00e9troactivement');
+  }
   initGMAData();
   _pruneHistoricalData();
   (APP.commerciaux||[]).forEach(c => dInitCommercialDispatchFields(c));
@@ -704,6 +721,8 @@ async function _finishAppInit() {
     return;
   }
   updateFileSaveIndicator(!!_dirHandle);
+  // Phase 1: load signatures cache from RTDB (fire-and-forget)
+  if (typeof _loadSignaturesCache === 'function') _loadSignaturesCache();
   renderSidebar();
   if(_pendingHandle && !_autoReconnectBound) _showReconnectBar();
   else if(!_dirHandle && !_pendingHandle) _showStorageBanner();
@@ -837,7 +856,7 @@ function showPage(id) {
   const titles = {
     dashboard:'Tableau de bord', articles:'Gadgets & Stocks', bons:'Bons de sortie',
     mouvements:'Mouvements de stock', commerciaux:'Commerciaux', territoire:'\ud83d\uddfa Zones & Secteurs',
-    pdv:'\ud83c\udfea Points de Vente', fournisseurs:'Fournisseurs',
+    pdv:'\ud83c\udfea Points de Vente', fournisseurs:'Fournisseurs', annuaire:'\ud83d\udcd2 Annuaire',
     'fourn-dashboard':'Suivi des livraisons', 'gma-catalogue':'\u2b50 Catalogue GMA',
     analytics:'\ud83e\udde0 Analytique', dispatch:'\u2699\ufe0f Dispatch Gadgets',
     audit:'Audit Trail', calendar:'Calendrier des Mouvements', boneditor:'\ud83c\udfa8 \u00c9diteur de Bon', administration:'\ud83d\udee1\ufe0f Administration', settings:'Param\u00e8tres'
@@ -847,7 +866,7 @@ function showPage(id) {
   const renders = {
     dashboard:renderDashboard, articles:renderArticles, bons:renderBons, mouvements:renderMouvements,
     commerciaux:renderCommerciaux, territoire:renderTerritoire, pdv:renderPDV,
-    fournisseurs:renderFournisseurs, 'fourn-dashboard':renderFournDashboard,
+    fournisseurs:renderFournisseurs, annuaire:renderAnnuaire, 'fourn-dashboard':renderFournDashboard,
     'gma-catalogue':renderGMACatalogue,
     analytics:renderAnalytics, dispatch:renderDispatchPage, audit:renderAudit, boneditor:renderBonEditor, settings:renderSettings,
     calendar:renderCalendar,
@@ -2727,15 +2746,31 @@ function openBonModal(bonId) {
     <div class="form-group"><label>Demandeur</label>
       <select id="bon-demandeur-type" onchange="bonDemandeurToggle()">
         <option value="commercial" ${bon && bon._demandeurType==='custom'?'':'selected'}>Commercial</option>
-        <option value="custom" ${bon && bon._demandeurType==='custom'?'selected':''}>Autre (personnalis\u00e9)</option>
+        <option value="custom" ${bon && bon._demandeurType==='custom'?'selected':''}>Autre (annuaire / saisie libre)</option>
       </select>
       <select id="bon-commercial" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'display:none':''}"><option value="">\u2014 S\u00e9lectionner \u2014</option>${comOptions}</select>
       <div id="bon-custom-demandeur-wrap" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'':'display:none'}">
-        <input id="bon-custom-demandeur" list="custom-demandeurs-list" value="${bon && bon._demandeurType==='custom' ? (bon.demandeur||'').replace(/"/g,'&quot;') : ''}" placeholder="Nom du demandeur" style="width:100%">
-        <datalist id="custom-demandeurs-list">${((APP.settings||{})._customDemandeurs||[]).map(function(n){return '<option value="'+n+'">';}).join('')}</datalist>
+        <input id="bon-custom-demandeur" list="custom-demandeurs-list" value="${bon && bon._demandeurType==='custom' ? (bon.demandeur||'').replace(/"/g,'&quot;') : ''}" placeholder="Nom du demandeur (annuaire ou libre)" style="width:100%">
+        <datalist id="custom-demandeurs-list">${(function(){
+          var seen={}; var opts=[];
+          ((APP.settings||{})._customDemandeurs||[]).forEach(function(n){ var k=n.toLowerCase(); if(!seen[k]){seen[k]=1; opts.push('<option value="'+n.replace(/"/g,'&quot;')+'">');} });
+          ((APP.annuaire||[]).filter(function(p){ return p.tag==='demandeur'||p.tag==='mixte'; })).forEach(function(p){
+            var nm=((p.prenom||'')+' '+(p.nom||'')).trim();
+            var k=nm.toLowerCase();
+            if(nm && !seen[k]){ seen[k]=1; opts.push('<option value="'+nm.replace(/"/g,'&quot;')+'">'+(p.poste?p.poste.replace(/"/g,'&quot;'):'')+'</option>'); }
+          });
+          return opts.join('');
+        })()}</datalist>
       </div>
     </div>
-    <div class="form-group"><label>Destinataire / Récipiendaire *</label><input id="bon-recip" value="${bon?.recipiendaire||''}" placeholder="Nom du destinataire"></div>
+    <div class="form-group"><label>Destinataire / Récipiendaire *</label>
+      <input id="bon-recip" list="recip-options-list" value="${(bon?.recipiendaire||'').replace(/"/g,'&quot;')}" placeholder="Nom (annuaire ou libre)">
+      <datalist id="recip-options-list">${((APP.annuaire||[]).filter(function(p){ return p.tag==='recipiendaire'||p.tag==='mixte'; })).map(function(p){
+        var nm=((p.prenom||'')+' '+(p.nom||'')).trim();
+        if(!nm) return '';
+        return '<option value="'+nm.replace(/"/g,'&quot;')+'">'+(p.poste?p.poste.replace(/"/g,'&quot;'):'')+'</option>';
+      }).join('')}</datalist>
+    </div>
   </div>
   <div class="form-row">
     <div class="form-group"><label>Objet / Motif</label><input id="bon-objet" value="${bon?.objet||''}"></div>
@@ -2816,6 +2851,15 @@ async function saveBon(existingId) {
   } else {
     demandeur = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : '';
   }
+  // Phase 5: resolve annuaire IDs from name (best-effort)
+  var _demandeurAnnuaireId = '';
+  var _recipiendaireAnnuaireId = '';
+  if (demType !== 'commercial') {
+    var _dp = (typeof _lookupAnnuaireByName === 'function') ? _lookupAnnuaireByName(demandeur) : null;
+    if (_dp) _demandeurAnnuaireId = _dp.id;
+  }
+  var _rp = (typeof _lookupAnnuaireByName === 'function') ? _lookupAnnuaireByName(recip) : null;
+  if (_rp) _recipiendaireAnnuaireId = _rp.id;
 
   if(existingId) {
     const bon=APP.bons.find(b=>b.id===existingId); if(!bon) return;
@@ -2860,7 +2904,7 @@ async function saveBon(existingId) {
     if(_willDeduct) {
       lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
     }
-    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
+    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
     if(_oldStatus !== _newStatus) _setBonStatusTimestamp(bon, _newStatus);
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -2879,7 +2923,7 @@ async function saveBon(existingId) {
         return;
       }
     }
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
     if(_newStatus === 'validé') {
       bon._validatedAt = Date.now();
       lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
@@ -3048,8 +3092,8 @@ function generateBonHTML(bon, overrides) {
         <strong>DESTINATAIRE / RÉCIPIENDAIRE :</strong> <span style="display:inline-block;width:340px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.recipiendaire||''}</span>
       </div>
       <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:10px">
-        <strong>Objet / Motif :</strong> <span style="display:inline-block;width:330px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.objet||''}</span>
-        <span style="margin-left:16px"><strong>DU</strong> <span style="display:inline-block;width:110px;border-bottom:1px dotted #555;padding-left:8px">${bon.date||''}</span></span>
+        <strong>Objet / Motif :</strong> <span style="display:inline-block;width:${bon._isDispatch?'460':'330'}px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.objet||''}</span>
+        ${bon._isDispatch?'':`<span style="margin-left:16px"><strong>DU</strong> <span style="display:inline-block;width:110px;border-bottom:1px dotted #555;padding-left:8px">${bon.date||''}</span></span>`}
       </div>
     </div>
     <table style="width:100%;border-collapse:collapse;border:2px solid #111;margin-bottom:0">
@@ -3068,24 +3112,39 @@ function generateBonHTML(bon, overrides) {
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px">
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:8px">Demandeur / Commercial</div>
-          ${bon.sigDemandeur?`<img src="${bon.sigDemandeur}" style="max-height:45px;display:block;margin:0 auto">`:''}
+          ${_renderBonSigBox(bon, 'demandeur')}
         </td>
         <td style="width:34%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Gestionnaire</div>
           ${(()=>{
             var sig = bon._validatedBySignature || '';
+            var matricule = bon._validatedByMatricule || '';
             var name = bon._validatedByName || '';
-            if(!sig){ var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
+            var validatedAt = bon._validatedAt || 0;
+            // Live fallback only for non-validated bons (preview before validation)
+            if(!sig && bon.status !== 'validé'){ var u=_currentUser(); if(u){ sig = u.signature || ''; if(!name) name = u.name || ''; } }
             var out = '';
             if(sig) out += `<img src="${sig}" style="max-height:45px;display:block;margin:0 auto">`;
-            if(name) out += `<div style="font-size:10px;color:#222;text-align:center;margin-top:2px;font-style:italic">${name}</div>`;
+            if(bon.status === 'validé') {
+              if(validatedAt) {
+                var d = new Date(validatedAt);
+                var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+                out += `<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">${dStr}</div>`;
+              }
+              if(matricule) {
+                out += `<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ${matricule}</div>`;
+              } else if(name) {
+                out += `<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">${name}</div>`;
+              }
+            }
             return out;
           })()}
         </td>
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Réceptionnaire</div>
+          ${_renderBonSigBox(bon, 'recipiendaire')}
         </td>
       </tr>
     </table>
@@ -3504,6 +3563,10 @@ function openCommercialModal(id) {
       <div class="form-group"><label>Nom *</label><input id="com-nom" value="${c?.nom||''}"></div>
     </div>
     <div class="form-row">
+      <div class="form-group"><label>Matricule <span style="font-size:10px;color:var(--text-3)">(unique \u2014 GMA-XXX)</span></label><input id="com-matricule" value="${c?.matricule||''}" placeholder="ex: GMA-042"></div>
+      <div class="form-group"></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><label>Service</label><input id="com-service" value="${c?.service||''}"></div>
       <div class="form-group"><label>Email</label><input type="email" id="com-email" value="${c?.email||''}"></div>
     </div>
@@ -3554,7 +3617,38 @@ function openCommercialModal(id) {
         <input type="hidden" id="com-photo-data" value="${c?.photo||''}">
         <span style="font-size:12px;color:var(--text-2)">Cliquez pour changer</span>
       </div>
-    </div>`,
+    </div>
+    ${(()=>{
+      var canEditSig = (typeof _canEditCommercialSignature==='function') && _canEditCommercialSignature();
+      var existingSigSrc = (c && c.signatureKey && typeof _getSignature==='function') ? (_getSignature(c.signatureKey)||'') : '';
+      _comSigPadAPI = null;
+      return `
+      <div class="form-group" style="margin-top:6px">
+        <label>Signature digitalisée ${canEditSig?'':'<span style="font-size:10px;color:var(--text-3)">(lecture seule — perm spéciale requise)</span>'}</label>
+        <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+          <div id="com-sig-preview" style="width:160px;height:60px;background:#fff;border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden">
+            ${existingSigSrc ? `<img src="${existingSigSrc}" style="max-width:160px;max-height:60px;object-fit:contain">` : `<span style="font-size:11px;color:#888">Aucune</span>`}
+          </div>
+          ${canEditSig ? `<div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('com-sig-file').click()">📁 Importer</button>
+            <button class="btn btn-secondary btn-sm" onclick="_comToggleDraw()">✍️ Dessiner</button>
+            <button class="btn btn-danger btn-sm" onclick="_comClearSig()">🗑 Retirer</button>
+          </div>` : ''}
+          <input type="file" id="com-sig-file" accept="image/*" style="display:none" onchange="_comPreviewSigFile(this)">
+          <input type="hidden" id="com-sig-data" value="">
+          <input type="hidden" id="com-sig-existing-key" value="${c?.signatureKey||''}">
+          <input type="hidden" id="com-sig-cleared" value="0">
+          <input type="hidden" id="com-sig-can-edit" value="${canEditSig?'1':'0'}">
+        </div>
+        ${canEditSig ? `<div id="com-sig-canvas-wrap" style="display:none;margin-top:10px">
+          <canvas id="com-sig-canvas" width="500" height="150" style="border:1px solid var(--border);background:#fff;border-radius:6px;cursor:crosshair;width:100%;max-width:500px;display:block"></canvas>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-sm btn-secondary" onclick="_comClearCanvas()">Effacer</button>
+            <button class="btn btn-sm btn-primary" onclick="_comValidateCanvas()">✓ Valider signature</button>
+          </div>
+        </div>` : ''}
+      </div>`;
+    })()}`,
   ()=>saveCommercial(id), 'modal-lg');
 }
 
@@ -3612,13 +3706,46 @@ function _syncCommercialPDV(comId, wantBoul, wantDist) {
   }
 }
 
-function saveCommercial(existingId) {
+async function saveCommercial(existingId) {
   const prenom = document.getElementById('com-prenom').value.trim();
   const nom = document.getElementById('com-nom').value.trim();
   if(!prenom||!nom){notify('Prénom et nom requis','danger');return;}
+  const matricule = (document.getElementById('com-matricule')?.value||'').trim();
+  if (matricule && !_isMatriculeUnique(matricule, existingId || null)) {
+    notify('Matricule déjà utilisé (user/commercial/annuaire)','error'); return;
+  }
   const photo = document.getElementById('com-photo-data').value;
+  // Phase 7: signature handling (only if user has perm)
+  const canEditSig = (document.getElementById('com-sig-can-edit')?.value === '1');
+  const newSigDataUrl = canEditSig ? (document.getElementById('com-sig-data')?.value || '') : '';
+  const existingSigKey = document.getElementById('com-sig-existing-key')?.value || '';
+  const sigCleared = canEditSig && (document.getElementById('com-sig-cleared')?.value === '1');
+  let finalSigKey = existingSigKey;
+  if (canEditSig) {
+    try {
+      if (newSigDataUrl) {
+        if (existingSigKey && typeof _deleteSignature === 'function') {
+          try { await _deleteSignature(existingSigKey); } catch(e) {}
+        }
+        if (typeof _uploadSignature === 'function') {
+          finalSigKey = await _uploadSignature(newSigDataUrl, 'sig');
+        } else {
+          finalSigKey = '';
+        }
+      } else if (sigCleared && existingSigKey) {
+        if (typeof _deleteSignature === 'function') {
+          try { await _deleteSignature(existingSigKey); } catch(e) {}
+        }
+        finalSigKey = '';
+      }
+    } catch(e) {
+      console.warn('[PSM] Commercial sig op failed:', e);
+      notify('Erreur signature: ' + (e.message || e), 'error');
+      return;
+    }
+  }
   const fields = {
-    prenom, nom,
+    prenom, nom, matricule,
     service: document.getElementById('com-service').value,
     email: document.getElementById('com-email').value,
     tel: document.getElementById('com-tel').value,
@@ -3628,6 +3755,7 @@ function saveCommercial(existingId) {
     dispatchActive: document.getElementById('com-dispatch-active').checked,
     dispatchZoneId: document.getElementById('com-dzone').value||'',
     secteurId: document.getElementById('com-secteur-id').value||'',
+    signatureKey: finalSigKey,
   };
   if(existingId) {
     const c = APP.commerciaux.find(x=>x.id===existingId);
@@ -6665,6 +6793,7 @@ const ALL_PAGES_PERMS = [
   { id:'territoire',      label:'Zones & Secteurs',   group:'GESTION' },
   { id:'pdv',             label:'Points de Vente',    group:'GESTION' },
   { id:'fournisseurs',    label:'Fournisseurs',       group:'GESTION' },
+  { id:'annuaire',        label:'Annuaire',           group:'GESTION' },
   { id:'fourn-dashboard', label:'Suivi livraisons',   group:'GESTION' },
   { id:'gma-catalogue',   label:'Catalogue GMA',      group:'GMA' },
   { id:'analytics',       label:'Analytique',      group:'INTELLIGENCE' },
@@ -6733,6 +6862,10 @@ function openUserModal(userId) {
       </select></div>
     </div>
     <div class="form-group">
+      <label>Matricule <span style="font-size:10px;color:var(--text-3)">(unique \u2014 GMA-XXX)</span></label>
+      <input id="um-matricule" value="${u?.matricule||''}" placeholder="ex: GMA-042">
+    </div>
+    <div class="form-group">
       <label>Photo (optionnel)</label>
       <div style="display:flex;align-items:center;gap:10px">
         <div id="um-photo-preview" style="width:48px;height:48px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden">${u?.photo?`<img src="${u.photo}" style="width:48px;height:48px;object-fit:cover">`:'\uD83D\uDC64'}</div>
@@ -6770,6 +6903,10 @@ function openUserModal(userId) {
           <tbody>${permHtml}</tbody>
         </table>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.18);cursor:pointer">
+        <input type="checkbox" id="perm-special-comsig" ${u?.permissions?._special?.commercialSignature?'checked':''}>
+        <span style="font-size:12px;font-weight:600;color:var(--text-1)">Autoriser la modification des signatures de commerciaux</span>
+      </label>
     </div>
   `, [
     { label: 'Annuler', cls: 'btn-secondary', onclick: 'closeModal()' },
@@ -6864,6 +7001,10 @@ async function saveUserModal(userId) {
   const role  = document.getElementById('um-role')?.value || 'viewer';
   const photo = document.getElementById('um-photo-data')?.value || null;
   const sig   = document.getElementById('um-sig-data')?.value || null;
+  const matricule = document.getElementById('um-matricule')?.value?.trim() || '';
+  if (matricule && !_isMatriculeUnique(matricule, userId || null)) {
+    notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
+  }
   if(!name) { notify('Le nom est obligatoire', 'warning'); return; }
   if(!email) { notify('L\'email est obligatoire', 'warning'); return; }
 
@@ -6882,6 +7023,9 @@ async function saveUserModal(userId) {
         edit: document.getElementById('perm-e-'+p.id)?.checked || false,
       };
     });
+    permissions._special = {
+      commercialSignature: document.getElementById('perm-special-comsig')?.checked || false,
+    };
   }
 
   if(!APP.users) APP.users = [];
@@ -6893,6 +7037,7 @@ async function saveUserModal(userId) {
       if (!u) u = APP.users.find(x => x.email && x.email.toLowerCase() === userId.toLowerCase());
       if(u) {
         u.name = name; u.email = email; u.role = role; u.permissions = permissions;
+        u.matricule = matricule;
         if(photo) u.photo = photo;
         if(sig) u.signature = sig;
         u._version = (u._version||1) + 1;
@@ -6911,7 +7056,7 @@ async function saveUserModal(userId) {
       // 2. Create local entry
       var existing = APP.users.find(function(x) { return x.email === email; });
       if(!existing) {
-        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, photo: photo||null, signature: sig||null, permissions: permissions, createdAt: Date.now(), _version: 1 });
+        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signature: sig||null, permissions: permissions, createdAt: Date.now(), _version: 1 });
       }
     }
 
@@ -6996,6 +7141,181 @@ function _getDefaultPerms(role) {
   return p;
 }
 
+
+// ============================================================
+// VAGUE 1 -- Permissions helpers + matricule uniqueness
+// ============================================================
+function _isAdmin() {
+  var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+  return !!(u && u.role === 'admin');
+}
+function _canSeeAnnuaire() {
+  if (_isAdmin()) return true;
+  var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+  if (!u) return false;
+  return !!(u.permissions && u.permissions.annuaire && u.permissions.annuaire.view);
+}
+function _canEditAnnuaire() {
+  if (_isAdmin()) return true;
+  var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+  if (!u) return false;
+  return !!(u.permissions && u.permissions.annuaire && u.permissions.annuaire.edit);
+}
+function _canEditCommercialSignature() {
+  if (_isAdmin()) return true;
+  var u = (typeof _currentUser === 'function') ? _currentUser() : null;
+  if (!u) return false;
+  return !!(u.permissions && u.permissions._special && u.permissions._special.commercialSignature);
+}
+// Cross-scope matricule uniqueness (user + commercial + annuaire share one namespace)
+function _isMatriculeUnique(matricule, ignoreId) {
+  if (!matricule) return true;
+  matricule = String(matricule).trim().toLowerCase();
+  if (!matricule) return true;
+  var collide = function(arr) {
+    return (arr || []).some(function(x) {
+      if (ignoreId && x.id === ignoreId) return false;
+      return (x.matricule || '').toString().toLowerCase() === matricule;
+    });
+  };
+  if (collide(APP.users)) return false;
+  if (collide(APP.commerciaux)) return false;
+  if (collide(APP.annuaire)) return false;
+  return true;
+}
+
+// ============================================================
+// VAGUE 3 -- Annuaire lookup helpers + bon role sig resolver
+// ============================================================
+function _lookupAnnuaireByName(name) {
+  if (!name) return null;
+  var key = String(name).trim().toLowerCase();
+  if (!key) return null;
+  return ((APP && APP.annuaire) || []).find(function(p) {
+    var full = ((p.prenom||'') + ' ' + (p.nom||'')).trim().toLowerCase();
+    return full === key;
+  }) || null;
+}
+function _lookupAnnuaireById(id) {
+  if (!id) return null;
+  return ((APP && APP.annuaire) || []).find(function(p) { return p.id === id; }) || null;
+}
+// Resolve role -> {sig, matricule, name, personId}
+// role: 'demandeur' | 'recipiendaire'
+function _resolveBonRoleSig(bon, role) {
+  var out = { sig: '', matricule: '', name: '', personId: '' };
+  if (!bon) return out;
+  var person = null;
+  var commercial = null;
+  if (role === 'demandeur') {
+    if (bon._demandeurAnnuaireId) person = _lookupAnnuaireById(bon._demandeurAnnuaireId);
+    if (!person && bon._demandeurType === 'commercial' && bon.commercialId) {
+      commercial = (APP.commerciaux||[]).find(function(c){ return c.id === bon.commercialId; });
+    }
+    if (!person && !commercial && bon.demandeur) person = _lookupAnnuaireByName(bon.demandeur);
+  } else if (role === 'recipiendaire') {
+    if (bon._recipiendaireAnnuaireId) person = _lookupAnnuaireById(bon._recipiendaireAnnuaireId);
+    if (!person && bon._isDispatch && bon.commercialId) {
+      commercial = (APP.commerciaux||[]).find(function(c){ return c.id === bon.commercialId; });
+    }
+    if (!person && !commercial && bon.recipiendaire) person = _lookupAnnuaireByName(bon.recipiendaire);
+  }
+  if (person) {
+    out.personId = person.id;
+    out.name = ((person.prenom||'') + ' ' + (person.nom||'')).trim();
+    out.matricule = person.matricule || '';
+    if (person.signatureKey && typeof _getSignature === 'function') {
+      out.sig = _getSignature(person.signatureKey) || '';
+    }
+  } else if (commercial) {
+    out.personId = commercial.id;
+    out.name = ((commercial.prenom||'') + ' ' + (commercial.nom||'')).trim();
+    out.matricule = commercial.matricule || '';
+    if (commercial.signatureKey && typeof _getSignature === 'function') {
+      out.sig = _getSignature(commercial.signatureKey) || '';
+    }
+  }
+  // Legacy fallback for demandeur sig (base64 stored on bon)
+  if (role === 'demandeur' && !out.sig && bon.sigDemandeur) {
+    out.sig = bon.sigDemandeur;
+    if (!out.name) out.name = bon.demandeur || '';
+  }
+  return out;
+}
+// Render a signature box body (sig img + optional date/matricule for validated bons)
+function _renderBonSigBox(bon, role) {
+  var info = _resolveBonRoleSig(bon, role);
+  var validated = bon && bon.status === 'valid\u00e9';
+  var validatedAt = (bon && bon._validatedAt) || 0;
+  var out = '';
+  if (info.sig) {
+    out += '<img src="' + info.sig + '" style="max-height:45px;display:block;margin:0 auto">';
+  }
+  if (validated) {
+    if (validatedAt) {
+      var d = new Date(validatedAt);
+      var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+      out += '<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">' + dStr + '</div>';
+    }
+    if (info.matricule) {
+      out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + info.matricule + '</div>';
+    } else if (info.name) {
+      out += '<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">' + info.name + '</div>';
+    }
+  }
+  return out;
+}
+// Commercial signature pad lifecycle (Phase 7)
+var _comSigPadAPI = null;
+function _comPreviewSigFile(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  var r = new FileReader();
+  r.onload = function(e) {
+    var dataUrl = e.target.result;
+    var dataEl = document.getElementById('com-sig-data');
+    var clrEl = document.getElementById('com-sig-cleared');
+    var prev = document.getElementById('com-sig-preview');
+    if (dataEl) dataEl.value = dataUrl;
+    if (clrEl) clrEl.value = '0';
+    if (prev) prev.innerHTML = '<img src="' + dataUrl + '" style="max-width:160px;max-height:60px;object-fit:contain">';
+  };
+  r.readAsDataURL(f);
+}
+function _comToggleDraw() {
+  var wrap = document.getElementById('com-sig-canvas-wrap');
+  if (!wrap) return;
+  if (wrap.style.display === 'none' || wrap.style.display === '') {
+    wrap.style.display = 'block';
+    if (!_comSigPadAPI) {
+      var canvas = document.getElementById('com-sig-canvas');
+      if (canvas && typeof _initSignaturePad === 'function') {
+        _comSigPadAPI = _initSignaturePad(canvas);
+      }
+    }
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+function _comClearCanvas() {
+  if (_comSigPadAPI && _comSigPadAPI.clear) _comSigPadAPI.clear();
+}
+function _comValidateCanvas() {
+  if (!_comSigPadAPI) return;
+  if (_comSigPadAPI.isEmpty && _comSigPadAPI.isEmpty()) { notify('Signature vide', 'warning'); return; }
+  var dataUrl = _comSigPadAPI.toDataUrl();
+  document.getElementById('com-sig-data').value = dataUrl;
+  document.getElementById('com-sig-cleared').value = '0';
+  var prev = document.getElementById('com-sig-preview');
+  if (prev) prev.innerHTML = '<img src="' + dataUrl + '" style="max-width:160px;max-height:60px;object-fit:contain">';
+  document.getElementById('com-sig-canvas-wrap').style.display = 'none';
+  notify('Signature captur\u00e9e \u2713', 'success');
+}
+function _comClearSig() {
+  document.getElementById('com-sig-data').value = '';
+  document.getElementById('com-sig-cleared').value = '1';
+  var prev = document.getElementById('com-sig-preview');
+  if (prev) prev.innerHTML = '<span style="font-size:11px;color:#888">Aucune (sera retir\u00e9e)</span>';
+}
 
 function _findUserIdByEmail(email) {
   if (!email) return null;
@@ -7761,6 +8081,7 @@ async function validateDispatchV3(articleIds) {
       lignes: bd.lignes,
       status: 'brouillon',
       sigDemandeur: '', sigMKT: '',
+      _isDispatch: true,
       createdAt: ts, _version: 1
     };
     APP.bons.push(bon);
@@ -8176,6 +8497,172 @@ function dInitCommercialDispatchFields(c) {
 
 
 // ============================================================
+// SIGNATURES -- RTDB cache + helpers (Phase 1)
+// ============================================================
+
+// In-memory cache: { sig_xxx: 'data:image/jpeg;base64,...' }
+// Loaded once after login, kept live via real-time listener
+var _sigCache = {};
+var _sigCacheLoaded = false;
+var _sigListenerAttached = false;
+
+// Load all signatures from RTDB (called after login from _finishAppInit)
+async function _loadSignaturesCache() {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
+  try {
+    var snap = await _firebaseDB.ref('signatures').once('value');
+    var data = snap.val() || {};
+    var count = 0;
+    for (var key in data) {
+      if (data[key] && data[key].data) { _sigCache[key] = data[key].data; count++; }
+    }
+    _sigCacheLoaded = true;
+    console.log('[PSM] Sig cache loaded: ' + count + ' signature(s)');
+    _attachSignaturesListener();
+  } catch(e) { console.warn('[PSM] sig cache load failed:', e); }
+}
+
+// Real-time listener: keeps _sigCache in sync across devices
+function _attachSignaturesListener() {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB || _sigListenerAttached) return;
+  _sigListenerAttached = true;
+  var ref = _firebaseDB.ref('signatures');
+  ref.on('child_added', function(snap) {
+    var v = snap.val();
+    if (v && v.data) { _sigCache[snap.key] = v.data; _onSignatureUpdated(snap.key); }
+  });
+  ref.on('child_changed', function(snap) {
+    var v = snap.val();
+    if (v && v.data) { _sigCache[snap.key] = v.data; _onSignatureUpdated(snap.key); }
+  });
+  ref.on('child_removed', function(snap) {
+    delete _sigCache[snap.key];
+    _onSignatureUpdated(snap.key);
+  });
+}
+
+// Compress an image File/Blob to a JPEG dataURL string
+async function _compressImageToDataUrl(file, maxW, quality) {
+  maxW = maxW || 400;
+  quality = quality || 0.85;
+  return new Promise(function(resolve, reject) {
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    img.onload = function() {
+      var w = img.width, h = img.height;
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = function() { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+    img.src = url;
+  });
+}
+
+// Upload a signature dataURL to RTDB, returns the storage key
+async function _uploadSignature(dataUrl, prefix) {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) throw new Error('Firebase DB non disponible');
+  prefix = prefix || 'sig';
+  var key = prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  var entry = {
+    data: dataUrl,
+    contentType: 'image/jpeg',
+    uploadedAt: Date.now(),
+    uploadedBy: (typeof _currentUser === 'function' && _currentUser() ? (_currentUser().email || '') : '')
+  };
+  await _firebaseDB.ref('signatures/' + key).set(entry);
+  _sigCache[key] = dataUrl;
+  return key;
+}
+
+// Delete a signature from RTDB + cache
+async function _deleteSignature(key) {
+  if (!key || typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
+  try {
+    await _firebaseDB.ref('signatures/' + key).remove();
+    delete _sigCache[key];
+  } catch(e) { console.warn('[PSM] Delete sig failed:', key, e); }
+}
+
+// Get a signature dataURL by key (returns '' if missing)
+function _getSignature(key) {
+  if (!key) return '';
+  return _sigCache[key] || '';
+}
+
+// Universal signature renderer: handles legacy base64, key-based, or empty
+function _renderSignatureImg(srcOrKey, maxHeight) {
+  if (!srcOrKey) return '';
+  maxHeight = maxHeight || 45;
+  var src = srcOrKey;
+  // Key-based lookup (new system)
+  if (typeof srcOrKey === 'string' && (srcOrKey.indexOf('sig_') === 0 || srcOrKey.indexOf('photo_') === 0)) {
+    src = _sigCache[srcOrKey] || '';
+    if (!src) return '';
+  }
+  return '<img src="' + src + '" style="max-height:' + maxHeight + 'px;display:block;margin:0 auto">';
+}
+
+// Hook: called when a signature changes in real-time
+// Will be overridden later by Annuaire/Bon UI to refresh open views
+function _onSignatureUpdated(key) {
+  // No-op default. Custom event for any listener that wants to react.
+  try {
+    var ev = new CustomEvent('psm-sig-updated', { detail: { key: key } });
+    window.dispatchEvent(ev);
+  } catch(e) {}
+}
+
+// Signature pad: attach drawing handlers to a <canvas>, returns API
+function _initSignaturePad(canvas) {
+  var ctx = canvas.getContext('2d');
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  var drawing = false, lastX = 0, lastY = 0;
+  function pos(e) {
+    var rect = canvas.getBoundingClientRect();
+    var t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX - rect.left) * (canvas.width / rect.width),
+             y: (t.clientY - rect.top) * (canvas.height / rect.height) };
+  }
+  function start(e) { e.preventDefault(); drawing = true; var p = pos(e); lastX = p.x; lastY = p.y; }
+  function move(e) {
+    if (!drawing) return; e.preventDefault();
+    var p = pos(e);
+    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
+    lastX = p.x; lastY = p.y;
+  }
+  function end() { drawing = false; }
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  canvas.addEventListener('mouseup', end);
+  canvas.addEventListener('mouseleave', end);
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', end);
+  return {
+    clear: function() { ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height); },
+    isEmpty: function() {
+      var data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (var i = 0; i < data.length; i += 4) {
+        if (data[i] < 250 || data[i+1] < 250 || data[i+2] < 250) return false;
+      }
+      return true;
+    },
+    toDataUrl: function(quality) { return canvas.toDataURL('image/jpeg', quality || 0.85); }
+  };
+}
+
+// ============================================================
 // -- Validator/canceller snapshot + print history helpers --
 function _snapshotValidator(bon) {
   try {
@@ -8184,6 +8671,11 @@ function _snapshotValidator(bon) {
       bon._validatedBy = u.email || u.id || '';
       bon._validatedByName = u.name || u.email || '';
       bon._validatedBySignature = u.signature || '';
+      // Matricule lives in APP.users (not Firebase profile yet) -- look it up by email
+      var localUser = (APP.users || []).find(function(x) {
+        return x.email && u.email && x.email.toLowerCase() === u.email.toLowerCase();
+      });
+      bon._validatedByMatricule = (localUser && localUser.matricule) || u.matricule || '';
     }
   } catch(e) {}
 }
@@ -8338,6 +8830,298 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Storage: File System Persistence ── (moved to storage.js)
+
+// ============================================================
+// VAGUE 2 -- ANNUAIRE module (Phase 4)
+// ============================================================
+var _annuaireSearchTerm = '';
+var _annuaireTagFilter = 'all';
+var _annuaireSigPadAPI = null;
+
+function renderAnnuaire() {
+  if (!canView('annuaire')) {
+    document.getElementById('content').innerHTML = '<div class="empty-state"><p>\u26d4 Acc\u00e8s refus\u00e9</p></div>';
+    return;
+  }
+  if (!APP.annuaire) APP.annuaire = [];
+  var canEditAnn = canEdit('annuaire');
+  var list = _annuaireFilteredList();
+  var pill = function(val, label, color) {
+    var active = _annuaireTagFilter === val;
+    return `<button class="btn btn-sm" style="background:${active?color:'transparent'};color:${active?'#fff':'var(--text-2)'};border:1px solid ${color};font-size:11px;padding:5px 10px" onclick="_annuaireSetTag('${val}')">${label}</button>`;
+  };
+  var searchVal = (_annuaireSearchTerm||'').replace(/"/g,'&quot;');
+  document.getElementById('content').innerHTML = `
+    <div class="flex-between mb-16">
+      <div class="page-title">\ud83d\udcd2 Annuaire</div>
+      ${canEditAnn ? `<button class="btn btn-primary" onclick="openAnnuaireModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouvelle personne</button>` : ''}
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <input type="text" id="annuaire-search" placeholder="\ud83d\udd0e Rechercher (nom, poste, matricule, email\u2026)" value="${searchVal}" oninput="_annuaireSearch(this.value)" style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);color:var(--text-1)">
+      <div style="display:flex;gap:6px">
+        ${pill('all','Tous','var(--accent)')}
+        ${pill('demandeur','Demandeur','#3d7fff')}
+        ${pill('recipiendaire','R\u00e9cipiendaire','#00c875')}
+        ${pill('mixte','Mixte','#f59e0b')}
+      </div>
+      <div style="font-size:11px;color:var(--text-2)">${list.length} / ${(APP.annuaire||[]).length}</div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Nom</th><th>Poste</th><th>D\u00e9partement</th><th>Contact</th><th>Matricule</th><th>Tag</th><th>Signature</th><th>Actions</th></tr></thead>
+      <tbody id="annuaire-tbody">${list.length === 0 ? `<tr><td colspan="8"><div class="empty-state"><p>Aucune personne dans l\u2019annuaire</p></div></td></tr>` : list.map(_annuaireRow).join('')}</tbody>
+    </table></div>`;
+  // Restore search focus if user was typing
+  setTimeout(function() {
+    var s = document.getElementById('annuaire-search');
+    if (s && _annuaireSearchTerm) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+  }, 0);
+}
+
+function _annuaireFilteredList() {
+  var arr = ((APP && APP.annuaire) || []).slice();
+  if (_annuaireTagFilter !== 'all') {
+    arr = arr.filter(function(p) { return p.tag === _annuaireTagFilter; });
+  }
+  if (_annuaireSearchTerm) {
+    var q = _annuaireSearchTerm.toLowerCase();
+    arr = arr.filter(function(p) {
+      var hay = ((p.prenom||'') + ' ' + (p.nom||'') + ' ' + (p.poste||'') + ' ' + (p.departement||'') + ' ' + (p.email||'') + ' ' + (p.telephone||'') + ' ' + (p.matricule||'')).toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+  return arr.sort(function(a,b) {
+    return ((a.nom||'') + (a.prenom||'')).localeCompare(((b.nom||'') + (b.prenom||'')), 'fr');
+  });
+}
+
+function _annuaireSearch(v) {
+  _annuaireSearchTerm = v || '';
+  var tbody = document.getElementById('annuaire-tbody');
+  if (!tbody) { renderAnnuaire(); return; }
+  var list = _annuaireFilteredList();
+  tbody.innerHTML = list.length === 0
+    ? `<tr><td colspan="8"><div class="empty-state"><p>Aucun r\u00e9sultat</p></div></td></tr>`
+    : list.map(_annuaireRow).join('');
+}
+
+function _annuaireSetTag(tag) {
+  _annuaireTagFilter = tag;
+  renderAnnuaire();
+}
+
+function _annuaireRow(p) {
+  var canEditAnn = canEdit('annuaire');
+  var tagColors = { demandeur:'#3d7fff', recipiendaire:'#00c875', mixte:'#f59e0b' };
+  var tagLabels = { demandeur:'Demandeur', recipiendaire:'R\u00e9cipiendaire', mixte:'Mixte' };
+  var tagColor = tagColors[p.tag] || 'var(--text-2)';
+  var tagLabel = tagLabels[p.tag] || '\u2014';
+  var sigSrc = p.signatureKey ? (typeof _getSignature === 'function' ? _getSignature(p.signatureKey) : '') : '';
+  return `<tr>
+    <td style="font-weight:600">${p.prenom||''} ${p.nom||''}</td>
+    <td style="font-size:12px">${p.poste||'\u2014'}</td>
+    <td style="font-size:12px;color:var(--text-2)">${p.departement||'\u2014'}</td>
+    <td style="font-size:11px;color:var(--text-2)">${p.email||''}${p.email&&p.telephone?'<br>':''}${p.telephone||''}</td>
+    <td style="font-size:12px;font-family:monospace;font-weight:700;color:var(--accent)">${p.matricule||'\u2014'}</td>
+    <td><span style="background:${tagColor}22;color:${tagColor};border-radius:99px;padding:3px 9px;font-size:10px;font-weight:700">${tagLabel}</span></td>
+    <td>${sigSrc ? `<img src="${sigSrc}" style="max-width:80px;max-height:30px;background:#fff;padding:2px;border-radius:3px">` : `<span style="font-size:10px;color:var(--text-3)">\u2014</span>`}</td>
+    <td><div style="display:flex;gap:6px">
+      ${canEditAnn ? `<button class="btn btn-sm btn-secondary" onclick="openAnnuaireModal('${p.id}')">\u270f\ufe0f</button>` : ''}
+      ${canEditAnn ? `<button class="btn btn-sm btn-danger" onclick="deleteAnnuaire('${p.id}')">\ud83d\uddd1</button>` : ''}
+    </div></td>
+  </tr>`;
+}
+
+function openAnnuaireModal(id) {
+  if (!canEdit('annuaire')) { notify('\u26d4 Acc\u00e8s refus\u00e9', 'warning'); return; }
+  if (!APP.annuaire) APP.annuaire = [];
+  var p = id ? APP.annuaire.find(function(x){ return x.id === id; }) : null;
+  var existingSigSrc = p && p.signatureKey ? (typeof _getSignature === 'function' ? _getSignature(p.signatureKey) : '') : '';
+  _annuaireSigPadAPI = null;
+  var body = `
+    <div class="form-row">
+      <div class="form-group"><label>Pr\u00e9nom *</label><input id="an-prenom" value="${(p?.prenom||'').replace(/"/g,'&quot;')}"></div>
+      <div class="form-group"><label>Nom *</label><input id="an-nom" value="${(p?.nom||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Poste / Fonction</label><input id="an-poste" value="${(p?.poste||'').replace(/"/g,'&quot;')}" placeholder="ex: Directeur Marketing"></div>
+      <div class="form-group"><label>D\u00e9partement</label><input id="an-dept" value="${(p?.departement||'').replace(/"/g,'&quot;')}" placeholder="ex: Marketing"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>T\u00e9l\u00e9phone</label><input id="an-tel" value="${(p?.telephone||'').replace(/"/g,'&quot;')}"></div>
+      <div class="form-group"><label>Email</label><input type="email" id="an-email" value="${(p?.email||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Matricule <span style="font-size:10px;color:var(--text-3)">(unique \u2014 GMA-XXX)</span></label><input id="an-matricule" value="${(p?.matricule||'').replace(/"/g,'&quot;')}" placeholder="ex: GMA-042"></div>
+      <div class="form-group"><label>Tag *</label><select id="an-tag">
+        <option value="demandeur"${(!p||p.tag==='demandeur')?' selected':''}>Demandeur (peut DEMANDER des bons)</option>
+        <option value="recipiendaire"${(p&&p.tag==='recipiendaire')?' selected':''}>R\u00e9cipiendaire (peut RECEVOIR des bons)</option>
+        <option value="mixte"${(p&&p.tag==='mixte')?' selected':''}>Mixte (les deux)</option>
+      </select></div>
+    </div>
+    <div class="form-group" style="margin-top:8px">
+      <label>Signature digitalis\u00e9e</label>
+      <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div id="an-sig-preview" style="width:160px;height:60px;background:#fff;border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden">
+          ${existingSigSrc ? `<img src="${existingSigSrc}" style="max-width:160px;max-height:60px;object-fit:contain">` : `<span style="font-size:11px;color:#888">Aucune</span>`}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('an-sig-file').click()">\ud83d\udcc1 Importer</button>
+          <button class="btn btn-secondary btn-sm" onclick="_annuaireToggleDraw()">\u270d\ufe0f Dessiner</button>
+          <button class="btn btn-danger btn-sm" onclick="_annuaireClearSig()">\ud83d\uddd1 Retirer</button>
+        </div>
+        <input type="file" id="an-sig-file" accept="image/*" style="display:none" onchange="_annuairePreviewSigFile(this)">
+        <input type="hidden" id="an-sig-data" value="">
+        <input type="hidden" id="an-sig-existing-key" value="${p?.signatureKey||''}">
+        <input type="hidden" id="an-sig-cleared" value="0">
+      </div>
+      <div id="an-sig-canvas-wrap" style="display:none;margin-top:10px">
+        <canvas id="an-sig-canvas" width="500" height="150" style="border:1px solid var(--border);background:#fff;border-radius:6px;cursor:crosshair;width:100%;max-width:500px;display:block"></canvas>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-sm btn-secondary" onclick="_annuaireClearCanvas()">Effacer</button>
+          <button class="btn btn-sm btn-primary" onclick="_annuaireValidateCanvas()">\u2713 Valider signature</button>
+        </div>
+      </div>
+    </div>`;
+  openModal('modal-annuaire', id ? 'Modifier personne' : 'Nouvelle personne', body, function() { saveAnnuaire(id); }, 'modal-lg');
+}
+
+function _annuairePreviewSigFile(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  var r = new FileReader();
+  r.onload = function(e) {
+    var dataUrl = e.target.result;
+    document.getElementById('an-sig-data').value = dataUrl;
+    document.getElementById('an-sig-cleared').value = '0';
+    var prev = document.getElementById('an-sig-preview');
+    if (prev) prev.innerHTML = `<img src="${dataUrl}" style="max-width:160px;max-height:60px;object-fit:contain">`;
+  };
+  r.readAsDataURL(f);
+}
+
+function _annuaireToggleDraw() {
+  var wrap = document.getElementById('an-sig-canvas-wrap');
+  if (!wrap) return;
+  if (wrap.style.display === 'none' || wrap.style.display === '') {
+    wrap.style.display = 'block';
+    if (!_annuaireSigPadAPI) {
+      var canvas = document.getElementById('an-sig-canvas');
+      if (canvas && typeof _initSignaturePad === 'function') {
+        _annuaireSigPadAPI = _initSignaturePad(canvas);
+      }
+    }
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+
+function _annuaireClearCanvas() {
+  if (_annuaireSigPadAPI && _annuaireSigPadAPI.clear) _annuaireSigPadAPI.clear();
+}
+
+function _annuaireValidateCanvas() {
+  if (!_annuaireSigPadAPI) return;
+  if (_annuaireSigPadAPI.isEmpty && _annuaireSigPadAPI.isEmpty()) { notify('Signature vide', 'warning'); return; }
+  var dataUrl = _annuaireSigPadAPI.toDataUrl();
+  document.getElementById('an-sig-data').value = dataUrl;
+  document.getElementById('an-sig-cleared').value = '0';
+  var prev = document.getElementById('an-sig-preview');
+  if (prev) prev.innerHTML = `<img src="${dataUrl}" style="max-width:160px;max-height:60px;object-fit:contain">`;
+  document.getElementById('an-sig-canvas-wrap').style.display = 'none';
+  notify('Signature captur\u00e9e \u2713', 'success');
+}
+
+function _annuaireClearSig() {
+  document.getElementById('an-sig-data').value = '';
+  document.getElementById('an-sig-cleared').value = '1';
+  var prev = document.getElementById('an-sig-preview');
+  if (prev) prev.innerHTML = '<span style="font-size:11px;color:#888">Aucune (sera retir\u00e9e)</span>';
+}
+
+async function saveAnnuaire(existingId) {
+  if (!canEdit('annuaire')) { notify('\u26d4 Acc\u00e8s refus\u00e9', 'warning'); return; }
+  var prenom = document.getElementById('an-prenom').value.trim();
+  var nom = document.getElementById('an-nom').value.trim();
+  if (!prenom || !nom) { notify('Pr\u00e9nom et nom requis', 'danger'); return; }
+  var matricule = (document.getElementById('an-matricule').value||'').trim();
+  if (matricule && !_isMatriculeUnique(matricule, existingId || null)) {
+    notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
+  }
+  var tag = document.getElementById('an-tag').value || 'demandeur';
+  var newSigDataUrl = document.getElementById('an-sig-data').value || '';
+  var existingKey = document.getElementById('an-sig-existing-key').value || '';
+  var sigCleared = document.getElementById('an-sig-cleared').value === '1';
+  var fields = {
+    prenom: prenom,
+    nom: nom,
+    poste: document.getElementById('an-poste').value.trim(),
+    departement: document.getElementById('an-dept').value.trim(),
+    telephone: document.getElementById('an-tel').value.trim(),
+    email: document.getElementById('an-email').value.trim(),
+    matricule: matricule,
+    tag: tag,
+  };
+  // Resolve signature key (upload new / delete old / clear)
+  var finalKey = existingKey;
+  try {
+    if (newSigDataUrl) {
+      if (existingKey && typeof _deleteSignature === 'function') {
+        try { await _deleteSignature(existingKey); } catch(e) {}
+      }
+      if (typeof _uploadSignature === 'function') {
+        finalKey = await _uploadSignature(newSigDataUrl, 'sig');
+      } else {
+        finalKey = '';
+      }
+    } else if (sigCleared && existingKey) {
+      if (typeof _deleteSignature === 'function') {
+        try { await _deleteSignature(existingKey); } catch(e) {}
+      }
+      finalKey = '';
+    }
+  } catch(e) {
+    console.warn('[PSM] Annuaire sig op failed:', e);
+    notify('Erreur signature: ' + (e.message || e), 'error');
+    return;
+  }
+  fields.signatureKey = finalKey;
+  if (!APP.annuaire) APP.annuaire = [];
+  if (existingId) {
+    var p = APP.annuaire.find(function(x) { return x.id === existingId; });
+    if (!p) return;
+    var old = Object.assign({}, p);
+    Object.assign(p, fields);
+    p._version = (p._version||1) + 1;
+    auditLog('EDIT', 'annuaire', p.id, old, p);
+    notify('Personne mise \u00e0 jour \u2713', 'success');
+  } else {
+    var np = Object.assign(
+      { id: 'an_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), createdAt: Date.now(), _version: 1 },
+      fields
+    );
+    APP.annuaire.push(np);
+    auditLog('CREATE', 'annuaire', np.id, null, np);
+    notify('Personne ajout\u00e9e \u2713', 'success');
+  }
+  saveDB();
+  closeModal();
+  renderAnnuaire();
+}
+
+async function deleteAnnuaire(id) {
+  if (!canEdit('annuaire')) { notify('\u26d4 Acc\u00e8s refus\u00e9', 'warning'); return; }
+  if (!APP.annuaire) APP.annuaire = [];
+  var p = APP.annuaire.find(function(x) { return x.id === id; });
+  if (!p) return;
+  if (!confirm('Supprimer ' + (p.prenom||'') + ' ' + (p.nom||'') + ' de l\u2019annuaire ?\n\nLa signature associ\u00e9e sera \u00e9galement supprim\u00e9e.')) return;
+  if (p.signatureKey && typeof _deleteSignature === 'function') {
+    try { await _deleteSignature(p.signatureKey); } catch(e) {}
+  }
+  APP.annuaire = APP.annuaire.filter(function(x) { return x.id !== id; });
+  auditLog('DELETE', 'annuaire', id, p, null);
+  saveDB();
+  renderAnnuaire();
+  notify('Personne supprim\u00e9e', 'warning');
+}
 
 
 initApp();
