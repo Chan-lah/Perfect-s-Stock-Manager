@@ -3177,7 +3177,7 @@ function generateBonHTML(bon, overrides) {
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Réceptionnaire</div>
-          ${_isDonBon ? _renderBonSigBox(bon, 'demandeur') : _renderBonSigBox(bon, 'recipiendaire')}
+          <!-- Cellule volontairement vide : signature/matricule manuscrits par la personne qui retire physiquement (peut différer du destinataire officiel) -->
         </td>
       </tr>
     </table>
