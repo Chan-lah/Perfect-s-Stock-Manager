@@ -488,7 +488,9 @@ function loadDB() {
 // ============================================================
 let _backupTimer = null;
 let _savedDataLoaded = false; // true si des données ont été chargées depuis une sauvegarde
+var _psmIsMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 function startBackupScheduler() {
+  if (_psmIsMobile) return; // Mobile: skip local backups (cloud sync + audit remain active)
   if(_backupTimer) clearInterval(_backupTimer);
   const min = parseInt(APP.settings.backupInterval)||180;
   if(min > 0) _backupTimer = setInterval(() => autoBackup(true), min * 60000);

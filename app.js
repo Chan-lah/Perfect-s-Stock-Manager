@@ -2619,6 +2619,8 @@ function renderBons() {
 
 function renderBonRow(b) {
   const statusColor=(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.color)||'badge-yellow';
+  const _isAdmin = _currentUser() && _currentUser().role === 'admin';
+  const _bonLocked = b.status === 'validé' && !_isAdmin;
   return `<tr id="bon-row-${b.id}">
     <td style="font-family:monospace;font-weight:700;color:var(--accent)">${b.numero}</td>
     <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${b.recipiendaire||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
@@ -2626,12 +2628,12 @@ function renderBonRow(b) {
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
     <td class="editable" id="td-bstat-${b.id}"><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
     <td><div style="display:flex;gap:4px">
-      ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:(b.status==='validé'?`<button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕ Annuler</button>`:`<button class="btn btn-sm btn-success" onclick="reactivateBon('${b.id}')" title="Réactiver ce bon">↻ Réactiver</button>`)}
+      ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:(b.status==='validé'?(_isAdmin?`<button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕ Annuler</button>`:''):`<button class="btn btn-sm btn-success" onclick="reactivateBon('${b.id}')" title="Réactiver ce bon">↻ Réactiver</button>`)}
       <button class="btn btn-sm btn-secondary" onclick="previewBon('${b.id}')">👁</button>
       <button class="btn btn-sm btn-secondary" onclick="printBon('${b.id}')">🖨</button>
       <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${b.id}')" title="PDF">📥</button>
-      <button class="btn btn-sm btn-secondary" onclick="openBonModal('${b.id}')">✏️</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteBon('${b.id}')">🗑</button>
+      ${_bonLocked?'':`<button class="btn btn-sm btn-secondary" onclick="openBonModal('${b.id}')">✏️</button>`}
+      ${_bonLocked?'':`<button class="btn btn-sm btn-danger" onclick="deleteBon('${b.id}')">🗑</button>`}
     </div></td>
   </tr>`;
 }
@@ -2752,6 +2754,9 @@ function attachBonEditors(b) {
 
 function openBonModal(bonId) {
   const bon = bonId ? APP.bons.find(b=>b.id===bonId) : null;
+  if (bon && bon.status === 'validé' && (!_currentUser() || _currentUser().role !== 'admin')) {
+    notify('Bon validé — modification réservée à l\'admin', 'warning'); return;
+  }
   const coOptions='';
   const comOptions=APP.commerciaux.map(c=>`<option value="${c.id}" ${bon?.commercialId===c.id?'selected':''}>${c.prenom} ${c.nom}</option>`).join('');
   const today=new Date().toISOString().split('T')[0];
@@ -2982,6 +2987,9 @@ async function saveBon(existingId) {
 
 function deleteBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
+  if (bon.status === 'validé' && (!_currentUser() || _currentUser().role !== 'admin')) {
+    notify('Bon validé — suppression réservée à l\'admin', 'warning'); return;
+  }
   var _wasDeducted = (bon.status === 'validé');
   if(!confirm('Supprimer le bon '+bon.numero+' ?' + (_wasDeducted ? '\nLe stock sera restauré.' : ''))) return;
   // Restore stock with audit mouvement if bon was validated
