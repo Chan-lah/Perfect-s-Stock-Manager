@@ -2792,31 +2792,23 @@ function openBonModal(bonId) {
   <div class="form-row">
     <div class="form-group"><label>Demandeur</label>
       <select id="bon-demandeur-type" onchange="bonDemandeurToggle()">
-        <option value="commercial" ${bon && bon._demandeurType==='custom'?'':'selected'}>Commercial</option>
-        <option value="custom" ${bon && bon._demandeurType==='custom'?'selected':''}>Autre (annuaire / saisie libre)</option>
+        <option value="list" ${bon && bon._demandeurType==='custom'?'':'selected'}>Commercial / Annuaire</option>
+        <option value="custom" ${bon && bon._demandeurType==='custom'?'selected':''}>Saisie Libre</option>
       </select>
-      <select id="bon-commercial" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'display:none':''}"><option value="">\u2014 S\u00e9lectionner \u2014</option>${comOptions}</select>
+      <select id="bon-commercial" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'display:none':''}"><option value="">\u2014 S\u00e9lectionner \u2014</option>${_buildMergedPersonList('demandeur', bon?.demandeur)}</select>
       <div id="bon-custom-demandeur-wrap" style="margin-top:4px;${bon && bon._demandeurType==='custom'?'':'display:none'}">
-        <input id="bon-custom-demandeur" list="custom-demandeurs-list" value="${bon && bon._demandeurType==='custom' ? (bon.demandeur||'').replace(/"/g,'&quot;') : ''}" placeholder="Nom du demandeur (annuaire ou libre)" style="width:100%">
-        <datalist id="custom-demandeurs-list">${(function(){
-          var seen={}; var opts=[];
-          ((APP.settings||{})._customDemandeurs||[]).forEach(function(n){ var k=n.toLowerCase(); if(!seen[k]){seen[k]=1; opts.push('<option value="'+n.replace(/"/g,'&quot;')+'">');} });
-          ((APP.annuaire||[]).filter(function(p){ return p.tag==='demandeur'||p.tag==='mixte'; })).forEach(function(p){
-            var nm=((p.prenom||'')+' '+(p.nom||'')).trim();
-            var k=nm.toLowerCase();
-            if(nm && !seen[k]){ seen[k]=1; opts.push('<option value="'+nm.replace(/"/g,'&quot;')+'">'+(p.poste?p.poste.replace(/"/g,'&quot;'):'')+'</option>'); }
-          });
-          return opts.join('');
-        })()}</datalist>
+        <input id="bon-custom-demandeur" value="${bon && bon._demandeurType==='custom' ? (bon.demandeur||'').replace(/"/g,'&amp;quot;') : ''}" placeholder="Nom et pr\u00e9nom (saisie libre)" style="width:100%">
       </div>
     </div>
-    <div class="form-group"><label>Destinataire / Récipiendaire *</label>
-      <input id="bon-recip" list="recip-options-list" value="${(bon?.recipiendaire||'').replace(/"/g,'&quot;')}" placeholder="Nom (annuaire ou libre)">
-      <datalist id="recip-options-list">${((APP.annuaire||[]).filter(function(p){ return p.tag==='recipiendaire'||p.tag==='mixte'; })).map(function(p){
-        var nm=((p.prenom||'')+' '+(p.nom||'')).trim();
-        if(!nm) return '';
-        return '<option value="'+nm.replace(/"/g,'&quot;')+'">'+(p.poste?p.poste.replace(/"/g,'&quot;'):'')+'</option>';
-      }).join('')}</datalist>
+    <div class="form-group"><label>Destinataire / R\u00e9cipiendaire *</label>
+      <select id="bon-recip-type" onchange="bonRecipToggle()">
+        <option value="list" ${bon && bon._recipType==='custom'?'':'selected'}>Commercial / Annuaire</option>
+        <option value="custom" ${bon && bon._recipType==='custom'?'selected':''}>Saisie Libre</option>
+      </select>
+      <select id="bon-recip-list" style="margin-top:4px;${bon && bon._recipType==='custom'?'display:none':''}"><option value="">\u2014 S\u00e9lectionner \u2014</option>${_buildMergedPersonList('recipiendaire', bon?.recipiendaire)}</select>
+      <div id="bon-custom-recip-wrap" style="margin-top:4px;${bon && bon._recipType==='custom'?'':'display:none'}">
+        <input id="bon-custom-recip" value="${bon && bon._recipType==='custom' ? (bon.recipiendaire||'').replace(/"/g,'&amp;quot;') : ''}" placeholder="Nom et pr\u00e9nom (saisie libre)" style="width:100%">
+      </div>
     </div>
   </div>
   <div class="form-row">
@@ -2851,22 +2843,64 @@ function bonAutoFillCode(sel) {
   }
 }
 
+// Build merged alphabetical list of commerciaux + annuaire names (all UPPERCASE)
+function _buildMergedPersonList(context, selectedValue) {
+  var names = [];
+  var seen = {};
+  // Add commerciaux
+  (APP.commerciaux || []).forEach(function(c) {
+    var nm = (((c.prenom||'') + ' ' + (c.nom||'')).trim()).toUpperCase();
+    if (nm && !seen[nm]) { seen[nm] = 1; names.push({name: nm, src: 'com', id: c.id}); }
+  });
+  // Add annuaire (all tags for both contexts)
+  (APP.annuaire || []).forEach(function(p) {
+    var nm = (((p.prenom||'') + ' ' + (p.nom||'')).trim()).toUpperCase();
+    if (nm && !seen[nm]) { seen[nm] = 1; names.push({name: nm, src: 'ann', id: p.id}); }
+  });
+  // Sort alphabetically
+  names.sort(function(a, b) { return a.name.localeCompare(b.name, 'fr'); });
+  var selUpper = (selectedValue || '').toUpperCase().trim();
+  return names.map(function(n) {
+    var sel = (n.name === selUpper) ? ' selected' : '';
+    return '<option value="' + n.name.replace(/"/g,'&quot;') + '"' + sel + '>' + n.name + '</option>';
+  }).join('');
+}
+
 function bonDemandeurToggle() {
   var t = document.getElementById('bon-demandeur-type').value;
-  var comSel = document.getElementById('bon-commercial');
+  var listSel = document.getElementById('bon-commercial');
   var custWrap = document.getElementById('bon-custom-demandeur-wrap');
   if (t === 'custom') {
-    comSel.style.display = 'none';
+    listSel.style.display = 'none';
     custWrap.style.display = '';
   } else {
-    comSel.style.display = '';
+    listSel.style.display = '';
+    custWrap.style.display = 'none';
+  }
+}
+
+function bonRecipToggle() {
+  var t = document.getElementById('bon-recip-type').value;
+  var listSel = document.getElementById('bon-recip-list');
+  var custWrap = document.getElementById('bon-custom-recip-wrap');
+  if (t === 'custom') {
+    listSel.style.display = 'none';
+    custWrap.style.display = '';
+  } else {
+    listSel.style.display = '';
     custWrap.style.display = 'none';
   }
 }
 
 async function saveBon(existingId) {
-  const recip=document.getElementById('bon-recip').value.trim();
-  if(!recip){notify('Récipendaire requis','error');return;}
+  var _recipType = (document.getElementById('bon-recip-type')||{}).value || 'list';
+  var recip = '';
+  if (_recipType === 'custom') {
+    recip = ((document.getElementById('bon-custom-recip')||{}).value || '').trim().toUpperCase();
+  } else {
+    recip = ((document.getElementById('bon-recip-list')||{}).value || '').trim().toUpperCase();
+  }
+  if(!recip){notify('Récipiendaire requis','error');return;}
   const rows=document.querySelectorAll('#b-lignes .b-ligne');
   const lignes=[];
   rows.forEach(row=>{
@@ -2882,26 +2916,18 @@ async function saveBon(existingId) {
   const com=comId?APP.commerciaux.find(c=>c.id===comId):null;
   const coId=null;
   // Demandeur logic
-  var demType = (document.getElementById('bon-demandeur-type')||{}).value || 'commercial';
+  var demType = (document.getElementById('bon-demandeur-type')||{}).value || 'list';
   var demandeur = '';
   var _demandeurType = demType;
   if (demType === 'custom') {
-    demandeur = (document.getElementById('bon-custom-demandeur')||{}).value || '';
-    if (demandeur.trim()) {
-      if (!APP.settings) APP.settings = {};
-      if (!APP.settings._customDemandeurs) APP.settings._customDemandeurs = [];
-      var lcName = demandeur.trim().toLowerCase();
-      if (!APP.settings._customDemandeurs.some(function(n) { return n.toLowerCase() === lcName; })) {
-        APP.settings._customDemandeurs.push(demandeur.trim());
-      }
-    }
+    demandeur = ((document.getElementById('bon-custom-demandeur')||{}).value || '').trim().toUpperCase();
   } else {
-    demandeur = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : '';
+    demandeur = ((document.getElementById('bon-commercial')||{}).value || '').trim().toUpperCase();
   }
   // Phase 5: resolve annuaire IDs from name (best-effort)
   var _demandeurAnnuaireId = '';
   var _recipiendaireAnnuaireId = '';
-  if (demType !== 'commercial') {
+  if (demType !== 'list' || true) {
     var _dp = (typeof _lookupAnnuaireByName === 'function') ? _lookupAnnuaireByName(demandeur) : null;
     if (_dp) _demandeurAnnuaireId = _dp.id;
   }
@@ -2951,7 +2977,7 @@ async function saveBon(existingId) {
     if(_willDeduct) {
       lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
     }
-    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
+    Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
     if(_oldStatus !== _newStatus) _setBonStatusTimestamp(bon, _newStatus);
     auditLog('UPDATE','bon',bon.id,old,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -2973,7 +2999,7 @@ async function saveBon(existingId) {
         return;
       }
     }
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
     if(_newStatus === 'validé') {
       bon._validatedAt = Date.now();
       lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
@@ -3113,16 +3139,7 @@ function generateBonHTML(bon, overrides) {
     </tr>`).join('');
   const blankCount=Math.max(0,minRows-(bon.lignes||[]).length);
   const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:10px;border:1px solid #555;height:28px"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td></tr>`).join('');
-  // Auto-fill detection: when motif starts with "DON" or "DOTATION" (any case),
-  // the gestionnaire (validator) is essentially the donor, so:
-  //  - Demandeur/Commercial cell -> shows Gestionnaire info
-  //  - Gestionnaire cell         -> unchanged, still Gestionnaire
-  //  - Receptionnaire cell       -> DON: shows the bon's Demandeur info
-  //                                 DOTATION: annuaire lookup (or just date)
-  const _objet = String(bon.objet||'').trim();
-  const _isDonBon = /^DON\b/i.test(_objet);
-  const _isDotationBon = /^DOTATION/i.test(_objet);
-  const _isAutoFillBon = _isDonBon || _isDotationBon;
+  // All bons: left+center = validator sig+date+matricule, right = validation date only
   return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:900px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
       <tr>
@@ -3174,18 +3191,18 @@ function generateBonHTML(bon, overrides) {
       <tr>
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px">
           <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:4px">Date et Signature</div>
-          <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:8px">Demandeur / Commercial</div>
-          ${_isAutoFillBon ? _renderBonGestionnaireSigBox(bon) : _renderBonSigBox(bon, 'demandeur')}
+          <div style="font-size:11px;font-weight:700;color:#111;text-align:center;margin-bottom:8px">Gestionnaire de Stock</div>
+          ${_renderBonGestionnaireSigBox(bon)}
         </td>
         <td style="width:34%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
-          <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Gestionnaire</div>
+          <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Magasin</div>
           ${_renderBonGestionnaireSigBox(bon)}
         </td>
         <td style="width:33%;padding:12px 14px;border:1px solid #555;vertical-align:top;height:90px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:4px">Date et Signature</div>
-          <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">Réceptionnaire</div>
-          <!-- Cellule volontairement vide : signature/matricule manuscrits par la personne qui retire physiquement (peut différer du destinataire officiel) -->
+          <div style="font-size:11px;font-weight:700;color:#111;margin-bottom:8px">R\u00e9ceptionnaire</div>
+          ${_renderBonReceptionnaireDate(bon)}
         </td>
       </tr>
     </table>
@@ -7403,6 +7420,15 @@ function _resolveBonRoleSig(bon, role) {
   return out;
 }
 // Render a signature box body (sig img + optional date/matricule for validated bons)
+// Render only the validation date in the Réceptionnaire cell (no sig, no matricule)
+function _renderBonReceptionnaireDate(bon) {
+  if (!bon || bon.status !== 'validé') return '';
+  var validatedAt = bon._validatedAt || 0;
+  if (!validatedAt) return '';
+  var d = new Date(validatedAt);
+  var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  return '<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">' + dStr + '</div>';
+}
 function _renderBonSigBox(bon, role) {
   var info = _resolveBonRoleSig(bon, role);
   var validated = bon && bon.status === 'valid\u00e9';
@@ -9274,30 +9300,9 @@ function openAnnuaireModal(id) {
         <option value="mixte"${(p&&p.tag==='mixte')?' selected':''}>Mixte (les deux)</option>
       </select></div>
     </div>
-    <div class="form-group" style="margin-top:8px">
-      <label>Signature digitalis\u00e9e</label>
-      <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-        <div id="an-sig-preview" style="width:160px;height:60px;background:#fff;border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden">
-          ${existingSigSrc ? `<img src="${existingSigSrc}" style="max-width:160px;max-height:60px;object-fit:contain">` : `<span style="font-size:11px;color:#888">Aucune</span>`}
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('an-sig-file').click()">\ud83d\udcc1 Importer</button>
-          <button class="btn btn-secondary btn-sm" onclick="_annuaireToggleDraw()">\u270d\ufe0f Dessiner</button>
-          <button class="btn btn-danger btn-sm" onclick="_annuaireClearSig()">\ud83d\uddd1 Retirer</button>
-        </div>
-        <input type="file" id="an-sig-file" accept="image/*" style="display:none" onchange="_annuairePreviewSigFile(this)">
-        <input type="hidden" id="an-sig-data" value="">
-        <input type="hidden" id="an-sig-existing-key" value="${p?.signatureKey||''}">
-        <input type="hidden" id="an-sig-cleared" value="0">
-      </div>
-      <div id="an-sig-canvas-wrap" style="display:none;margin-top:10px">
-        <canvas id="an-sig-canvas" width="500" height="150" style="border:1px solid var(--border);background:#fff;border-radius:6px;cursor:crosshair;width:100%;max-width:500px;display:block"></canvas>
-        <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn btn-sm btn-secondary" onclick="_annuaireClearCanvas()">Effacer</button>
-          <button class="btn btn-sm btn-primary" onclick="_annuaireValidateCanvas()">\u2713 Valider signature</button>
-        </div>
-      </div>
-    </div>`;
+    <input type="hidden" id="an-sig-data" value="">
+    <input type="hidden" id="an-sig-existing-key" value="${p?.signatureKey||''}">
+    <input type="hidden" id="an-sig-cleared" value="0">`;
   openModal('modal-annuaire', id ? 'Modifier personne' : 'Nouvelle personne', body, function() { saveAnnuaire(id); }, 'modal-lg');
 }
 
