@@ -82,6 +82,7 @@ function _syncProfileToLocal(profile) {
     if (profile.photo) existing.photo = profile.photo;
     if (profile.signature) existing.signature = profile.signature;
     if (profile.matricule) existing.matricule = profile.matricule;
+    if (profile.signatureKey) existing.signatureKey = profile.signatureKey;
   } else {
     APP.users.push({
       id: 'u_' + Date.now(),
@@ -92,6 +93,7 @@ function _syncProfileToLocal(profile) {
       photo: profile.photo || null,
       signature: profile.signature || null,
       matricule: profile.matricule || null,
+      signatureKey: profile.signatureKey || null,
       permissions: profile.permissions || null,
       createdAt: Date.now(),
       _version: 1
@@ -464,7 +466,7 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
   return { user: { uid: newUid, email: email } };
 }
 
-async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature, matricule) {
+async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature, matricule, signatureKey) {
   if (!_firebaseDB) return;
   // Find profile by email
   var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(email).once('value');
@@ -478,6 +480,7 @@ async function _adminUpdateProfile(email, displayName, role, permissions, isActi
   if (photo) updates.photo = photo;
   if (signature) updates.signature = signature;
   if (matricule !== undefined) updates.matricule = matricule;
+  if (signatureKey !== undefined) updates.signatureKey = signatureKey;
   await _firebaseDB.ref('profiles/' + uid).update(updates);
   logActivity('admin_update_user', 'Modification: ' + email + ' -> ' + role);
 }

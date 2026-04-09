@@ -7185,7 +7185,7 @@ async function saveUserModal(userId) {
       }
       // Update Firebase profile (mirrors photo + resolved sig dataUrl)
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
-        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule); } catch(e) { console.warn('[PSM] profile update:', e); }
+        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule, finalSigKey); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
     } else {
       // ── CREATE new user ──
@@ -8885,9 +8885,14 @@ function _snapshotValidator(bon) {
         return x.email && u.email && x.email.toLowerCase() === u.email.toLowerCase();
       });
       var resolvedSig = '';
+      // Try signatureKey from local user, then from current profile
       if (localUser && localUser.signatureKey && typeof _getSignature === 'function') {
         resolvedSig = _getSignature(localUser.signatureKey) || '';
       }
+      if (!resolvedSig && u.signatureKey && typeof _getSignature === 'function') {
+        resolvedSig = _getSignature(u.signatureKey) || '';
+      }
+      // Fallback: base64 from profile or local user
       if (!resolvedSig) resolvedSig = u.signature || (localUser && localUser.signature) || '';
       bon._validatedBySignature = resolvedSig;
       bon._validatedByMatricule = (localUser && localUser.matricule) || u.matricule || '';
