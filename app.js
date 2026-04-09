@@ -7152,7 +7152,7 @@ async function saveUserModal(userId) {
       }
       // Update Firebase profile (mirrors photo + resolved sig dataUrl)
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
-        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl); } catch(e) { console.warn('[PSM] profile update:', e); }
+        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
     } else {
       // ── CREATE new user ──
@@ -7411,8 +7411,6 @@ function _renderBonSigBox(bon, role) {
     }
     if (info.matricule) {
       out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + info.matricule + '</div>';
-    } else if (info.name) {
-      out += '<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">' + info.name + '</div>';
     }
   }
   return out;
@@ -7470,8 +7468,6 @@ function _renderBonGestionnaireSigBox(bon) {
     }
     if (matricule) {
       out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + matricule + '</div>';
-    } else if (name) {
-      out += '<div style="font-size:10px;color:#222;text-align:center;margin-top:1px;font-style:italic">' + name + '</div>';
     }
   }
   return out;

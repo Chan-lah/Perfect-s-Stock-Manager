@@ -78,9 +78,10 @@ function _syncProfileToLocal(profile) {
     existing.name = profile.display_name || existing.name;
     existing.role = profile.role || existing.role || 'viewer';  // Firebase role wins, keep existing if missing
     existing.permissions = profile.permissions || existing.permissions;
-    // Restore photo/signature from Firebase profile if available
+    // Restore photo/signature/matricule from Firebase profile if available
     if (profile.photo) existing.photo = profile.photo;
     if (profile.signature) existing.signature = profile.signature;
+    if (profile.matricule) existing.matricule = profile.matricule;
   } else {
     APP.users.push({
       id: 'u_' + Date.now(),
@@ -90,6 +91,7 @@ function _syncProfileToLocal(profile) {
       role: profile.role || 'viewer',
       photo: profile.photo || null,
       signature: profile.signature || null,
+      matricule: profile.matricule || null,
       permissions: profile.permissions || null,
       createdAt: Date.now(),
       _version: 1
@@ -462,7 +464,7 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
   return { user: { uid: newUid, email: email } };
 }
 
-async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature) {
+async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature, matricule) {
   if (!_firebaseDB) return;
   // Find profile by email
   var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(email).once('value');
@@ -475,6 +477,7 @@ async function _adminUpdateProfile(email, displayName, role, permissions, isActi
   if (isActive !== undefined) updates.is_active = isActive;
   if (photo) updates.photo = photo;
   if (signature) updates.signature = signature;
+  if (matricule !== undefined) updates.matricule = matricule;
   await _firebaseDB.ref('profiles/' + uid).update(updates);
   logActivity('admin_update_user', 'Modification: ' + email + ' -> ' + role);
 }
