@@ -2448,7 +2448,8 @@ function saveManualStock() {
   APP.mouvements.unshift({
     id: generateId(), type: mvtType, ts: Date.now(),
     articleId: art.id, articleName: art.name,
-    qty: Math.abs(delta), note: mvtNote, commercialId: ''
+    qty: Math.abs(delta), note: mvtNote, commercialId: '',
+    stockBefore: oldStock, stockAfter: art.stock
   });
   auditLog(type === 'initial' ? 'STOCK_INIT' : mvtType === 'entree' ? 'STOCK_ENTREE' : 'STOCK_SORTIE',
     'article', art.id, { stock: oldStock }, { stock: art.stock, note: mvtNote });
@@ -2486,10 +2487,11 @@ function openMvtModal(artId) {
     const qty=parseInt(document.getElementById('m-qty').value)||1;
     const comId=document.getElementById('m-com').value;
     if(type==='sortie'&&qty>art.stock){notify('Stock insuffisant','danger');return;}
-    const mvt={id:generateId(),type,articleId:art.id,articleName:art.name,qty,ts:Date.now(),commercialId:comId||null,note:document.getElementById('m-note').value};
-    APP.mouvements.push(mvt);
+    var _sbefore = art.stock;
     if(type==='sortie') art.stock-=qty; else art.stock+=qty;
-    auditLog(type,'article',art.id,{stock:art.stock+(type==='sortie'?qty:-qty)},{stock:art.stock});
+    const mvt={id:generateId(),type,articleId:art.id,articleName:art.name,qty,ts:Date.now(),commercialId:comId||null,note:document.getElementById('m-note').value,stockBefore:_sbefore,stockAfter:art.stock};
+    APP.mouvements.push(mvt);
+    auditLog(type,'article',art.id,{stock:_sbefore},{stock:art.stock});
     saveDB(); closeModal(); filterArticles(); updateAlertBadge();
     notify(`${type==='sortie'?'Sortie':'Entrée'} enregistrée`,'success');
   });
@@ -2686,11 +2688,13 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > 0) {
+        var _sb = art.stock;
         art.stock -= l.qty;
         APP.mouvements.unshift({
           id: generateId(), type: 'sortie', ts: Date.now(),
           articleId: art.id, articleName: art.name, qty: l.qty,
-          note: 'Bon ' + (b.numero||'') + ' → ' + (b.recipiendaire||''), commercialId: b.commercialId||''
+          note: 'Bon ' + (b.numero||'') + ' → ' + (b.recipiendaire||''), commercialId: b.commercialId||'',
+          stockBefore: _sb, stockAfter: art.stock
         });
       }
     });
@@ -2700,11 +2704,13 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > 0) {
+        var _sb = art.stock;
         art.stock += l.qty;
         APP.mouvements.unshift({
           id: generateId(), type: 'entree', ts: Date.now(),
           articleId: art.id, articleName: art.name, qty: l.qty,
-          note: 'Retour brouillon Bon ' + (b.numero||''), commercialId: b.commercialId||''
+          note: 'Retour brouillon Bon ' + (b.numero||''), commercialId: b.commercialId||'',
+          stockBefore: _sb, stockAfter: art.stock
         });
       }
     });
@@ -2714,11 +2720,13 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > 0) {
+        var _sb = art.stock;
         art.stock += l.qty;
         APP.mouvements.unshift({
           id: generateId(), type: 'entree', ts: Date.now(),
           articleId: art.id, articleName: art.name, qty: l.qty,
-          note: 'Annulation Bon ' + (b.numero||''), commercialId: b.commercialId||''
+          note: 'Annulation Bon ' + (b.numero||''), commercialId: b.commercialId||'',
+          stockBefore: _sb, stockAfter: art.stock
         });
       }
     });
@@ -2732,11 +2740,13 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
     (b.lignes || []).forEach(l => {
       const art = APP.articles.find(a => a.id === l.articleId);
       if(art && l.qty > 0) {
+        var _sb = art.stock;
         art.stock -= l.qty;
         APP.mouvements.unshift({
           id: generateId(), type: 'sortie', ts: Date.now(),
           articleId: art.id, articleName: art.name, qty: l.qty,
-          note: 'Réactivation Bon ' + (b.numero||''), commercialId: b.commercialId||''
+          note: 'Réactivation Bon ' + (b.numero||''), commercialId: b.commercialId||'',
+          stockBefore: _sb, stockAfter: art.stock
         });
       }
     });
@@ -2955,7 +2965,7 @@ async function saveBon(existingId) {
         var art=APP.articles.find(function(a){return a.id===l.articleId;});
         if(art && l.qty>0){
           art.stock+=l.qty;
-          APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Modif Bon '+(bon.numero||'')+' (restauration)'});
+          var _sb7=art.stock-l.qty; APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Modif Bon '+(bon.numero||'')+' (restauration)',stockBefore:_sb7,stockAfter:art.stock});
         }
       });
     }
@@ -2983,7 +2993,7 @@ async function saveBon(existingId) {
     }
     // Deduct new ONLY if needed
     if(_willDeduct) {
-      lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero});}});
+      lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){var _sb8=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero,stockBefore:_sb8,stockAfter:art.stock});}});
     }
     Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
     if(_oldStatus !== _newStatus) _setBonStatusTimestamp(bon, _newStatus);
@@ -3010,7 +3020,7 @@ async function saveBon(existingId) {
     const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
     if(_newStatus === 'validé') {
       bon._validatedAt = Date.now();
-      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero});auditLog('STOCK_OUT','article',art.id,old,art);}});
+      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};var _sb9=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero,stockBefore:_sb9,stockAfter:art.stock});auditLog('STOCK_OUT','article',art.id,old,art);}});
     }
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -3032,7 +3042,7 @@ function deleteBon(id) {
       var art=APP.articles.find(function(a){return a.id===l.articleId;});
       if(art && l.qty>0){
         art.stock+=l.qty;
-        APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Suppression Bon '+(bon.numero||'')});
+        var _sb10=art.stock-l.qty; APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:bon.commercialId||null,note:'Suppression Bon '+(bon.numero||''),stockBefore:_sb10,stockAfter:art.stock});
       }
     });
   }
@@ -3357,7 +3367,7 @@ function filterMvt() {
         <td><span class="badge ${isE?'badge-green':'badge-orange'}" style="white-space:nowrap">${isE?'↑ Entrée':'↓ Sortie'}</span></td>
         <td style="font-weight:600">${m.articleName||'—'}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--text-2)">${art?.code||'—'}</td>
-        <td style="font-size:15px;font-weight:700;color:${isE?'var(--success)':'var(--accent3)'};white-space:nowrap">${isE?'+':'-'}${m.qty}</td>
+        <td style="white-space:nowrap"><div style="font-size:15px;font-weight:700;color:${isE?'var(--success)':'var(--accent3)'}">${isE?'+':'-'}${m.qty}</div>${m.stockBefore!=null?'<div style="font-size:9px;color:var(--text-3);line-height:1.3;margin-top:2px">Avant: <b>'+m.stockBefore+'</b> \u2192 Apr\u00e8s: <b>'+m.stockAfter+'</b></div>':''}</td>
         <td style="font-size:12px">${agentLabel}</td>
         <td style="font-size:12px;color:var(--text-2);max-width:200px">${m.obs||m.note||'—'}</td>
       </tr>`;
@@ -3386,10 +3396,11 @@ function openNewMvtModal(type) {
     if(type==='sortie'&&qty>art.stock){notify('Stock insuffisant','error');return;}
     const old={...art};
     if(type==='entree') art.stock+=qty; else art.stock-=qty;
+    var _sb12=art.stock;
     const mvt={id:generateId(),type,ts:Date.now(),articleId:art.id,articleName:art.name,qty,
       fournisseurId:type==='entree'?(document.getElementById('mvt-founis')?.value||null):null,
       commercialId:type==='sortie'?(document.getElementById('mvt-com')?.value||null):null,
-      obs:document.getElementById('mvt-obs').value};
+      obs:document.getElementById('mvt-obs').value,stockBefore:_sb12,stockAfter:type==='entree'?_sb12+qty:_sb12-qty};
     APP.mouvements.push(mvt);
     auditLog('STOCK_'+type.toUpperCase(),'article',art.id,old,art);
     saveDB();closeModal();filterMvt();updateAlertBadge();
@@ -5087,7 +5098,7 @@ function openReceptionModal(cmdId) {
       var art = APP.articles.find(function(a){ return a.id === ligne.articleId; });
       if (art) {
         art.stock += qtyToAdd;
-        APP.mouvements.push({ id: generateId(), type: 'entree', articleId: art.id, articleName: art.name, qty: qtyToAdd, ts: dateTs, fournisseurId: c.fournisseurId, note: 'R\u00e9ception ' + c.numero + (note ? ' - ' + note : '') });
+        var _sb11=art.stock-qtyToAdd; APP.mouvements.push({ id: generateId(), type: 'entree', articleId: art.id, articleName: art.name, qty: qtyToAdd, ts: dateTs, fournisseurId: c.fournisseurId, note: 'R\u00e9ception ' + c.numero + (note ? ' - ' + note : ''), stockBefore: _sb11, stockAfter: art.stock });
       }
 
       ligne.qteRecue = (ligne.qteRecue || 0) + qtyToAdd;
