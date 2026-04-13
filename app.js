@@ -3297,8 +3297,9 @@ function renderMouvements() {
         <span style="color:var(--text-2)">${APP.mouvements.length} mouvements au total</span>
       </div>
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="exportMvtCSV()">📥 Export CSV</button>
+    <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" id="btn-mvt-summary" onclick="toggleMvtSummary()">📊 Résumé Audit</button><button class="btn btn-secondary btn-sm" onclick="exportMvtCSV()">📥 Export CSV</button></div>
   </div>
+  <div id="mvt-summary-wrap" style="display:none"></div>
   <div class="filters">
     <select id="mvt-type-filter" onchange="filterMvt()" style="width:auto">
       <option value="all">Tous types</option>
@@ -3395,12 +3396,12 @@ function openNewMvtModal(type) {
     const art=APP.articles.find(a=>a.id===artId); if(!art) return;
     if(type==='sortie'&&qty>art.stock){notify('Stock insuffisant','error');return;}
     const old={...art};
-    if(type==='entree') art.stock+=qty; else art.stock-=qty;
     var _sb12=art.stock;
+    if(type==='entree') art.stock+=qty; else art.stock-=qty;
     const mvt={id:generateId(),type,ts:Date.now(),articleId:art.id,articleName:art.name,qty,
       fournisseurId:type==='entree'?(document.getElementById('mvt-founis')?.value||null):null,
       commercialId:type==='sortie'?(document.getElementById('mvt-com')?.value||null):null,
-      obs:document.getElementById('mvt-obs').value,stockBefore:_sb12,stockAfter:type==='entree'?_sb12+qty:_sb12-qty};
+      obs:document.getElementById('mvt-obs').value,stockBefore:_sb12,stockAfter:art.stock};
     APP.mouvements.push(mvt);
     auditLog('STOCK_'+type.toUpperCase(),'article',art.id,old,art);
     saveDB();closeModal();filterMvt();updateAlertBadge();
@@ -3413,6 +3414,99 @@ function exportMvtCSV() {
   const rows=APP.mouvements.map(m=>[fmtDateTime(m.ts),m.type,m.articleName,m.qty,m.obs||m.note||''].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(','));
   downloadFile([headers.join(','),...rows].join('\n'),'mouvements-'+Date.now()+'.csv','text/csv');
   notify('Export CSV téléchargé','success');
+}
+
+function toggleMvtSummary() {
+  const wrap = document.getElementById('mvt-summary-wrap');
+  if (!wrap) return;
+  const btn = document.getElementById('btn-mvt-summary');
+  if (wrap.style.display === 'none') {
+    renderMvtSummary();
+    wrap.style.display = '';
+    if (btn) { btn.classList.add('btn-primary'); btn.classList.remove('btn-secondary'); }
+  } else {
+    wrap.style.display = 'none';
+    if (btn) { btn.classList.remove('btn-primary'); btn.classList.add('btn-secondary'); }
+  }
+}
+
+function renderMvtSummary() {
+  const wrap = document.getElementById('mvt-summary-wrap');
+  if (!wrap) return;
+  const stats = {};
+  APP.mouvements.forEach(m => {
+    const art = APP.articles.find(a => a.id === m.articleId);
+    if (!stats[m.articleId]) {
+      stats[m.articleId] = {
+        name: m.articleName || art?.name || '—',
+        code: art?.code || '—',
+        stock: art?.stock ?? '—',
+        bonSorti: 0, bonRestaure: 0, receptions: 0, manuelEntree: 0, manuelSortie: 0
+      };
+    }
+    const s = stats[m.articleId];
+    const n = (m.note || m.obs || '').trim();
+    if (m.type === 'sortie') {
+      if (/^Bon\s|^Réactivation Bon|^Modif Bon/.test(n) && !/restauration/i.test(n)) s.bonSorti += m.qty;
+      else s.manuelSortie += m.qty;
+    } else {
+      if (/Annulation Bon|Retour brouillon|Suppression Bon/.test(n) || (/^Modif Bon/.test(n) && /restauration/i.test(n))) s.bonRestaure += m.qty;
+      else if (/^Réception/.test(n)) s.receptions += m.qty;
+      else s.manuelEntree += m.qty;
+    }
+  });
+  const entries = Object.entries(stats).sort((a, b) => a[1].name.localeCompare(b[1].name));
+  const tot = entries.reduce((t, [, s]) => {
+    t.bonSorti += s.bonSorti; t.bonRestaure += s.bonRestaure;
+    t.receptions += s.receptions; t.manuelEntree += s.manuelEntree; t.manuelSortie += s.manuelSortie;
+    return t;
+  }, { bonSorti:0, bonRestaure:0, receptions:0, manuelEntree:0, manuelSortie:0 });
+  const netTot = tot.bonSorti - tot.bonRestaure;
+  wrap.innerHTML = `
+  <div class="card" style="margin-bottom:16px;overflow:auto">
+    <div class="card-header" style="flex-wrap:wrap;gap:8px">
+      <span class="card-title">Résumé Audit par Article</span>
+      <span style="font-size:11px;color:var(--text-2)">${entries.length} article${entries.length!==1?'s':''} avec mouvements</span>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Article</th><th>Code</th>
+        <th style="color:var(--accent3)">Sorti (Bons)</th>
+        <th style="color:var(--success)">Restauré (Bons)</th>
+        <th>Net Bons</th>
+        <th style="color:var(--success)">Réceptions</th>
+        <th style="color:var(--success)">Manuel +</th>
+        <th style="color:var(--accent3)">Manuel −</th>
+        <th>Stock actuel</th>
+      </tr></thead>
+      <tbody>
+      ${entries.map(([id, s]) => {
+        const net = s.bonSorti - s.bonRestaure;
+        return '<tr>' +
+          '<td style="font-weight:600">' + s.name + '</td>' +
+          '<td style="font-family:monospace;font-size:11px;color:var(--text-2)">' + s.code + '</td>' +
+          '<td style="color:var(--accent3);font-weight:600">' + (s.bonSorti ? '-' + s.bonSorti : '—') + '</td>' +
+          '<td style="color:var(--success);font-weight:600">' + (s.bonRestaure ? '+' + s.bonRestaure : '—') + '</td>' +
+          '<td style="font-weight:800;color:' + (net > 0 ? 'var(--accent3)' : net < 0 ? 'var(--success)' : 'var(--text-2)') + '">' + (net > 0 ? '-' + net : net < 0 ? '+' + Math.abs(net) : '0') + '</td>' +
+          '<td style="color:var(--success);font-weight:600">' + (s.receptions ? '+' + s.receptions : '—') + '</td>' +
+          '<td style="color:var(--success)">' + (s.manuelEntree ? '+' + s.manuelEntree : '—') + '</td>' +
+          '<td style="color:var(--accent3)">' + (s.manuelSortie ? '-' + s.manuelSortie : '—') + '</td>' +
+          '<td style="font-weight:700;font-size:15px">' + s.stock + '</td>' +
+        '</tr>';
+      }).join('')}
+      </tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--border)">
+        <td colspan="2">TOTAUX</td>
+        <td style="color:var(--accent3)">${tot.bonSorti ? '-' + tot.bonSorti : '—'}</td>
+        <td style="color:var(--success)">${tot.bonRestaure ? '+' + tot.bonRestaure : '—'}</td>
+        <td style="color:${netTot > 0 ? 'var(--accent3)' : 'var(--text-2)'}">${netTot > 0 ? '-' + netTot : netTot < 0 ? '+' + Math.abs(netTot) : '0'}</td>
+        <td style="color:var(--success)">${tot.receptions ? '+' + tot.receptions : '—'}</td>
+        <td style="color:var(--success)">${tot.manuelEntree ? '+' + tot.manuelEntree : '—'}</td>
+        <td style="color:var(--accent3)">${tot.manuelSortie ? '-' + tot.manuelSortie : '—'}</td>
+        <td>—</td>
+      </tr></tfoot>
+    </table></div>
+  </div>`;
 }
 
 // ============================================================
