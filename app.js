@@ -927,20 +927,17 @@ function startClock() {
 const THEME_META = {
   dark:      { name:'Dark',        desc:'Sombre classique',     bg:'#111318', c1:'#3d7fff', c2:'#00e5aa', c3:'#0a0c10' },
   light:     { name:'Light',       desc:'Clair & épuré',        bg:'#ffffff', c1:'#3d7fff', c2:'#00e5aa', c3:'#e8eaf2' },
-  guardian:  { name:'Guardian',    desc:'Command Center ⚡',    bg:'#01120e', c1:'#00dcc0', c2:'#00ff99', c3:'#010d0c', special:true },
-  christian: { name:'Heritage',    desc:'Or & tradition',       bg:'#1e1710', c1:'#d4a017', c2:'#e8c547', c3:'#14100a' },
-  muslim:    { name:'Emerald',     desc:'Vert & nature',        bg:'#0e1e18', c1:'#00c875', c2:'#4dde9c', c3:'#071510' },
   purple:    { name:'Nebula',      desc:'Violet cosmique',      bg:'#150e20', c1:'#9d4edd', c2:'#c77dff', c3:'#0d0814' },
   ocean:     { name:'Océan',      desc:'Bleu profond',        bg:'#0a1628', c1:'#0ea5e9', c2:'#38bdf8', c3:'#060e18' },
-  rose:      { name:'Rosé',       desc:'Élégance florale',    bg:'#1e0e18', c1:'#f43f5e', c2:'#fb7185', c3:'#140a10' },
   midnight:  { name:'Midnight',   desc:'Indigo nocturne',   bg:'#0f172a', c1:'#818cf8', c2:'#a5b4fc', c3:'#020617' },
-  sunset:    { name:'Sunset',     desc:'Couché de soleil',   bg:'#261008', c1:'#f97316', c2:'#fb923c', c3:'#1a0a05' },
   picture:   { name:'Fond photo',  desc:'Image personnalisée',  bg:'#0a0c10', c1:'#3d7fff', c2:'#00e5aa', c3:'#0a0c10' },
 };
 
 function applyTheme(t) {
-  document.documentElement.dataset.theme = t || 'dark';
-  try { localStorage.setItem('psm_theme', t || 'dark'); } catch(e) {}
+  if (!t || !THEME_META[t]) t = 'light';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('psm_theme', t); } catch(e) {}
+  if (typeof APP !== 'undefined' && APP && APP.settings) APP.settings.theme = t;
   if(t === 'picture') {
     const img = APP.settings.bgImage || '';
     document.body.style.setProperty('--bg-image', img ? 'url('+img+')' : 'none');
@@ -6375,7 +6372,6 @@ function renderSettings() {
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:700;color:var(--text-0);margin-bottom:4px">Perfect's Stock Manager</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="badge badge-blue">Version Démo</span>
           <span style="font-size:12px;color:var(--text-2)">© Fassibiri Ibrahim Konate</span>
           <span style="font-size:11px;color:var(--text-3)">—</span>
           <span style="font-size:12px;color:var(--danger);font-weight:600">Usage non autorisé interdit</span>
