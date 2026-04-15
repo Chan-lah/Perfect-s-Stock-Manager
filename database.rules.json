@@ -48,6 +48,14 @@
         ".read":  "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
       }
+    },
+
+    "error_log": {
+      ".read": "auth != null && root.child('profiles').child(auth.uid).child('role').val() === 'admin'",
+      "$pushId": {
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.hasChildren(['version','context','timestamp'])"
+      }
     }
   }
 }

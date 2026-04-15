@@ -116,6 +116,21 @@
 
 
 
+<!--
+  Sentry (optionnel) — décommenter et remplacer YOUR_DSN_HERE pour activer le monitoring d'erreurs.
+  La fonction logError() dans app.js détecte automatiquement Sentry s'il est chargé.
+<script src="https://browser.sentry-cdn.com/7.119.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
+<script>
+  if (typeof Sentry !== 'undefined') {
+    Sentry.init({
+      dsn: 'YOUR_DSN_HERE',
+      release: 'psm@1.0.0',
+      tracesSampleRate: 0.1,
+      environment: location.hostname === 'localhost' ? 'dev' : 'prod'
+    });
+  }
+</script>
+-->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>

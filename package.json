@@ -1,0 +1,18 @@
+{
+  "name": "perfect-stock-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PSM — SPA gestion de stock pour GMA (Les Grands Moulins d'Abidjan)",
+  "author": "Fassibiri Ibrahim Konate",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chan-lah/Perfect-s-Stock-Manager.git"
+  },
+  "scripts": {
+    "check": "node --check app.js && node --check auth.js && node --check storage.js && node --check firebase-config.js",
+    "version:patch": "npm version patch -m 'Release v%s'",
+    "version:minor": "npm version minor -m 'Release v%s'",
+    "version:major": "npm version major -m 'Release v%s'"
+  }
+}
