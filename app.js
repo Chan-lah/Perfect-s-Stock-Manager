@@ -9267,7 +9267,7 @@ function _syncUsersToAnnuaire() {
           telephone: '',
           email: uu.email || '',
           matricule: uu.matricule || '',
-          tag: 'demandeur',
+          tag: 'mixte',
           createdAt: Date.now(),
           _version: 1
         });
@@ -9285,6 +9285,10 @@ function renderAnnuaire() {
   }
   _syncUsersToAnnuaire();
   if (!APP.annuaire) APP.annuaire = [];
+  // Force all entries to 'mixte'
+  var _forceMixte = false;
+  (APP.annuaire||[]).forEach(function(p){ if(p.tag !== 'mixte'){ p.tag = 'mixte'; _forceMixte = true; } });
+  if (_forceMixte) saveDB();
   var canEditAnn = canEdit('annuaire');
   var list = _annuaireFilteredList();
   var pill = function(val, label, color) {
@@ -9390,9 +9394,9 @@ function openAnnuaireModal(id) {
     <div class="form-row">
       <div class="form-group"><label>Matricule <span style="font-size:10px;color:var(--text-3)">(unique \u2014 GMA-XXX)</span></label><input id="an-matricule" value="${(p?.matricule||'').replace(/"/g,'&quot;')}" placeholder="ex: GMA-042"></div>
       <div class="form-group"><label>Tag *</label><select id="an-tag">
-        <option value="demandeur"${(!p||p.tag==='demandeur')?' selected':''}>Demandeur (peut DEMANDER des bons)</option>
+        <option value="demandeur"${(p&&p.tag==='demandeur')?' selected':''}>Demandeur (peut DEMANDER des bons)</option>
         <option value="recipiendaire"${(p&&p.tag==='recipiendaire')?' selected':''}>R\u00e9cipiendaire (peut RECEVOIR des bons)</option>
-        <option value="mixte"${(p&&p.tag==='mixte')?' selected':''}>Mixte (les deux)</option>
+        <option value="mixte"${(!p||!p.tag||p.tag==='mixte')?' selected':''}>Mixte (les deux)</option>
       </select></div>
     </div>
 `;
@@ -9418,7 +9422,7 @@ async function saveAnnuaire(existingId) {
   if (matricule && !_isMatriculeUnique(matricule, existingId || null)) {
     notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
   }
-  var tag = document.getElementById('an-tag').value || 'demandeur';
+  var tag = document.getElementById('an-tag').value || 'mixte';
   var fields = {
     prenom: prenom,
     nom: nom,
