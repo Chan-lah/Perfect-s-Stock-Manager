@@ -7040,10 +7040,20 @@ function openUserModal(userId) {
     </tr>`;
   }).join('');
 
+  var _uPrenom = u?.prenom || '';
+  var _uNom = u?.nom || '';
+  if (!_uPrenom && !_uNom && u?.name) {
+    var _parts = u.name.trim().split(/\s+/);
+    _uPrenom = _parts[0] || '';
+    _uNom = _parts.slice(1).join(' ') || '';
+  }
   openModal(userId ? 'Modifier utilisateur' : 'Nouvel utilisateur', `
     <div class="form-row">
-      <div class="form-group"><label>Nom *</label><input id="um-name" value="${u?.name||''}"></div>
-      <div class="form-group"><label>Email</label><input id="um-email" value="${u?.email||''}" type="email"></div>
+      <div class="form-group"><label>Prénom *</label><input id="um-prenom" value="${(_uPrenom||'').replace(/"/g,'&quot;')}"></div>
+      <div class="form-group"><label>Nom *</label><input id="um-nom" value="${(_uNom||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Email *</label><input id="um-email" value="${u?.email||''}" type="email"></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Mot de passe ${userId ? '<span style="font-size:10px;color:var(--text-3)">(laisser vide = inchang\u00e9)</span>' : '<span style="font-size:10px;color:var(--danger)">* obligatoire</span>'}</label><input id="um-pass" type="text" placeholder="${userId ? 'Laisser vide = inchang\u00e9' : 'Min. 6 caract\u00e8res'}" value="" autocomplete="off">${userId && u ? '<div style="font-size:10px;color:var(--text-3);margin-top:2px">\u2705 Mot de passe d\u00e9j\u00e0 d\u00e9fini</div>' : ''}</div>
@@ -7207,7 +7217,9 @@ function _umClearSig() {
 
 async function saveUserModal(userId) {
   if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
-  const name  = document.getElementById('um-name')?.value?.trim();
+  const prenom = document.getElementById('um-prenom')?.value?.trim() || '';
+  const nom   = document.getElementById('um-nom')?.value?.trim() || '';
+  const name  = (prenom + ' ' + nom).trim();
   const email = document.getElementById('um-email')?.value?.trim();
   const pass  = document.getElementById('um-pass')?.value?.trim() || null;
   const role  = document.getElementById('um-role')?.value || 'viewer';
@@ -7216,7 +7228,10 @@ async function saveUserModal(userId) {
   const existingSigKey = document.getElementById('um-sig-existing-key')?.value || '';
   const sigCleared = (document.getElementById('um-sig-cleared')?.value === '1');
   const matricule = document.getElementById('um-matricule')?.value?.trim() || '';
-  if (matricule && !_isMatriculeUnique(matricule, userId || null)) {
+  // Resolve actual user.id for matricule check (userId may be an email)
+  var _resolvedUser = userId ? ((APP.users||[]).find(x=>x.id===userId) || (APP.users||[]).find(x=>x.email&&x.email.toLowerCase()===userId.toLowerCase())) : null;
+  var _resolvedId = _resolvedUser ? _resolvedUser.id : null;
+  if (matricule && !_isMatriculeUnique(matricule, _resolvedId)) {
     notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
   }
   // Phase 10: resolve final signatureKey (upload new / delete old / leave alone)
@@ -7249,7 +7264,7 @@ async function saveUserModal(userId) {
     notify('Erreur signature: ' + (e.message || e), 'error');
     return;
   }
-  if(!name) { notify('Le nom est obligatoire', 'warning'); return; }
+  if(!prenom || !nom) { notify('Le pr\u00e9nom et le nom sont obligatoires', 'warning'); return; }
   if(!email) { notify('L\'email est obligatoire', 'warning'); return; }
 
   // Validate for new user
@@ -7280,7 +7295,8 @@ async function saveUserModal(userId) {
       var u = APP.users.find(x => x.id === userId);
       if (!u) u = APP.users.find(x => x.email && x.email.toLowerCase() === userId.toLowerCase());
       if(u) {
-        u.name = name; u.email = email; u.role = role; u.permissions = permissions;
+        u.prenom = prenom; u.nom = nom; u.name = name;
+        u.email = email; u.role = role; u.permissions = permissions;
         u.matricule = matricule;
         if(photo) u.photo = photo;
         u.signatureKey = finalSigKey || '';
@@ -7302,7 +7318,7 @@ async function saveUserModal(userId) {
       // 2. Create local entry
       var existing = APP.users.find(function(x) { return x.email === email; });
       if(!existing) {
-        APP.users.push({ id: generateId(), name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
+        APP.users.push({ id: generateId(), prenom: prenom, nom: nom, name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
       }
     }
 
@@ -7418,9 +7434,14 @@ function _isMatriculeUnique(matricule, ignoreId) {
   if (!matricule) return true;
   matricule = String(matricule).trim().toLowerCase();
   if (!matricule) return true;
+  var _ignLower = ignoreId ? String(ignoreId).toLowerCase() : '';
   var collide = function(arr) {
     return (arr || []).some(function(x) {
-      if (ignoreId && x.id === ignoreId) return false;
+      if (ignoreId) {
+        if (x.id === ignoreId) return false;
+        if (x.email && x.email.toLowerCase() === _ignLower) return false;
+        if (x._fromUserId && x._fromUserId === ignoreId) return false;
+      }
       return (x.matricule || '').toString().toLowerCase() === matricule;
     });
   };
@@ -9198,11 +9219,71 @@ document.addEventListener('click', function(e) {
 var _annuaireSearchTerm = '';
 var _annuaireTagFilter = 'all';
 
+function _syncUsersToAnnuaire() {
+  if (!APP.annuaire) APP.annuaire = [];
+  var users = APP.users || [];
+  var changed = false;
+  users.forEach(function(uu) {
+    // Skip admin account
+    if (uu.email && uu.email.toLowerCase() === 'ibkonate26@gmail.com') return;
+    // Derive prenom/nom from user
+    var uPrenom = uu.prenom || '';
+    var uNom = uu.nom || '';
+    if (!uPrenom && !uNom && uu.name) {
+      var parts = uu.name.trim().split(/\s+/);
+      uPrenom = parts[0] || '';
+      uNom = parts.slice(1).join(' ') || '';
+    }
+    // Check if already linked
+    var existing = APP.annuaire.find(function(a) { return a._fromUserId === uu.id; });
+    if (existing) {
+      // Update if name/email/matricule changed
+      if (existing.prenom !== uPrenom || existing.nom !== uNom || existing.email !== (uu.email||'') || existing.matricule !== (uu.matricule||'')) {
+        existing.prenom = uPrenom;
+        existing.nom = uNom;
+        existing.email = uu.email || '';
+        existing.matricule = uu.matricule || '';
+        existing._version = (existing._version||1) + 1;
+        changed = true;
+      }
+    } else {
+      // Also check by email to avoid duplicates with manually created entries
+      var byEmail = uu.email ? APP.annuaire.find(function(a) { return a.email && a.email.toLowerCase() === uu.email.toLowerCase(); }) : null;
+      if (byEmail) {
+        // Link existing entry
+        byEmail._fromUserId = uu.id;
+        if (!byEmail.prenom && !byEmail.nom) { byEmail.prenom = uPrenom; byEmail.nom = uNom; }
+        if (!byEmail.matricule && uu.matricule) byEmail.matricule = uu.matricule;
+        changed = true;
+      } else {
+        // Create new annuaire entry
+        APP.annuaire.push({
+          id: 'an_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+          _fromUserId: uu.id,
+          prenom: uPrenom,
+          nom: uNom,
+          poste: '',
+          departement: '',
+          telephone: '',
+          email: uu.email || '',
+          matricule: uu.matricule || '',
+          tag: 'demandeur',
+          createdAt: Date.now(),
+          _version: 1
+        });
+        changed = true;
+      }
+    }
+  });
+  if (changed) saveDB();
+}
+
 function renderAnnuaire() {
   if (!canView('annuaire')) {
     document.getElementById('content').innerHTML = '<div class="empty-state"><p>\u26d4 Acc\u00e8s refus\u00e9</p></div>';
     return;
   }
+  _syncUsersToAnnuaire();
   if (!APP.annuaire) APP.annuaire = [];
   var canEditAnn = canEdit('annuaire');
   var list = _annuaireFilteredList();
@@ -9276,7 +9357,7 @@ function _annuaireRow(p) {
   var tagColor = tagColors[p.tag] || 'var(--text-2)';
   var tagLabel = tagLabels[p.tag] || '\u2014';
   return `<tr>
-    <td style="font-weight:600">${p.prenom||''} ${p.nom||''}</td>
+    <td style="font-weight:600">${p.prenom||''} ${p.nom||''}${p._fromUserId ? ' <span style="font-size:8px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:99px;vertical-align:middle;margin-left:4px">Auto</span>' : ''}</td>
     <td style="font-size:12px">${p.poste||'\u2014'}</td>
     <td style="font-size:12px;color:var(--text-2)">${p.departement||'\u2014'}</td>
     <td style="font-size:11px;color:var(--text-2)">${p.email||''}${p.email&&p.telephone?'<br>':''}${p.telephone||''}</td>
