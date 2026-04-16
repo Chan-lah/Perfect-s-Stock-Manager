@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // storage.js — PSM Storage Layer
 // Handles all data persistence: File System API, localStorage,
 // IndexedDB, backups, image separation, and online/offline mode.
@@ -263,9 +263,16 @@ async function _loadFromCloud() {
       // Preserve current users before cloud overwrite (roles come from Firebase profiles)
       var _savedUsers = APP.users ? APP.users.slice() : [];
       // Cloud is authoritative for business data
+      // Save companyLogo before cloud overwrite
+      var _savedLogo = APP.settings ? APP.settings.companyLogo : undefined;
       Object.assign(APP, cloudData);
       // Restore users (not synced via cloud)
       APP.users = _savedUsers;
+      // Restore companyLogo if cloud version is empty/stripped
+      if (_savedLogo && _savedLogo.indexOf('__img:') !== 0 && _savedLogo.length > 100) {
+        if (!APP.settings) APP.settings = {};
+        if (!APP.settings.companyLogo || APP.settings.companyLogo.length < 100) APP.settings.companyLogo = _savedLogo;
+      }
       // Restore images from localStorage cache (not from cloud)
       try {
         var cachedImgs = localStorage.getItem('psm_images_cache');
@@ -318,6 +325,7 @@ function startRealtimeSync() {
       var _savedHiddenPages = APP.settings ? APP.settings._hiddenPages : undefined;
       var _savedDynBg = APP.settings ? APP.settings._dynamicBg : undefined;
       var _savedDynBgInt = APP.settings ? APP.settings._dynamicBgIntensity : undefined;
+      var _savedCompanyLogo = APP.settings ? APP.settings.companyLogo : undefined;
 
       Object.assign(APP, cloudData);
 
@@ -330,6 +338,7 @@ function startRealtimeSync() {
       if (_savedHiddenPages !== undefined) APP.settings._hiddenPages = _savedHiddenPages;
       if (_savedDynBg !== undefined) APP.settings._dynamicBg = _savedDynBg;
       if (_savedDynBgInt !== undefined) APP.settings._dynamicBgIntensity = _savedDynBgInt;
+      if (_savedCompanyLogo && _savedCompanyLogo.indexOf('__img:') !== 0 && _savedCompanyLogo.length > 100) APP.settings.companyLogo = _savedCompanyLogo;
 
       // Restore images from localStorage cache (not from cloud)
       try {
@@ -736,7 +745,7 @@ function _restoreImages(appObj, refs) {
     });
   });
   var s = appObj.settings || {};
-  if(s.companyLogo && s.companyLogo.indexOf('__img:')===0) s.companyLogo = refs[s.companyLogo.slice(6)] || _imagesCache[s.companyLogo.slice(6)] || '';
+  if(s.companyLogo && s.companyLogo.indexOf('__img:')===0) s.companyLogo = refs[s.companyLogo.slice(6)] || _imagesCache[s.companyLogo.slice(6)] || (typeof GMA_DEFAULT_LOGO !== 'undefined' ? GMA_DEFAULT_LOGO : '');
   if(s.gmaLogo && s.gmaLogo.indexOf('__img:')===0) s.gmaLogo = refs[s.gmaLogo.slice(6)] || _imagesCache[s.gmaLogo.slice(6)] || '';
   if(s.bgImage && s.bgImage.indexOf('__img:')===0) s.bgImage = refs[s.bgImage.slice(6)] || _imagesCache[s.bgImage.slice(6)] || '';
   (appObj.users||[]).forEach(function(u) {

@@ -913,7 +913,7 @@ function renderSidebar() {
 
 function updateCompanyPanel() {
   const name = APP.settings.companyName || 'GMA — Les Grands Moulins d\'Abidjan';
-  const logo = APP.settings.companyLogo || '';
+  const logo = _safeCompanyLogo();
   const nameEl = document.getElementById('sb-company-name');
   if(nameEl) nameEl.textContent = name;
   const icon = document.getElementById('sb-company-icon');
@@ -1498,7 +1498,7 @@ function checkStockAlerts() {
   try {
     const n = new Notification(title, {
       body: body + (newAlerts.length > 5 ? '\n... et ' + (newAlerts.length - 5) + ' autres' : ''),
-      icon: APP.settings.companyLogo || undefined,
+      icon: (typeof _safeCompanyLogo==='function' ? _safeCompanyLogo() : APP.settings.companyLogo) || undefined,
       tag: 'psm-stock-alert',
       requireInteraction: false
     });
@@ -1530,7 +1530,7 @@ function loadImgPreview(inputId, previewId, dataId) {
 let dashTimer = null;
 function renderDashboard() {
   const content = document.getElementById('content');
-  const logo = APP.settings.companyLogo || '';
+  const logo = _safeCompanyLogo();
   const name = APP.settings.companyName || 'Mon Entreprise';
   content.innerHTML = `
   <div class="page-header">
@@ -1644,7 +1644,7 @@ function printDashboard() {
   const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
   const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
   const bonsP     = APP.bons.filter(b=>b.createdAt>=tFrom&&b.createdAt<=tTo).length;
-  const logo      = APP.settings.companyLogo || '';
+  const logo      = _safeCompanyLogo();
   const addr      = APP.settings.companyAddress || '';
   const tel       = APP.settings.companyTel || '';
   const fax       = APP.settings.companyFax || '';
@@ -1851,7 +1851,7 @@ function printStockReport() {
   const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
   const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
   const bonsP     = APP.bons.filter(b=>b.createdAt>=tFrom&&b.createdAt<=tTo).length;
-  const logo      = APP.settings.companyLogo || '';
+  const logo      = _safeCompanyLogo();
   const addr      = APP.settings.companyAddress || '';
   const tel       = APP.settings.companyTel || '';
   const fax       = APP.settings.companyFax || '';
@@ -3178,7 +3178,7 @@ function generateBonHTML(bon, overrides) {
   const ov=overrides||{};
   const cName=ov.name||co?.name||APP.settings.companyName||'Mon Entreprise';
   const cShort=ov.shortName||co?.shortName||'';
-  const cLogo=ov.logo||co?.logo||APP.settings.companyLogo||'';
+  const cLogo=ov.logo||co?.logo||_safeCompanyLogo();
   const cAddr=ov.address||co?.address||'';
   const cTel=ov.tel||co?.tel||'';
   const cFax=ov.fax||co?.fax||'';
@@ -4634,6 +4634,12 @@ const GMA_ARTICLES = [
 // GMA logo storage key
 const GMA_LOGO_KEY = 'gma_logo_b64';
 
+function _safeCompanyLogo() {
+  var logo = APP.settings && APP.settings.companyLogo;
+  if (!logo || logo.indexOf('__img:') === 0 || logo.length < 100) return GMA_DEFAULT_LOGO;
+  return logo;
+}
+
 function initGMAData() {
   if(_savedDataLoaded) {
     // ── Sauvegarde chargée : elle fait autorité, on ne touche à rien ──
@@ -5131,7 +5137,7 @@ function renderOrderCard(c) {
 
 function generateReceptionHTML(cmd, recLines) {
   var _co = APP.settings || {};
-  var _logo = _co.companyLogo ? '<img src="'+_co.companyLogo+'" style="height:60px;object-fit:contain">' : '';
+  var _logo = '<img src="'+(_co.companyLogo && _co.companyLogo.indexOf("__img:")!==0 && _co.companyLogo.length>100 ? _co.companyLogo : GMA_DEFAULT_LOGO)+'" style="height:60px;object-fit:contain">';
   var _fourn = (APP.fournisseurs||[]).find(function(f){return f.id===cmd.fournisseurId;}) || {};
   var _now = Date.now();
   var _rows = (recLines||[]).map(function(l){
@@ -5878,7 +5884,7 @@ function filterAudit() {
 }
 
 function _buildAuditPrintHTML() {
-  const logo = APP.settings.companyLogo || '';
+  const logo = _safeCompanyLogo();
   const name = APP.settings.companyName || 'GMA';
   const entries = APP.audit.slice().sort((a,b)=>b.ts-a.ts).slice(0,500);
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Audit Trail — ${name}</title>
@@ -6103,7 +6109,7 @@ function renderBonEditor() {
     if(APP.settings.companyTel)     bonEditorState.tel     = APP.settings.companyTel;
     bonEditorState.fax   = APP.settings.companyFax   || '';
     bonEditorState.email = APP.settings.companyEmail  || bonEditorState.email;
-    if(APP.settings.companyLogo)    bonEditorState.logo    = bonEditorState.logo || APP.settings.companyLogo;
+    bonEditorState.logo = bonEditorState.logo || _safeCompanyLogo();
   }
   const s=bonEditorState;
   document.getElementById('content').innerHTML=`
@@ -6273,7 +6279,7 @@ function renderSettings() {
             style="width:100px;height:100px;cursor:pointer;border-radius:10px;overflow:hidden;
                    border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;
                    background:var(--bg-2);flex-shrink:0" title="Cliquer pour changer le logo">
-            ${s.companyLogo
+            ${(s.companyLogo && s.companyLogo.indexOf('__img:')!==0 && s.companyLogo.length>100)
               ? `<img src="${s.companyLogo}" style="width:100%;height:100%;object-fit:contain">`
               : `<span style="font-size:32px">🏢</span>`}
           </div>
@@ -6555,7 +6561,7 @@ function saveRenameCategory(oldName) {
 // REPORTS: Per-commercial + Dispatch
 // ============================================================
 function printComReport() {
-  const logo = APP.settings.companyLogo || '';
+  const logo = _safeCompanyLogo();
   const name = APP.settings.companyName || 'Mon Entreprise';
   const addr = APP.settings.companyAddress || '';
   const tel  = APP.settings.companyTel || '';
@@ -6582,7 +6588,7 @@ function printDispatchReport(histIndex) {
   var idx = typeof histIndex === 'number' ? histIndex : 0;
   var snap = hist[idx];
   if(!snap) { notify('Dispatch introuvable','error'); return; }
-  var logo = APP.settings.companyLogo || '';
+  var logo = _safeCompanyLogo();
   var name = APP.settings.companyName || 'Mon Entreprise';
   var addr = APP.settings.companyAddress || '';
   var tel  = APP.settings.companyTel || '';
