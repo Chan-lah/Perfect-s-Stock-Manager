@@ -56,6 +56,16 @@
         ".write": "auth != null && !data.exists()",
         ".validate": "newData.hasChildren(['version','context','timestamp'])"
       }
+    },
+
+    "backups": {
+      "$uid": {
+        ".read":  "auth != null && (auth.uid === $uid || root.child('profiles').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && auth.uid === $uid",
+        "$dayKey": {
+          ".validate": "newData.hasChildren(['data','meta'])"
+        }
+      }
     }
   }
 }

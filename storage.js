@@ -489,13 +489,35 @@ function loadDB() {
 let _backupTimer = null;
 let _savedDataLoaded = false; // true si des données ont été chargées depuis une sauvegarde
 var _psmIsMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+var _lastBackupTs = 0; // timestamp of last successful backup (local or cloud)
+
+async function _computeHash(str) {
+  try {
+    var enc = new TextEncoder().encode(str);
+    var buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+  } catch(e) { return null; }
+}
+
+function _updateBackupIndicator() {
+  var el = document.getElementById('backup-indicator');
+  if (!el) return;
+  if (!_lastBackupTs) { el.textContent = 'Aucun backup'; return; }
+  var ago = Math.round((Date.now() - _lastBackupTs) / 60000);
+  if (ago < 1) el.textContent = 'Backup : il y a < 1 min';
+  else if (ago < 60) el.textContent = 'Backup : il y a ' + ago + ' min';
+  else el.textContent = 'Backup : il y a ' + Math.round(ago / 60) + 'h';
+}
+// Refresh indicator every 30s
+setInterval(_updateBackupIndicator, 30000);
+
 function startBackupScheduler() {
   if (_psmIsMobile) return; // Mobile: skip local backups (cloud sync + audit remain active)
   if(_backupTimer) clearInterval(_backupTimer);
   const min = parseInt(APP.settings.backupInterval)||180;
   if(min > 0) _backupTimer = setInterval(() => autoBackup(true), min * 60000);
 }
-function autoBackup(silent) {
+async function autoBackup(silent) {
   if(!APP.backups) APP.backups = [];
   // Backup leger : on ne stocke pas les images dans le backup
   var bkData;
@@ -504,14 +526,19 @@ function autoBackup(silent) {
     bkData = JSON.stringify(APP);
     if(refs) _restoreImages(APP, refs);
   } catch(e) { bkData = JSON.stringify({error:'backup too large'}); }
-  var bk = { id:generateId(), ts:Date.now(), data:bkData, size:bkData.length };
+  var hash = await _computeHash(bkData);
+  var bk = { id:generateId(), ts:Date.now(), data:bkData, size:bkData.length, hash:hash };
   APP.backups.unshift(bk);
-  // Garder seulement les 3 dernières versions
-  if(APP.backups.length > 3) APP.backups = APP.backups.slice(0, 3);
+  // Garder les 5 dernières versions
+  if(APP.backups.length > 5) APP.backups = APP.backups.slice(0, 5);
+  _lastBackupTs = bk.ts;
+  _updateBackupIndicator();
   saveDB();
   // Sauvegarder aussi en fichier si disponible
   if(_dirHandle) _saveBackupToFile(bk);
-  if(!silent) notify('Backup créé (' + APP.backups.length + '/3) ✓','success');
+  // Cloud snapshot (Niveau 2)
+  _saveCloudSnapshot(bkData, hash);
+  if(!silent) notify('Backup créé (' + APP.backups.length + '/5) \u2713','success');
 }
 
 async function _saveBackupToFile(bk) {
@@ -530,12 +557,119 @@ async function _saveBackupToFile(bk) {
       if(entry.kind === 'file' && entry.name.startsWith('backup_')) files.push(entry.name);
     }
     files.sort();
-    while(files.length > 3) {
+    while(files.length > 5) {
       await bkFolder.removeEntry(files.shift());
     }
   } catch(e) { console.warn('[PSM] backup file:', e); }
 }
 
+// ============================================================
+// CLOUD SNAPSHOTS (Niveau 2) — horodatés, rotation 7 jours
+// ============================================================
+async function _saveCloudSnapshot(dataStr, hash) {
+  if (!_firebaseDB || !_cloudUser) return;
+  try {
+    var now = new Date();
+    var dayKey = now.toISOString().slice(0, 10).replace(/-/g, ''); // 20260416
+    var uid = _cloudUser.uid;
+    var ref = _firebaseDB.ref('backups/' + uid + '/' + dayKey);
+    // On écrase le snapshot du jour (garder le plus récent de la journée)
+    await ref.set({
+      data: dataStr,
+      meta: {
+        version: (typeof APP_VERSION !== 'undefined') ? APP_VERSION : '1.0.0',
+        user: _cloudUser.email || '',
+        hash: hash || null,
+        size: dataStr.length,
+        createdAt: now.toISOString(),
+        ts: Date.now()
+      }
+    });
+    console.log('[PSM] Cloud snapshot saved: ' + dayKey);
+  } catch(e) {
+    console.warn('[PSM] Cloud snapshot failed:', e);
+  }
+}
+
+async function _purgeOldCloudSnapshots() {
+  if (!_firebaseDB || !_cloudUser) return;
+  try {
+    var uid = _cloudUser.uid;
+    var snap = await _firebaseDB.ref('backups/' + uid).once('value');
+    var val = snap.val();
+    if (!val) return;
+    var keys = Object.keys(val).sort();
+    // Garder les 7 derniers jours
+    if (keys.length <= 7) return;
+    var toDelete = keys.slice(0, keys.length - 7);
+    var updates = {};
+    toDelete.forEach(function(k) { updates[k] = null; });
+    await _firebaseDB.ref('backups/' + uid).update(updates);
+    console.log('[PSM] Purged ' + toDelete.length + ' old cloud snapshot(s)');
+  } catch(e) {
+    console.warn('[PSM] Snapshot purge failed:', e);
+  }
+}
+
+async function _listCloudSnapshots() {
+  if (!_firebaseDB || !_cloudUser) return [];
+  try {
+    var uid = _cloudUser.uid;
+    var snap = await _firebaseDB.ref('backups/' + uid).once('value');
+    var val = snap.val();
+    if (!val) return [];
+    return Object.keys(val).sort().reverse().map(function(dayKey) {
+      var s = val[dayKey];
+      var meta = s.meta || {};
+      return {
+        dayKey: dayKey,
+        date: dayKey.slice(0,4) + '-' + dayKey.slice(4,6) + '-' + dayKey.slice(6,8),
+        size: meta.size || 0,
+        hash: meta.hash || null,
+        createdAt: meta.createdAt || '',
+        version: meta.version || ''
+      };
+    });
+  } catch(e) {
+    console.warn('[PSM] List snapshots failed:', e);
+    return [];
+  }
+}
+
+async function _restoreCloudSnapshot(dayKey) {
+  if (!_firebaseDB || !_cloudUser) { notify('Firebase non disponible', 'error'); return false; }
+  try {
+    var uid = _cloudUser.uid;
+    var snap = await _firebaseDB.ref('backups/' + uid + '/' + dayKey + '/data').once('value');
+    var dataStr = snap.val();
+    if (!dataStr) { notify('Snapshot introuvable', 'error'); return false; }
+    var parsed = JSON.parse(dataStr);
+    if (!parsed || typeof parsed !== 'object') { notify('Snapshot corrompu', 'error'); return false; }
+    // Verify hash if available
+    var metaSnap = await _firebaseDB.ref('backups/' + uid + '/' + dayKey + '/meta/hash').once('value');
+    var expectedHash = metaSnap.val();
+    if (expectedHash) {
+      var actualHash = await _computeHash(dataStr);
+      if (actualHash && actualHash !== expectedHash) {
+        notify('Attention : hash du snapshot ne correspond pas. Restauration annulee.', 'error');
+        return false;
+      }
+    }
+    // Préserver les backups locaux et activity log actuels
+    parsed.backups = APP.backups;
+    parsed._activityLog = APP._activityLog;
+    Object.assign(APP, parsed);
+    APP._ts = Date.now();
+    saveDB();
+    notify('Snapshot ' + dayKey + ' restaure avec succes', 'success');
+    if (typeof initApp === 'function') initApp();
+    return true;
+  } catch(e) {
+    console.warn('[PSM] Restore snapshot failed:', e);
+    notify('Erreur de restauration : ' + (e.message || e), 'error');
+    return false;
+  }
+}
 
 // ============================================================
 // FILE SYSTEM PERSISTENCE — Dossier local "PSm Saves (Do Not Delete)"

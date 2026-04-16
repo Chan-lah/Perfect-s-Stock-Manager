@@ -956,6 +956,7 @@ function showPage(id) {
   };
   document.getElementById('content').innerHTML = '';
   if(renders[id]) renders[id]();
+  if(id==='settings' && typeof _loadCloudSnapshotsUI==='function') setTimeout(_loadCloudSnapshotsUI, 100);
   if(id==='administration' && typeof _initAdminPage==='function') _initAdminPage();
 }
 
@@ -1045,7 +1046,7 @@ function selectThemePicker(themeId) {
   saveDB();
   applyTheme(themeId);
   document.getElementById('_tp_panel')?.remove();
-  if(currentPage === 'settings') renderSettings();
+  if(currentPage === 'settings') { renderSettings(); _loadCloudSnapshotsUI(); }
   // Persist to Firebase prefs so theme survives reconnect (same payload as saveSettings)
   if (typeof _saveUserPrefs === 'function') {
     _saveUserPrefs({
@@ -6364,7 +6365,7 @@ function renderSettings() {
       <div class="stat-row"><span class="stat-label">Commerciaux</span><span class="stat-val">${APP.commerciaux.length}</span></div>
       <div class="stat-row"><span class="stat-label">Fournisseurs</span><span class="stat-val">${APP.fournisseurs.length}</span></div>
       <div class="stat-row"><span class="stat-label">Entrées audit</span><span class="stat-val">${APP.audit.length}</span></div>
-      <div class="stat-row"><span class="stat-label">Backups auto</span><span class="stat-val">${APP.backups.length}/3</span></div>
+      <div class="stat-row"><span class="stat-label">Backups auto</span><span class="stat-val">${APP.backups.length}/5</span></div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
         <button class="btn btn-secondary" onclick="exportAllJSON()">⬇ Export global JSON</button>
         <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆ Import JSON</button>
@@ -6404,8 +6405,16 @@ function renderSettings() {
       <button class="btn btn-secondary btn-sm" onclick="manualBackup()">💾 Sauvegarder maintenant</button> <button class="btn btn-secondary btn-sm" onclick="validateData()">🔎 Vérifier les données</button>
     </div>
     <div class="card">
-      <div class="card-header"><span class="card-title">📦 Backups (${APP.backups.length}/3)</span></div>
-      ${APP.backups.length?APP.backups.slice().reverse().map(b=>`<div class="stat-row"><span class="stat-label">${fmtDateTime(b.ts)} · ${Math.round(b.size/1024)}KB</span><button class="btn btn-sm btn-secondary" onclick="restoreSpecificBackup('${b.id}')">Restaurer</button></div>`).join(''):'<div class="empty-state"><p>Aucun backup encore</p></div>'}
+      <div class="card-header"><span class="card-title">📦 Backups locaux (${APP.backups.length}/5)</span></div>
+      ${APP.backups.length?APP.backups.slice().reverse().map(b=>`<div class="stat-row"><span class="stat-label">${fmtDateTime(b.ts)} · ${Math.round(b.size/1024)}KB ${b.hash?'<span style="color:var(--success);font-size:10px" title="Hash: '+b.hash.slice(0,12)+'...">✓ intégrité</span>':''}</span><button class="btn btn-sm btn-secondary" onclick="restoreSpecificBackup('${b.id}')">Restaurer</button></div>`).join(''):'<div class="empty-state"><p>Aucun backup encore</p></div>'}
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><span class="card-title">☁️ Snapshots cloud (7 derniers jours)</span></div>
+      <div id="cloud-snapshots-list"><div class="empty-state"><p>Chargement...</p></div></div>
+    </div>
+    <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:8px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:18px">🛡️</span>
+      <span id="backup-indicator" style="font-size:12px;color:var(--text-2)">Aucun backup</span>
     </div>
   </div>
   <div class="card" style="margin-top:16px;background:linear-gradient(135deg,rgba(61,127,255,0.06),rgba(0,229,170,0.04));border-color:rgba(61,127,255,0.2)">
@@ -6749,6 +6758,37 @@ function purgeBackups() {
   saveDB();
   notify('Sauvegardes purgées', 'success');
   renderSettings();
+}
+
+function _loadCloudSnapshotsUI() {
+  var el = document.getElementById('cloud-snapshots-list');
+  if (!el) return;
+  if (typeof _listCloudSnapshots !== 'function') { el.innerHTML = '<div class="empty-state"><p>Fonction non disponible</p></div>'; return; }
+  _listCloudSnapshots().then(function(snapshots) {
+    if (!snapshots || snapshots.length === 0) {
+      el.innerHTML = '<div class="empty-state"><p>Aucun snapshot cloud</p></div>';
+      return;
+    }
+    el.innerHTML = snapshots.map(function(s) {
+      return '<div class="stat-row">'
+        + '<span class="stat-label">' + s.date + ' \u00b7 ' + Math.round(s.size/1024) + 'KB'
+        + (s.hash ? ' <span style="color:var(--success);font-size:10px">\u2713</span>' : '')
+        + ' <span style="color:var(--text-3);font-size:10px">v' + (s.version||'?') + '</span>'
+        + '</span>'
+        + '<button class="btn btn-sm btn-secondary" onclick="_confirmRestoreSnapshot(\'' + s.dayKey + '\',\'' + s.date + '\')">Restaurer</button>'
+        + '</div>';
+    }).join('');
+  }).catch(function(e) {
+    el.innerHTML = '<div class="empty-state"><p>Erreur: ' + (e.message||e) + '</p></div>';
+  });
+}
+
+function _confirmRestoreSnapshot(dayKey, dateStr) {
+  if (!confirm('Restaurer le snapshot du ' + dateStr + ' ?\n\nCela remplacera toutes les donn\u00e9es actuelles (sauf les backups locaux).')) return;
+  notify('Restauration en cours...', 'info');
+  _restoreCloudSnapshot(dayKey).then(function(ok) {
+    if (ok && typeof renderSettings === 'function') renderSettings();
+  });
 }
 
 function manualBackup() { autoBackup(false); renderSettings(); }

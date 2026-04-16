@@ -377,6 +377,11 @@ async function _handleLogin(e) {
     // 5c. Always start real-time sync after login for instant cross-device updates
     if (typeof startRealtimeSync === 'function') startRealtimeSync();
 
+    // 5d. Purge old cloud snapshots (keep 7 days)
+    if (typeof _purgeOldCloudSnapshots === 'function') {
+      try { _purgeOldCloudSnapshots(); } catch(e) {}
+    }
+
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
 
