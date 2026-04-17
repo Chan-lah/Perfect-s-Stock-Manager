@@ -229,6 +229,14 @@ async function _handleLogin(e) {
       } catch(e) {}
     }
 
+    // 2a. Kick off cloud ts read in parallel with profile load (saves ~150-300ms)
+    var _tsPromise = null;
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+      _tsPromise = _firebaseDB.ref('app_data/data/_ts').once('value').catch(function(ex) {
+        console.warn('[PSM] cloud ts read (parallel):', ex.message || ex); return null;
+      });
+    }
+
     // 2. Load profile (role, permissions)
     await _loadUserProfile();
 
@@ -284,10 +292,10 @@ async function _handleLogin(e) {
     var _cloudData = null;
 
     try {
-      if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-        // Read ONLY the timestamp — a single integer, not the full dataset
-        var _tsSnap = await _firebaseDB.ref('app_data/data/_ts').once('value');
-        _cloudTs = _tsSnap.exists() ? (_tsSnap.val() || 0) : 0;
+      if (_tsPromise) {
+        // Reuse the parallel read kicked off at step 2a
+        var _tsSnap = await _tsPromise;
+        _cloudTs = (_tsSnap && _tsSnap.exists()) ? (_tsSnap.val() || 0) : 0;
       }
     } catch(ex) {
       console.warn('[PSM] cloud ts read:', ex.message || ex);
@@ -385,23 +393,25 @@ async function _handleLogin(e) {
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
 
-    // 7. Remove overlay
-    var overlay = document.getElementById('login-overlay');
-    if (overlay) overlay.remove();
-
-    // 7b. Load user-specific preferences (theme, background)
+    // 7b. Apply user-specific preferences (theme, background) — already loaded in _userProfile
     try {
-      var _prefs = await _loadUserPrefs();
+      var _prefs = (_userProfile && _userProfile.prefs) || null;
       if (_prefs) {
+        console.log('[PSM] User prefs loaded:', _prefs);
         if (_prefs.theme) { APP.settings.theme = _prefs.theme; if(typeof applyTheme==='function') applyTheme(_prefs.theme); }
         if (_prefs._dynamicBg !== undefined) APP.settings._dynamicBg = _prefs._dynamicBg;
         if (_prefs._dynamicBgIntensity !== undefined) APP.settings._dynamicBgIntensity = _prefs._dynamicBgIntensity;
         if (_prefs._hiddenPages !== undefined) APP.settings._hiddenPages = _prefs._hiddenPages;
       }
-    } catch(ex) { console.warn('[PSM] load prefs:', ex); }
+    } catch(ex) { console.warn('[PSM] apply prefs:', ex); }
 
-    // 8. Re-render full UI
-    if (typeof _finishAppInit === 'function') await _finishAppInit();
+    // 8. Re-render full UI, then remove overlay (avoids flash of empty page)
+    try {
+      if (typeof _finishAppInit === 'function') await _finishAppInit();
+    } finally {
+      var overlay = document.getElementById('login-overlay');
+      if (overlay) overlay.remove();
+    }
     // Force badge update (in case _finishAppInit missed it)
     if (typeof updateUserBadge === 'function') updateUserBadge();
     if (typeof notify === 'function') notify('\uD83D\uDC4B Bienvenue ' + (localUser ? localUser.name : email) + ' !', 'success');
