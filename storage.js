@@ -521,7 +521,6 @@ function _updateBackupIndicator() {
 setInterval(_updateBackupIndicator, 30000);
 
 function startBackupScheduler() {
-  if (_psmIsMobile) return; // Mobile: skip local backups (cloud sync + audit remain active)
   if(_backupTimer) clearInterval(_backupTimer);
   const min = parseInt(APP.settings.backupInterval)||180;
   if(min > 0) _backupTimer = setInterval(() => autoBackup(true), min * 60000);
@@ -536,6 +535,16 @@ async function autoBackup(silent) {
     if(refs) _restoreImages(APP, refs);
   } catch(e) { bkData = JSON.stringify({error:'backup too large'}); }
   var hash = await _computeHash(bkData);
+
+  // Mobile: skip local retention (localStorage quota), only cloud snapshot
+  if (_psmIsMobile) {
+    _lastBackupTs = Date.now();
+    _updateBackupIndicator();
+    _saveCloudSnapshot(bkData, hash);
+    if(!silent) notify('Snapshot cloud cr\u00e9\u00e9 \u2713','success');
+    return;
+  }
+
   var bk = { id:generateId(), ts:Date.now(), data:bkData, size:bkData.length, hash:hash };
   APP.backups.unshift(bk);
   // Garder les 5 dernières versions
