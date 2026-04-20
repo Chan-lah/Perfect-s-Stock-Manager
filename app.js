@@ -678,6 +678,18 @@ async function initApp() {
       console.log('[PSM] Annuaire signatures stripped');
     }
 
+    // === ONE-TIME: backfill validator snapshot on old validated bons (2026-04-20) ===
+    if (!APP._bonValidatorBackfill_20260420) {
+      try {
+        if (typeof _backfillBonValidators === 'function') {
+          var _bfRes = _backfillBonValidators();
+          console.log('[PSM] Bon validator backfill:', _bfRes);
+        }
+      } catch(e) { console.warn('[PSM] backfill failed:', e); }
+      APP._bonValidatorBackfill_20260420 = true;
+      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+    }
+
     // 2. Sign out any previous session — force fresh login every time
     if (typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
       try { await _firebaseAuth.signOut(); } catch(e) {}
@@ -1458,7 +1470,7 @@ async function exportBonPDF(id, paperSize) {
     + '\uD83D\uDCA1 S\u00e9lectionnez <strong>"Enregistrer au format PDF"</strong> comme imprimante</p>'
     + '<button onclick="window.print()" style="padding:10px 24px;background:#f5a623;color:#000;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">'
     + '\uD83D\uDCE5 T\u00e9l\u00e9charger en PDF</button></div>'
-    + generateBonHTML(bon, {paperSize: paperSize}) + '</body></html>');
+    + generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined}) + '</body></html>');
   win.document.close();
 }
 
@@ -3314,7 +3326,7 @@ function renderBonPreviewBody(bonId, paperSize) {
     <button class="btn btn-sm btn-secondary" onclick="printBon('${bonId}', '${paperSize}')">Imprimer</button>
     <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${bonId}', '${paperSize}')">PDF</button>
   </div>`;
-  return `<div style="max-height:70vh;overflow:auto">${selector}${generateBonHTML(bon, {paperSize: paperSize})}</div>`;
+  return `<div style="max-height:70vh;overflow:auto">${selector}${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined})}</div>`;
 }
 async function printBon(id, paperSize) {
   paperSize=(paperSize||'A4').toUpperCase();
@@ -3329,7 +3341,7 @@ async function printBon(id, paperSize) {
   }
   if (win.closed) return; // user closed it while we waited
   win.document.open();
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm;size:${paperSize.toLowerCase()}}}</style></head><body>${generateBonHTML(bon, {paperSize: paperSize})}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm;size:${paperSize.toLowerCase()}}}</style></head><body>${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined})}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
   win.document.close();
   _recordBonPrint(bon);
   auditLog('PRINT','bon',bon.id,null,{numero:bon.numero});
@@ -6228,6 +6240,11 @@ function renderBonEditor() {
     bonEditorState.fax   = APP.settings.companyFax   || '';
     bonEditorState.email = APP.settings.companyEmail  || bonEditorState.email;
     bonEditorState.logo = bonEditorState.logo || _safeCompanyLogo();
+    if (APP.settings.bonMinRows) bonEditorState.minRows = parseInt(APP.settings.bonMinRows)||bonEditorState.minRows;
+    if (APP.settings.companyBonTitle) bonEditorState.bonTitle = APP.settings.companyBonTitle;
+    if (APP.settings.bonColorPrimary) bonEditorState.colorPrimary = APP.settings.bonColorPrimary;
+    if (APP.settings.bonColorSecondary) bonEditorState.colorSecondary = APP.settings.bonColorSecondary;
+    if (APP.settings.bonColorAccent) bonEditorState.colorAccent = APP.settings.bonColorAccent;
   }
   const s=bonEditorState;
   document.getElementById('content').innerHTML=`
@@ -6330,16 +6347,19 @@ function beLoadLogo(input) {
 
 function beSaveToCompany() {
   const s=bonEditorState; beLiveUpdate();
-  let co=null;
-  Object.assign(co,{name:s.name,shortName:s.shortName,address:s.address,tel:s.tel,fax:s.fax,email:s.email,colorPrimary:s.colorPrimary,colorSecondary:s.colorSecondary,colorAccent:s.colorAccent,colorLight:hexToLight(s.colorPrimary)});
-  if(s.logo) co.logo=s.logo;
   APP.settings.companyAddress=s.address;
   APP.settings.companyTel=s.tel;
   APP.settings.companyFax=s.fax||'';
   APP.settings.companyEmail=s.email||'';
-  saveDB(); updateCompanyPanel();
+  APP.settings.companyBonTitle=s.bonTitle||'BON DE SORTIE DE GADGETS';
+  APP.settings.bonMinRows=parseInt(s.minRows)||8;
+  APP.settings.bonColorPrimary=s.colorPrimary||'#111111';
+  APP.settings.bonColorSecondary=s.colorSecondary||'#333333';
+  APP.settings.bonColorAccent=s.colorAccent||'#FFFFFF';
+  if(s.logo) APP.settings.companyLogo=s.logo;
+  saveDB(); if (typeof updateCompanyPanel==='function') updateCompanyPanel();
   notify('Paramètres GMA sauvegardés ✓','success');
-  auditLog('UPDATE','company',co.id,null,{name:co.name,from:'boneditor'});
+  auditLog('UPDATE','company','settings',null,{from:'boneditor',minRows:APP.settings.bonMinRows});
 }
 
 function bePrintPreview() {
@@ -7739,8 +7759,9 @@ function _renderBonGestionnaireSigBox(bon) {
       var dStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
       out += '<div style="font-size:9px;color:#444;text-align:center;margin-top:2px">' + dStr + '</div>';
     }
-    if (matricule) {
-      out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Mat. ' + matricule + '</div>';
+    var _poLabel = matricule || name || '';
+    if (_poLabel) {
+      out += '<div style="font-size:10px;color:#111;text-align:center;margin-top:1px;font-family:monospace;font-weight:700;letter-spacing:1px">Po. ' + _poLabel + '</div>';
     }
   }
   return out;
