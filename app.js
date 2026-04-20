@@ -2286,6 +2286,7 @@ function renderArticleRow(a) {
     <td>${isAlert?'<span class="badge badge-red">⚠ Alerte</span>':'<span class="badge badge-green">✓ OK</span>'}</td>
     <td><div style="display:flex;gap:6px">
       <button class="btn btn-sm btn-secondary" onclick="openMvtModal('${a.id}')">📦</button>
+      <button class="btn btn-sm btn-secondary" onclick="openArticleHistory('${a.id}')" title="Historique">📜</button>
       <button class="btn btn-sm btn-secondary" onclick="openArticleModal('${a.id}')">✏️</button>
       <button class="btn btn-sm btn-danger" onclick="deleteArticle('${a.id}')">🗑</button>
     </div></td>
@@ -4847,6 +4848,83 @@ function filterGMACat(cat, btn) {
   document.getElementById('gma-grid').innerHTML = arts.map((a,i)=>renderGMACard(a,i)).join('');
 }
 
+function renderArticleMiniHistory(artId, limit) {
+  limit = limit || 20;
+  var events = [];
+  // Bons (sorties)
+  (APP.bons || []).forEach(function(b) {
+    (b.lignes || []).forEach(function(l) {
+      if (l.articleId === artId) {
+        events.push({
+          ts: b.createdAt || b.ts || 0,
+          type: 'bon',
+          qty: -(l.qte || l.quantity || 0),
+          label: 'Bon ' + (b.numero || b.id || ''),
+          ref: b.id
+        });
+      }
+    });
+  });
+  // Mouvements manuels
+  (APP.mouvements || []).forEach(function(m) {
+    if (m.articleId === artId) {
+      events.push({
+        ts: m.ts || 0,
+        type: m.type === 'entree' ? 'entree' : 'sortie',
+        qty: m.type === 'entree' ? (m.qty || 0) : -(m.qty || 0),
+        label: m.type === 'entree' ? 'Entr\u00e9e manuelle' : 'Sortie manuelle',
+        ref: m.id || ''
+      });
+    }
+  });
+  // Receptions fournisseur
+  (APP.commandesFourn || []).forEach(function(c) {
+    (c.lignes || []).forEach(function(l) {
+      if (l.articleId === artId) {
+        var recs = Array.isArray(l.receptions) ? l.receptions : Object.values(l.receptions || {});
+        recs.forEach(function(r) {
+          events.push({
+            ts: r.date || 0,
+            type: 'reception',
+            qty: r.qty || 0,
+            label: 'R\u00e9ception ' + (c.numero || ''),
+            ref: c.id
+          });
+        });
+      }
+    });
+  });
+  events.sort(function(a, b) { return b.ts - a.ts; });
+  if (events.length === 0) {
+    return '<div style="font-size:12px;color:var(--text-2);font-style:italic;padding:12px;text-align:center">Aucun mouvement enregistr\u00e9</div>';
+  }
+  var rows = events.slice(0, limit).map(function(e) {
+    var icon, color;
+    if (e.type === 'bon') { icon = '\ud83d\udcc4'; color = 'var(--warning)'; }
+    else if (e.type === 'entree') { icon = '\u2795'; color = 'var(--success)'; }
+    else if (e.type === 'sortie') { icon = '\u2796'; color = 'var(--danger)'; }
+    else if (e.type === 'reception') { icon = '\ud83d\udce5'; color = 'var(--accent)'; }
+    else { icon = '\u2022'; color = 'var(--text-2)'; }
+    var qtyStr = (e.qty > 0 ? '+' : '') + e.qty;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px">'
+      + '<span style="font-size:14px">' + icon + '</span>'
+      + '<span style="color:var(--text-2);min-width:80px">' + (e.ts ? fmtDate(e.ts) : '?') + '</span>'
+      + '<span style="flex:1;color:var(--text-1)">' + e.label + '</span>'
+      + '<span style="font-weight:700;color:' + color + '">' + qtyStr + '</span>'
+      + '</div>';
+  }).join('');
+  var more = events.length > limit ? '<div style="font-size:10px;color:var(--text-3);text-align:center;padding:4px">+ ' + (events.length - limit) + ' entr\u00e9es plus anciennes</div>' : '';
+  return '<div style="max-height:260px;overflow-y:auto;background:var(--bg-2);border-radius:8px;border:1px solid var(--border)">' + rows + more + '</div>';
+}
+
+function openArticleHistory(artId) {
+  var a = (APP.articles || []).find(function(x) { return x.id === artId; });
+  if (!a) { notify('Gadget introuvable', 'error'); return; }
+  var body = '<div style="font-size:12px;color:var(--text-2);margin-bottom:10px">Historique complet des mouvements (bons, entr\u00e9es/sorties manuelles, r\u00e9ceptions)</div>'
+    + renderArticleMiniHistory(artId, 50);
+  openModal('art-history', '\ud83d\udcdc Historique \u2014 ' + a.name, body, null, 'modal-md');
+}
+
 function openGMAArticleDetail(artId) {
   // Enrich with fournisseur name
   const _art = APP.articles.find(a=>a.id===artId);
@@ -4878,7 +4956,9 @@ function openGMAArticleDetail(artId) {
         <div class="stat-row"><span class="stat-label">Stock actuel</span><span class="stat-val" style="color:${a.stock<=a.stockMin?'var(--danger)':'var(--success)'}">${a.stock} ${a.unit||'pcs'}</span></div>
         <div class="stat-row"><span class="stat-label">Stock minimum</span><span class="stat-val">${a.stockMin}</span></div>
       </div>
-      ${a.description?`<div style="font-size:12px;color:var(--text-2);line-height:1.6">${a.description}</div>`:''}
+      ${a.description?`<div style="font-size:12px;color:var(--text-2);line-height:1.6;margin-bottom:12px">${a.description}</div>`:''}
+      <div style="font-size:12px;font-weight:700;color:var(--text-1);margin:12px 0 6px">📜 Historique récent</div>
+      ${renderArticleMiniHistory(a.id, 15)}
     </div>
   </div>`;
   openModal('gma-detail', a.name, body, null, 'modal-lg');
