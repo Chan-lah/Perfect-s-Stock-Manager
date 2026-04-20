@@ -1434,7 +1434,8 @@ function _galDeletePhoto(artId) {
 // ============================================================
 // BON PDF EXPORT
 // ============================================================
-async function exportBonPDF(id) {
+async function exportBonPDF(id, paperSize) {
+  paperSize = (paperSize || 'A4').toUpperCase();
   const bon = APP.bons.find(b => b.id === id);
   if (!bon) { notify('Bon introuvable', 'error'); return; }
   auditLog('DOWNLOAD', 'bon', bon.numero, null, {format: 'PDF'});
@@ -1450,14 +1451,14 @@ async function exportBonPDF(id) {
   win.document.open();
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PDF \u2014 ' + bon.numero + '</title>'
     + '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;padding:20px;font-family:Arial,sans-serif}'
-    + '@media print{body{padding:0}@page{margin:10mm;size:A4}}'
+    + '@media print{body{padding:0}@page{margin:10mm;size:' + paperSize.toLowerCase() + '}}'
     + '.no-print{margin:16px auto;text-align:center}'
     + '@media print{.no-print{display:none}}</style></head><body>'
     + '<div class="no-print"><p style="margin-bottom:8px;color:#666;font-size:14px">'
     + '\uD83D\uDCA1 S\u00e9lectionnez <strong>"Enregistrer au format PDF"</strong> comme imprimante</p>'
     + '<button onclick="window.print()" style="padding:10px 24px;background:#f5a623;color:#000;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">'
     + '\uD83D\uDCE5 T\u00e9l\u00e9charger en PDF</button></div>'
-    + generateBonHTML(bon) + '</body></html>');
+    + generateBonHTML(bon, {paperSize: paperSize}) + '</body></html>');
   win.document.close();
 }
 
@@ -3187,7 +3188,10 @@ function generateBonHTML(bon, overrides) {
   const bonTitle=ov.bonTitle||'BON DE SORTIE DE GADGETS';
   const qrSvg=`<div style="text-align:center;background:white;padding:4px"><img src="data:image/png;base64,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" style="max-width:110px;height:auto;display:block;margin:0 auto" /></div>`;
   const commercial=bon.commercialId?APP.commerciaux.find(c=>c.id===bon.commercialId):null;
-  const minRows=parseInt(ov.minRows)||8;
+  const paperSize=(ov.paperSize||'A4').toUpperCase();
+  const paperSizeMap={'A4':{rows:17,minHeight:1050},'A5':{rows:7,minHeight:740},'LETTER':{rows:16,minHeight:1010},'LEGAL':{rows:22,minHeight:1330}};
+  const _pinfo=paperSizeMap[paperSize]||paperSizeMap['A4'];
+  const minRows=parseInt(ov.minRows)||_pinfo.rows;
   const dataRows=(bon.lignes||[]).map(l=>`
     <tr>
       <td style="padding:7px 10px;border:1px solid #555;font-size:12px;font-weight:700;color:#111;text-align:center">${l.code||''}</td>
@@ -3196,14 +3200,14 @@ function generateBonHTML(bon, overrides) {
       <td style="padding:7px 10px;border:1px solid #555;font-size:12px;color:#111;font-style:italic">${l.obs||''}</td>
     </tr>`).join('');
   const blankCount=Math.max(0,minRows-(bon.lignes||[]).length);
-  const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:10px;border:1px solid #555;height:28px"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td><td style="padding:10px;border:1px solid #555"></td></tr>`).join('');
+  const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:7px 10px;border:1px solid #555;height:20px"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td></tr>`).join('');
   // All bons: left+center = validator sig+date+matricule, right = validation date only
-  return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:900px">
+  return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:${_pinfo.minHeight}px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
       <tr>
         <td style="width:42%;vertical-align:top;padding-right:16px">
           ${cLogo
-            ?`<img src="${cLogo}" style="max-height:110px;max-width:220px;object-fit:contain;display:block;margin-bottom:8px">`
+            ?`<img src="${cLogo}" style="max-height:130px;max-width:240px;object-fit:contain;display:block;margin-bottom:8px">`
             :`<div style="font-size:20px;font-weight:900;color:#111;line-height:1.2;margin-bottom:6px">${cName}</div>`}
           <div style="font-size:11px;color:#222;margin-top:2px;line-height:1.6">
             ${cAddr?`<div>${cAddr}</div>`:''}
@@ -3294,9 +3298,25 @@ async function previewBon(id) {
   }
   // Swap in the real content (modal may have been closed in the meantime)
   var bodyEl = document.querySelector('#active-modal .modal-body');
-  if (bodyEl) bodyEl.innerHTML = `<div style="max-height:70vh;overflow:auto">${generateBonHTML(bon)}</div>`;
+  if (bodyEl) bodyEl.innerHTML = renderBonPreviewBody(id, 'A4');
 }
-async function printBon(id) {
+function renderBonPreviewBody(bonId, paperSize) {
+  const bon = APP.bons.find(b => b.id === bonId); if (!bon) return '';
+  paperSize = (paperSize || 'A4').toUpperCase();
+  const sizes = ['A4','A5','Letter','Legal'];
+  const opts = sizes.map(s => `<option value="${s}"${s.toUpperCase()===paperSize?' selected':''}>${s}</option>`).join('');
+  const changeJs = `document.querySelector('#active-modal .modal-body').innerHTML = renderBonPreviewBody('${bonId}', this.value)`;
+  const selector = `<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;background:var(--bg-2);border-radius:8px;margin-bottom:10px;flex-wrap:wrap">
+    <label style="font-size:12px;font-weight:600;color:var(--text-1)">Format papier :</label>
+    <select onchange="${changeJs}" style="width:auto;font-weight:600">${opts}</select>
+    <div style="flex:1"></div>
+    <button class="btn btn-sm btn-secondary" onclick="printBon('${bonId}', '${paperSize}')">Imprimer</button>
+    <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${bonId}', '${paperSize}')">PDF</button>
+  </div>`;
+  return `<div style="max-height:70vh;overflow:auto">${selector}${generateBonHTML(bon, {paperSize: paperSize})}</div>`;
+}
+async function printBon(id, paperSize) {
+  paperSize=(paperSize||'A4').toUpperCase();
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
   // Open the popup synchronously to preserve the user gesture (popup blockers)
   const win=window.open('','_blank','width=900,height=750');
@@ -3308,7 +3328,7 @@ async function printBon(id) {
   }
   if (win.closed) return; // user closed it while we waited
   win.document.open();
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm}}</style></head><body>${generateBonHTML(bon)}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm;size:${paperSize.toLowerCase()}}}</style></head><body>${generateBonHTML(bon, {paperSize: paperSize})}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
   win.document.close();
   _recordBonPrint(bon);
   auditLog('PRINT','bon',bon.id,null,{numero:bon.numero});
