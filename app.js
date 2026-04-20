@@ -3438,16 +3438,30 @@ function filterMvt() {
   <div class="table-wrap"><table>
     <thead><tr>
       <th>Date / Heure</th><th>Type</th><th>Article</th><th>Code</th>
-      <th>Quantité</th><th title="Fournisseur pour les entrées · Commercial pour les sorties">Fournisseur · Commercial</th><th>Observation</th>
+      <th>Quantité</th><th title="Destinataire (bons) · Fournisseur (entrées) · Compte opérateur (saisies manuelles)">Commanditaire</th><th>Observation</th>
     </tr></thead>
     <tbody>${mvts.length ? mvts.map(m => {
       const isE  = m.type === 'entree';
       const art  = APP.articles.find(a => a.id === m.articleId);
       const who  = m.commercialId  ? APP.commerciaux.find(c => c.id === m.commercialId)   : null;
       const fourn= m.fournisseurId ? APP.fournisseurs.find(f => f.id === m.fournisseurId) : null;
-      const agentLabel = who   ? '👤 '+who.prenom+' '+who.nom
-                        : fourn ? '🏭 '+fourn.nom
-                        : '<span style="color:var(--text-2)">—</span>';
+      const agentLabel = (function(){
+        const _note = m.note || '';
+        const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(_note);
+        if (_bm) {
+          const _bon = APP.bons.find(b => String(b.numero) === _bm[1]);
+          if (_bon) {
+            const _dest = _bon.recipiendaire || '—';
+            const _dem  = _bon.demandeur    || '—';
+            return '<div style="font-weight:600">' + _dest + '</div>'
+                 + '<div style="font-size:10px;color:var(--text-2)">Dem: ' + _dem + '</div>';
+          }
+        }
+        if (isE && fourn) return '🏭 ' + fourn.nom;
+        if (!isE && who)  return '👤 ' + who.prenom + ' ' + who.nom;
+        if (m.userLogin)  return '<span style="color:var(--text-2)">👨‍💻 ' + m.userLogin + '</span>';
+        return '<span style="color:var(--text-2)">—</span>';
+      })();
       return `<tr>
         <td style="font-size:11px;font-family:monospace;white-space:nowrap">${fmtDateTime(m.ts)}</td>
         <td><span class="badge ${isE?'badge-green':'badge-orange'}" style="white-space:nowrap">${isE?'↑ Entrée':'↓ Sortie'}</span></td>
@@ -3483,10 +3497,12 @@ function openNewMvtModal(type) {
     const old={...art};
     var _sb12=art.stock;
     if(type==='entree') art.stock+=qty; else art.stock-=qty;
+    var _cuM = typeof _currentUser==='function' ? _currentUser() : null;
+    var _uLog = _cuM ? (_cuM.display_name || _cuM.name || _cuM.email || '') : '';
     const mvt={id:generateId(),type,ts:Date.now(),articleId:art.id,articleName:art.name,qty,
       fournisseurId:type==='entree'?(document.getElementById('mvt-founis')?.value||null):null,
       commercialId:type==='sortie'?(document.getElementById('mvt-com')?.value||null):null,
-      obs:document.getElementById('mvt-obs').value,stockBefore:_sb12,stockAfter:art.stock};
+      obs:document.getElementById('mvt-obs').value,userLogin:_uLog,stockBefore:_sb12,stockAfter:art.stock};
     APP.mouvements.push(mvt);
     auditLog('STOCK_'+type.toUpperCase(),'article',art.id,old,art);
     saveDB();closeModal();filterMvt();updateAlertBadge();
@@ -3785,8 +3801,23 @@ function _renderComTable(coms, color) {
       <th>PDV réels</th><th>Boul/Dist</th><th>Zone Dispatch</th><th>Bons</th><th>Retraits</th><th>Actions</th>
     </tr></thead>
     <tbody>${coms.map(c=>{
-      const bonsCount = APP.bons.filter(b=>b.commercialId===c.id).length;
-      const totalQty = APP.mouvements.filter(m=>m.type==='sortie'&&m.commercialId===c.id).reduce((s,m)=>s+m.qty,0);
+      const _fullA = ((c.prenom||'')+' '+(c.nom||'')).trim().toUpperCase();
+      const _fullB = ((c.nom||'')+' '+(c.prenom||'')).trim().toUpperCase();
+      const _matchBon = function(b){
+        if (b.commercialId===c.id) return true;
+        if (!_fullA) return false;
+        const _d = String(b.demandeur||'').trim().toUpperCase();
+        const _r = String(b.recipiendaire||'').trim().toUpperCase();
+        return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
+      };
+      const _matchedBonIds = new Set(APP.bons.filter(_matchBon).map(function(b){return String(b.numero);}));
+      const bonsCount = _matchedBonIds.size;
+      const totalQty = APP.mouvements.filter(function(m){
+        if (m.type!=='sortie') return false;
+        if (m.commercialId===c.id) return true;
+        const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
+        return _bm ? _matchedBonIds.has(_bm[1]) : false;
+      }).reduce(function(s,m){return s+m.qty;},0);
       const realPDV = comPDVCount(c.id);
       const boul = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='boulangerie'&&p.actif!==false).length;
       const dist = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='distributeur'&&p.actif!==false).length;
