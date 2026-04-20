@@ -3261,7 +3261,7 @@ function generateBonHTML(bon, overrides) {
           <th style="padding:10px 12px;border:1px solid #555;font-size:12px;font-weight:700;color:#111;text-align:center;width:26%">Observations</th>
         </tr>
       </thead>
-      <tbody>${dataRows}</tbody>
+      <tbody>${dataRows}${blankRows}</tbody>
     </table>
     <table style="width:100%;border-collapse:collapse;border:2px solid #111;border-top:none">
       <tr>
@@ -4769,14 +4769,13 @@ function renderGMACatalogue() {
   const cats = [...new Set(GMA_ARTICLES.map(a=>a.category))];
   document.getElementById('content').innerHTML = `
   <div class="gma-logo-banner anim-up">
-    <div class="gma-logo-box" id="gma-logo-preview" onclick="document.getElementById('gma-logo-input').click()" title="Cliquez pour changer le logo" style="cursor:pointer">
+    <div class="gma-logo-box" id="gma-logo-preview">
       ${logo?`<img src="${logo}" alt="GMA Logo">`:'<span style="font-size:20px;font-weight:900;letter-spacing:-1px">GMA</span>'}
     </div>
-    <input type="file" id="gma-logo-input" accept="image/*" style="display:none" onchange="saveGMALogo(this)">
     <div style="flex:1">
       <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">Catalogue GMA</div>
       <div style="font-size:12px;color:var(--text-2);margin-top:2px">Gadgets institutionnels, goodies et gadgets GMA</div>
-      <div style="font-size:11px;color:var(--accent);margin-top:4px">📸 Cliquez sur le logo pour le modifier · Cliquez sur un article pour ajouter une illustration</div>
+      <div style="font-size:11px;color:var(--accent);margin-top:4px">📸 Cliquez sur un article pour ajouter une illustration</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-secondary btn-sm" onclick="showPage('articles')">📦 Voir les stocks →</button>
