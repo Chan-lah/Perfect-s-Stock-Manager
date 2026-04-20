@@ -1470,7 +1470,7 @@ async function exportBonPDF(id, paperSize) {
     + '\uD83D\uDCA1 S\u00e9lectionnez <strong>"Enregistrer au format PDF"</strong> comme imprimante</p>'
     + '<button onclick="window.print()" style="padding:10px 24px;background:#f5a623;color:#000;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">'
     + '\uD83D\uDCE5 T\u00e9l\u00e9charger en PDF</button></div>'
-    + generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined}) + '</body></html>');
+    + generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined}) + '</body></html>');
   win.document.close();
 }
 
@@ -3204,7 +3204,8 @@ function generateBonHTML(bon, overrides) {
   const paperSize=(ov.paperSize||'A4').toUpperCase();
   const paperSizeMap={'A4':{rows:17,minHeight:1050},'A5':{rows:7,minHeight:740},'LETTER':{rows:16,minHeight:1010},'LEGAL':{rows:22,minHeight:1330}};
   const _pinfo=paperSizeMap[paperSize]||paperSizeMap['A4'];
-  const minRows=parseInt(ov.minRows)||_pinfo.rows;
+  const _extraRaw=parseInt(ov.minRows);
+  const _lignesCount=(bon.lignes||[]).length;
   const dataRows=(bon.lignes||[]).map(l=>`
     <tr>
       <td style="padding:7px 10px;border:1px solid #555;font-size:12px;font-weight:700;color:#111;text-align:center">${l.code||''}</td>
@@ -3212,7 +3213,7 @@ function generateBonHTML(bon, overrides) {
       <td style="padding:7px 10px;border:1px solid #555;font-size:13px;font-weight:700;color:#111;text-align:center">${l.qty||''}</td>
       <td style="padding:7px 10px;border:1px solid #555;font-size:12px;color:#111;font-style:italic">${l.obs||''}</td>
     </tr>`).join('');
-  const blankCount=Math.max(0,minRows-(bon.lignes||[]).length);
+  const blankCount=!isNaN(_extraRaw)?Math.max(0,_extraRaw):Math.max(0,_pinfo.rows-_lignesCount);
   const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:7px 10px;border:1px solid #555;height:20px"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td></tr>`).join('');
   // All bons: left+center = validator sig+date+matricule, right = validation date only
   return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:${_pinfo.minHeight}px">
@@ -3326,7 +3327,7 @@ function renderBonPreviewBody(bonId, paperSize) {
     <button class="btn btn-sm btn-secondary" onclick="printBon('${bonId}', '${paperSize}')">Imprimer</button>
     <button class="btn btn-sm btn-secondary" onclick="exportBonPDF('${bonId}', '${paperSize}')">PDF</button>
   </div>`;
-  return `<div style="max-height:70vh;overflow:auto">${selector}${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined})}</div>`;
+  return `<div style="max-height:70vh;overflow:auto">${selector}${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined})}</div>`;
 }
 async function printBon(id, paperSize) {
   paperSize=(paperSize||'A4').toUpperCase();
@@ -3341,7 +3342,7 @@ async function printBon(id, paperSize) {
   }
   if (win.closed) return; // user closed it while we waited
   win.document.open();
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm;size:${paperSize.toLowerCase()}}}</style></head><body>${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows) || undefined})}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ${bon.numero}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}@media print{body{background:white;padding:0}@page{margin:10mm;size:${paperSize.toLowerCase()}}}</style></head><body>${generateBonHTML(bon, {paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined})}<script>window.onload=()=>{setTimeout(()=>window.print(),300)}<\/script></body></html>`);
   win.document.close();
   _recordBonPrint(bon);
   auditLog('PRINT','bon',bon.id,null,{numero:bon.numero});
@@ -4764,7 +4765,7 @@ function applyGMAFilters() {
 }
 
 function renderGMACatalogue() {
-  const logo = APP.settings.gmaLogo || localStorage.getItem(GMA_LOGO_KEY) || '';
+  const logo = APP.settings.gmaLogo || APP.settings.companyLogo || localStorage.getItem(GMA_LOGO_KEY) || '';
   const cats = [...new Set(GMA_ARTICLES.map(a=>a.category))];
   document.getElementById('content').innerHTML = `
   <div class="gma-logo-banner anim-up">
@@ -4834,7 +4835,7 @@ function renderGMACard(a, i=0) {
       <div style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.5);border-radius:4px;padding:2px 6px;font-size:10px;color:white;font-weight:600">+Photo</div>
     </div>
     <div class="gma-art-body">
-      <div class="gma-art-fourn">🏭 <strong>${a.fournisseur}</strong></div>
+      ${(()=>{const _fr=a.fournisseurId?(APP.fournisseurs||[]).find(x=>x.id===a.fournisseurId):null;return _fr?`<div class="gma-art-fourn">🏭 <strong>${_fr.nom}</strong></div>`:'<div class="gma-art-fourn" style="opacity:0.55;background:var(--bg-3);border-color:var(--border)">🏭 <strong>Sans fournisseur</strong></div>';})()}
       <div class="gma-art-cat">${a.category}</div>
       <div class="gma-art-name">${a.name}</div>
       ${a.code&&a.code!=='—'?`<div class="gma-art-code">${a.code}</div>`:''}
@@ -6240,7 +6241,7 @@ function renderBonEditor() {
     bonEditorState.fax   = APP.settings.companyFax   || '';
     bonEditorState.email = APP.settings.companyEmail  || bonEditorState.email;
     bonEditorState.logo = bonEditorState.logo || _safeCompanyLogo();
-    if (APP.settings.bonMinRows) bonEditorState.minRows = parseInt(APP.settings.bonMinRows)||bonEditorState.minRows;
+    if (APP.settings.bonMinRows!=null) bonEditorState.minRows = parseInt(APP.settings.bonMinRows,10);
     if (APP.settings.companyBonTitle) bonEditorState.bonTitle = APP.settings.companyBonTitle;
     if (APP.settings.bonColorPrimary) bonEditorState.colorPrimary = APP.settings.bonColorPrimary;
     if (APP.settings.bonColorSecondary) bonEditorState.colorSecondary = APP.settings.bonColorSecondary;
@@ -6259,7 +6260,7 @@ function renderBonEditor() {
         <div class="form-group"><label>Téléphone</label><input id="be-tel" value="${s.tel}" oninput="beLiveUpdate()"></div>
         <div class="form-group"><label>Fax</label><input id="be-fax" value="${s.fax||''}" oninput="beLiveUpdate()"></div>
         <div class="form-group"><label>Email</label><input id="be-email" value="${s.email||''}" oninput="beLiveUpdate()"></div>
-        <div class="form-group"><label>Nb lignes vides (min)</label><input type="number" id="be-rows" value="${s.minRows||8}" min="3" max="20" oninput="beLiveUpdate()"></div>
+        <div class="form-group"><label>Lignes vides supplémentaires</label><input type="number" id="be-rows" value="${s.minRows||8}" min="0" max="30" oninput="beLiveUpdate()"></div>
       </div>
       <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-2);margin-bottom:10px">🖼 Logo GMA</div>
@@ -6312,7 +6313,8 @@ function beLiveUpdate() {
   s.colorPrimary=document.getElementById('be-color1')?.value||s.colorPrimary;
   s.colorSecondary=document.getElementById('be-color2')?.value||s.colorSecondary;
   s.colorAccent=document.getElementById('be-color3')?.value||s.colorAccent;
-  s.minRows=parseInt(document.getElementById('be-rows')?.value)||8;
+  var _brv=document.getElementById('be-rows')?.value;
+  s.minRows=(_brv===''||_brv==null)?8:(parseInt(_brv,10)||0);
   const prev=document.getElementById('be-preview');
   if(prev) prev.innerHTML=generateBonEditorPreview(s);
 }
@@ -6352,7 +6354,7 @@ function beSaveToCompany() {
   APP.settings.companyFax=s.fax||'';
   APP.settings.companyEmail=s.email||'';
   APP.settings.companyBonTitle=s.bonTitle||'BON DE SORTIE DE GADGETS';
-  APP.settings.bonMinRows=parseInt(s.minRows)||8;
+  APP.settings.bonMinRows=(s.minRows===0||s.minRows===''||s.minRows==null)?(s.minRows===0?0:8):(parseInt(s.minRows,10)||8);
   APP.settings.bonColorPrimary=s.colorPrimary||'#111111';
   APP.settings.bonColorSecondary=s.colorSecondary||'#333333';
   APP.settings.bonColorAccent=s.colorAccent||'#FFFFFF';
