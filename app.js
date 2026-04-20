@@ -768,6 +768,55 @@ async function _finishAppInit() {
   if(!APP.bons) APP.bons = [];
   if(!APP.fournisseurs) APP.fournisseurs = [];
   if(!APP.annuaire) APP.annuaire = [];
+  // DCM migration: ensure DCM entry exists in annuaire + backfill bons demandeur/recipiendaire === 'DCM'
+  (function _dcmInit(){
+    function _findDCM() {
+      return (APP.annuaire||[]).find(function(p){
+        var full = ((p.prenom||'') + ' ' + (p.nom||'')).trim().toUpperCase();
+        return full === 'DCM';
+      });
+    }
+    var _dcm = _findDCM();
+    if (!_dcm) {
+      _dcm = {
+        id: 'an_dcm_' + Date.now(),
+        createdAt: Date.now(),
+        _version: 1,
+        prenom: '',
+        nom: 'DCM',
+        poste: 'D\u00e9partement Commercial Marketing',
+        departement: '',
+        telephone: '',
+        email: '',
+        matricule: '',
+        tag: 'DEMANDEUR'
+      };
+      APP.annuaire.push(_dcm);
+      console.log('[PSM] DCM cree dans l\'annuaire');
+    }
+    window._DCM_ID = _dcm.id;
+    if (!APP._dcmMigration_20260420) {
+      var _count = 0;
+      (APP.bons||[]).forEach(function(b){
+        var _d = String(b.demandeur||'').trim().toUpperCase();
+        if (_d === 'DCM') {
+          b.demandeur = 'DCM';
+          b._demandeurType = 'list';
+          b._demandeurAnnuaireId = _dcm.id;
+          _count++;
+        }
+        var _r = String(b.recipiendaire||'').trim().toUpperCase();
+        if (_r === 'DCM') {
+          b.recipiendaire = 'DCM';
+          b._recipType = 'list';
+          b._recipiendaireAnnuaireId = _dcm.id;
+          _count++;
+        }
+      });
+      APP._dcmMigration_20260420 = Date.now();
+      if (_count > 0) console.log('[PSM] Migration DCM: ' + _count + ' bon(s) lies a l\'annuaire');
+    }
+  })();
   // Phase 9: backfill _isDispatch flag on existing bons (one-time)
   if (!APP._dispatchSigMigratedAt) {
     var _dpBonIds = {};
@@ -8670,7 +8719,8 @@ async function validateDispatchV3(articleIds) {
       id: generateId(), numero: bonNum,
       companyId: (APP.settings && APP.settings.companyId) || '',
       demandeur: _dispDemandeur || 'DCM',
-      _demandeurType: _dispDemType || 'commercial',
+      _demandeurType: (_dispDemandeur==='DCM' || !_dispDemandeur) ? 'list' : (_dispDemType || 'list'),
+      _demandeurAnnuaireId: (_dispDemandeur==='DCM' || !_dispDemandeur) ? (window._DCM_ID || '') : '',
       recipiendaire: fullName,
       commercialId: comId,
       commercialName: fullName,
