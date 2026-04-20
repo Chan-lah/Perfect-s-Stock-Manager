@@ -998,7 +998,6 @@ const THEME_META = {
   purple:    { name:'Nebula',      desc:'Violet cosmique',      bg:'#150e20', c1:'#9d4edd', c2:'#c77dff', c3:'#0d0814' },
   ocean:     { name:'Océan',      desc:'Bleu profond',        bg:'#0a1628', c1:'#0ea5e9', c2:'#38bdf8', c3:'#060e18' },
   midnight:  { name:'Midnight',   desc:'Indigo nocturne',   bg:'#0f172a', c1:'#818cf8', c2:'#a5b4fc', c3:'#020617' },
-  picture:   { name:'Fond photo',  desc:'Image personnalisée',  bg:'#0a0c10', c1:'#3d7fff', c2:'#00e5aa', c3:'#0a0c10' },
 };
 
 function applyTheme(t) {
@@ -1006,12 +1005,7 @@ function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   try { localStorage.setItem('psm_theme', t); } catch(e) {}
   if (typeof APP !== 'undefined' && APP && APP.settings) APP.settings.theme = t;
-  if(t === 'picture') {
-    const img = APP.settings.bgImage || '';
-    document.body.style.setProperty('--bg-image', img ? 'url('+img+')' : 'none');
-  } else {
-    document.body.style.removeProperty('--bg-image');
-  }
+  document.body.style.removeProperty('--bg-image');
   // Flash transition overlay
   let overlay = document.getElementById('_themeFlash');
   if(!overlay) {
@@ -1034,7 +1028,6 @@ function openThemePicker(btn) {
   if(existing) { existing.remove(); return; }
   const rect = btn.getBoundingClientRect();
   const cur  = document.documentElement.dataset.theme || 'dark';
-  const isPicture = cur === 'picture';
   const panel = document.createElement('div');
   panel.id = '_tp_panel';
   panel.className = 'tp-panel';
@@ -1059,7 +1052,7 @@ function openThemePicker(btn) {
         (active?'<svg width="13" height="13" fill="none" stroke="var(--accent)" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>':'')+
       '</div>';
     }).join('') +
-    (isPicture ? '<div style="border-top:1px solid var(--border);margin:8px 0 0;padding-top:8px"><button onclick="document.getElementById(\'bg-image-input\')?.click();document.getElementById(\'_tp_panel\')?.remove()" style="width:100%;padding:8px;background:var(--bg-3);border:1px dashed var(--border);border-radius:8px;color:var(--text-2);font-size:12px;cursor:pointer;font-family:inherit">📸 Changer la photo de fond</button></div>' : '');
+    '';
   document.body.appendChild(panel);
   setTimeout(()=>document.addEventListener('click',function h(e){
     if(!panel.contains(e.target)&&!btn.contains(e.target)){panel.remove();document.removeEventListener('click',h);}
@@ -1184,27 +1177,6 @@ function updateThemeBtn() {
     '<span>'+m.name+'</span>'+
     '<svg width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>';
 }
-function uploadBgImage() {
-  const inp = document.createElement('input');
-  inp.type='file'; inp.accept='image/*';
-  inp.onchange = function(){
-    const file = inp.files[0]; if(!file) return;
-    if(file.size > 4*1024*1024){ notify('Image trop grande (max 4MB)','warning'); return; }
-    const reader = new FileReader();
-    reader.onload = function(e){
-      APP.settings.bgImage = e.target.result; _imagesDirty = true;
-      APP.settings.theme = 'picture';
-      saveDB();
-      applyTheme('picture');
-      renderSettings();
-      updateThemeBtn();
-      notify('Image de fond appliquée ✓','success');
-    };
-    reader.readAsDataURL(file);
-  };
-  inp.click();
-}
-
 function quickNewBon() { showPage('bons'); setTimeout(()=>openBonModal(),100); }
 
 function updateAlertBadge() {
@@ -6487,10 +6459,7 @@ function renderSettings() {
               </div>
             `).join('')}
           </div>
-          ${(APP.settings.theme==='picture')?`<div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-            <button class="btn btn-secondary btn-sm" onclick="uploadBgImage()">📂 Changer l'image de fond</button>
-            ${APP.settings.bgImage?'<span style="font-size:11px;color:var(--text-2)">Image enregistrée ✓</span>':'<span style="font-size:11px;color:var(--text-2)">Aucune image</span>'}
-          </div>`:'<div style="margin-top:8px"><button class="btn btn-secondary btn-sm" onclick="uploadBgImage()">🖼️ Thème Photo (image de fond)</button></div>'}
+
         </div>
         <div class="form-group"><label>Devise</label><select id="set-currency"><option value="XOF" ${s.currency==='XOF'?'selected':''}>XOF (CFA)</option><option value="EUR" ${s.currency==='EUR'?'selected':''}>EUR (€)</option><option value="USD" ${s.currency==='USD'?'selected':''}>USD ($)</option></select></div>
         <div class="form-group"><label>${t('language')}</label>
