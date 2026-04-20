@@ -511,11 +511,17 @@ async function _computeHash(str) {
 function _updateBackupIndicator() {
   var el = document.getElementById('backup-indicator');
   if (!el) return;
+  // Seed from existing backups if session has no recent backup yet
+  if (!_lastBackupTs && typeof APP !== 'undefined' && APP && APP.backups && APP.backups.length) {
+    var newest = APP.backups.reduce(function(m, b){ return (b && b.ts > m) ? b.ts : m; }, 0);
+    if (newest) _lastBackupTs = newest;
+  }
   if (!_lastBackupTs) { el.textContent = 'Aucun backup'; return; }
   var ago = Math.round((Date.now() - _lastBackupTs) / 60000);
   if (ago < 1) el.textContent = 'Backup : il y a < 1 min';
   else if (ago < 60) el.textContent = 'Backup : il y a ' + ago + ' min';
-  else el.textContent = 'Backup : il y a ' + Math.round(ago / 60) + 'h';
+  else if (ago < 1440) el.textContent = 'Backup : il y a ' + Math.round(ago / 60) + 'h';
+  else el.textContent = 'Backup : il y a ' + Math.round(ago / 1440) + 'j';
 }
 // Refresh indicator every 30s
 setInterval(_updateBackupIndicator, 30000);

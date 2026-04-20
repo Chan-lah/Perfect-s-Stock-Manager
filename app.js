@@ -1071,7 +1071,7 @@ function selectThemePicker(themeId) {
   saveDB();
   applyTheme(themeId);
   document.getElementById('_tp_panel')?.remove();
-  if(currentPage === 'settings') { renderSettings(); _loadCloudSnapshotsUI(); }
+  if(currentPage === 'settings') { renderSettings(); _loadCloudSnapshotsUI(); if(typeof _updateBackupIndicator==='function') _updateBackupIndicator(); }
   // Persist to Firebase prefs so theme survives reconnect (same payload as saveSettings)
   if (typeof _saveUserPrefs === 'function') {
     _saveUserPrefs({
@@ -6409,6 +6409,8 @@ function editZone(id){openZoneModal(id);}
 // ============================================================
 function renderSettings() {
   const s=APP.settings;
+  const _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  const _isAdmin = !!(_cu && _cu.role === 'admin');
   document.getElementById('content').innerHTML=`
   <div class="page-title mb-16">${t('settings')}</div>
   <div class="grid-2" style="gap:16px">
@@ -6509,7 +6511,7 @@ function renderSettings() {
       </div>
             <button class="btn btn-primary" onclick="saveSettings()">💾 Enregistrer</button>
     </div>
-    <div class="card">
+${_isAdmin ? `    <div class="card">
       <div class="card-header"><span class="card-title">${t('data')}</span></div>
       <div class="stat-row"><span class="stat-label">Gadgets</span><span class="stat-val">${APP.articles.length}</span></div>
       <div class="stat-row"><span class="stat-label">Bons émis</span><span class="stat-val">${APP.bons.length}</span></div>
@@ -6526,7 +6528,7 @@ function renderSettings() {
         <p style="font-size:11px;color:var(--text-2);margin-top:6px">Efface uniquement : mouvements, audit, journal d'activité, historique de dispatch.<br>Conserve : stocks, bons, gadgets, commerciaux, fournisseurs, zones, PDV, backups, paramètres.</p>
         ${(function(){ var _cu=typeof _currentUser==='function'?_currentUser():null; return _cu&&_cu.role==='admin'?'<button class="btn btn-danger" style="margin-top:8px;background:#7f1d1d;border-color:#991b1b" onclick="purgeBackups()"><i class="fa-solid fa-fire"></i> Purger les sauvegardes</button>':''; })()}
       </div>
-    </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-header"><span class="card-title">💾 Stockage Persistant</span></div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:10px">Vos données sont sauvegardées dans le dossier <strong>PSm Saves (Do Not Delete)</strong> sur votre PC — aucune dépendance au navigateur.</div>
@@ -6541,7 +6543,7 @@ function renderSettings() {
       <div class="card-header"><span class="card-title">🏷️ Catégories de gadgets</span><button class="btn btn-sm btn-primary" onclick="openAddCategoryModal()">+ Nouvelle catégorie</button></div>
       <div id="cat-list-settings" style="padding:4px 0"></div>
     </div>
-    <div class="card">
+${_isAdmin ? `    <div class="card">
       <div class="card-header"><span class="card-title">⏱ Sauvegardes automatiques</span></div>
       <div class="form-group">
         <label>Fréquence</label>
@@ -6555,19 +6557,19 @@ function renderSettings() {
         </select>
       </div>
       <button class="btn btn-secondary btn-sm" onclick="manualBackup()">💾 Sauvegarder maintenant</button> <button class="btn btn-secondary btn-sm" onclick="validateData()">🔎 Vérifier les données</button>
-    </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-header"><span class="card-title">📦 Backups locaux (${APP.backups.length}/5)</span></div>
-      ${APP.backups.length?APP.backups.slice().reverse().map(b=>`<div class="stat-row"><span class="stat-label">${fmtDateTime(b.ts)} · ${Math.round(b.size/1024)}KB ${b.hash?'<span style="color:var(--success);font-size:10px" title="Hash: '+b.hash.slice(0,12)+'...">✓ intégrité</span>':''}</span><button class="btn btn-sm btn-secondary" onclick="restoreSpecificBackup('${b.id}')">Restaurer</button></div>`).join(''):'<div class="empty-state"><p>Aucun backup encore</p></div>'}
+      ${APP.backups.length?APP.backups.slice().reverse().map(b=>`<div class="stat-row"><span class="stat-label">${fmtDateTime(b.ts)} · ${Math.round(b.size/1024)}KB ${b.hash?'<span style="color:var(--success);font-size:10px" title="Hash: '+b.hash.slice(0,12)+'...">✓ intégrité</span>':''}</span>${_isAdmin?`<button class="btn btn-sm btn-secondary" onclick="restoreSpecificBackup('${b.id}')">Restaurer</button>`:''}</div>`).join(''):'<div class="empty-state"><p>Aucun backup encore</p></div>'}
     </div>
-    <div class="card" style="margin-top:12px">
+${_isAdmin ? `    <div class="card" style="margin-top:12px">
       <div class="card-header"><span class="card-title">☁️ Snapshots cloud (7 derniers jours)</span></div>
       <div id="cloud-snapshots-list"><div class="empty-state"><p>Chargement...</p></div></div>
-    </div>
-    <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:8px;display:flex;align-items:center;gap:8px">
+    </div>` : ''}
+${_isAdmin ? `    <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:8px;display:flex;align-items:center;gap:8px">
       <span style="font-size:18px">🛡️</span>
       <span id="backup-indicator" style="font-size:12px;color:var(--text-2)">Aucun backup</span>
-    </div>
+    </div>` : ''}
   </div>
   <div class="card" style="margin-top:16px;background:linear-gradient(135deg,rgba(61,127,255,0.06),rgba(0,229,170,0.04));border-color:rgba(61,127,255,0.2)">
     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
@@ -6912,13 +6914,20 @@ function purgeBackups() {
   renderSettings();
 }
 
-function _loadCloudSnapshotsUI() {
+function _loadCloudSnapshotsUI(retry) {
   var el = document.getElementById('cloud-snapshots-list');
   if (!el) return;
   if (typeof _listCloudSnapshots !== 'function') { el.innerHTML = '<div class="empty-state"><p>Fonction non disponible</p></div>'; return; }
+  // Not connected yet -> show pending state and retry once
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB || typeof _cloudUser === 'undefined' || !_cloudUser) {
+    el.innerHTML = '<div class="empty-state"><p>\u23f3 Connexion cloud en cours\u2026</p></div>';
+    if (!retry) setTimeout(function(){ _loadCloudSnapshotsUI(true); }, 2000);
+    return;
+  }
+  el.innerHTML = '<div class="empty-state"><p>Chargement\u2026</p></div>';
   _listCloudSnapshots().then(function(snapshots) {
     if (!snapshots || snapshots.length === 0) {
-      el.innerHTML = '<div class="empty-state"><p>Aucun snapshot cloud</p></div>';
+      el.innerHTML = '<div class="empty-state"><p>Aucun snapshot cloud pour l\'instant</p></div>';
       return;
     }
     el.innerHTML = snapshots.map(function(s) {
