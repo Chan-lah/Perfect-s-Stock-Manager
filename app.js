@@ -966,6 +966,7 @@ function showPage(id) {
   currentPage = id;
   if(APP.settings) { APP.settings.lastPage = id; try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {} }
   document.querySelectorAll('.sb-item').forEach(i => i.classList.toggle('active', i.dataset.page === id));
+  document.querySelectorAll('.mbn-item').forEach(i => i.classList.toggle('active', i.dataset.page === id));
   const titles = {
     dashboard:'Tableau de bord', articles:'Gadgets & Stocks', bons:'Bons de sortie',
     mouvements:'Mouvements de stock', commerciaux:'Commerciaux', territoire:'\ud83d\uddfa Zones & Secteurs',
@@ -9442,6 +9443,35 @@ function closeMobMenu() {
 document.addEventListener('click', function(e) {
   if (e.target.closest('.sb-item') && window.innerWidth <= 600) closeMobMenu();
 });
+
+// ── MOBILE: swipe-left-to-close sidebar ──
+(function(){
+  var startX=0, startY=0, currentX=0, dragging=false, sb=null;
+  document.addEventListener('touchstart', function(e){
+    sb = document.getElementById('sidebar');
+    if(!sb || !sb.classList.contains('mob-open')) return;
+    var t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; currentX = startX;
+    dragging = true;
+  }, {passive:true});
+  document.addEventListener('touchmove', function(e){
+    if(!dragging || !sb) return;
+    var t = e.touches[0]; currentX = t.clientX;
+    var dx = currentX - startX, dy = Math.abs(t.clientY - startY);
+    if(Math.abs(dx) < dy){ dragging = false; return; }
+    if(dx < 0){
+      sb.style.transform = 'translateX(' + Math.max(dx, -340) + 'px)';
+      sb.style.transition = 'none';
+    }
+  }, {passive:true});
+  document.addEventListener('touchend', function(){
+    if(!dragging || !sb) return;
+    dragging = false;
+    sb.style.transition = ''; sb.style.transform = '';
+    if(currentX - startX < -60 && typeof closeMobMenu === 'function') closeMobMenu();
+  }, {passive:true});
+})();
+
 
 // ── Storage: File System Persistence ── (moved to storage.js)
 

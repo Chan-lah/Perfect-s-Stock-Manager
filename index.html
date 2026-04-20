@@ -2,7 +2,13 @@
 <html lang="fr" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
 <title>Stock Manager</title>
 <link rel="icon" type="image/x-icon" href="favicon.ico">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -33,6 +39,25 @@
 </div>
 <button id="mob-menu-btn" onclick="toggleMobMenu()" aria-label="Menu">☰</button>
 <div id="sidebar-overlay" onclick="closeMobMenu()"></div>
+
+<!-- ── MOBILE BOTTOM NAV ── -->
+<nav id="mob-bottom-nav" aria-label="Navigation mobile">
+  <div class="mbn-item" data-page="dashboard" onclick="showPage('dashboard')">
+    <i data-lucide="home" stroke-width="1.75"></i><span>Accueil</span>
+  </div>
+  <div class="mbn-item" data-page="articles" onclick="showPage('articles')">
+    <i data-lucide="package" stroke-width="1.75"></i><span>Stocks</span>
+  </div>
+  <div class="mbn-item" data-page="bons" onclick="showPage('bons')">
+    <i data-lucide="file-text" stroke-width="1.75"></i><span>Bons</span>
+  </div>
+  <div class="mbn-item" onclick="toggleMobMenu()">
+    <i data-lucide="menu" stroke-width="1.75"></i><span>Menu</span>
+  </div>
+  <div class="mbn-item" data-page="settings" onclick="showPage('settings')">
+    <i data-lucide="settings" stroke-width="1.75"></i><span>Réglages</span>
+  </div>
+</nav>
 
 <div id="app" class="splash-hidden">
   <!-- SIDEBAR -->
