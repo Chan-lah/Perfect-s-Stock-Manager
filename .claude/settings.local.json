@@ -13,7 +13,22 @@
       "Read(//c/Program Files/**)",
       "Bash(powershell.exe -Command \"node --version\")",
       "Bash(powershell.exe -Command \"python -c \"\"print\\(''hello''\\)\"\"\")",
-      "Bash(py -3 C:/tmp/mega_patch_1.py)"
+      "Bash(py -3 C:/tmp/mega_patch_1.py)",
+      "Bash(py -3 -c \"import playwright; print\\(playwright.__version__\\)\")"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-commit-review.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
