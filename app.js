@@ -641,6 +641,19 @@ function _pruneHistoricalData() {
   if (pruned) saveDB();
 }
 
+// Cursor-tracking shine on liquid-glass cards (event delegation, 1 listener)
+(function _initCardHoverShine(){
+  if (window._cardShineBound) return; window._cardShineBound=true;
+  var _sel='.card,.fourn-card,.order-card,.gma-art-card';
+  document.addEventListener('mousemove', function(e){
+    var el=e.target && e.target.closest ? e.target.closest(_sel) : null;
+    if(!el) return;
+    var r=el.getBoundingClientRect();
+    el.style.setProperty('--mx',(e.clientX-r.left)+'px');
+    el.style.setProperty('--my',(e.clientY-r.top)+'px');
+  }, {passive:true});
+})();
+
 async function initApp() {
   try {
     if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
@@ -3214,7 +3227,8 @@ function generateBonHTML(bon, overrides) {
       <td style="padding:7px 10px;border:1px solid #555;font-size:12px;color:#111;font-style:italic">${l.obs||''}</td>
     </tr>`).join('');
   const blankCount=!isNaN(_extraRaw)?Math.max(0,_extraRaw):Math.max(0,_pinfo.rows-_lignesCount);
-  const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="padding:7px 10px;border:1px solid #555;height:20px"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td><td style="padding:7px 10px;border:1px solid #555"></td></tr>`).join('');
+  const _blankCellBase='padding:7px 10px;border:1px dashed #d8d8d8';
+  const blankRows=Array(blankCount).fill(0).map(()=>`<tr><td style="${_blankCellBase};height:20px"></td><td style="${_blankCellBase};color:#bcbcbc;font-size:10px;font-style:italic;text-align:center;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55">ligne vide</td><td style="${_blankCellBase}"></td><td style="${_blankCellBase}"></td></tr>`).join('');
   // All bons: left+center = validator sig+date+matricule, right = validation date only
   return `<div style="background:white;color:#111;font-family:'Arial',sans-serif;max-width:800px;margin:0 auto;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,0.10);min-height:${_pinfo.minHeight}px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
