@@ -2703,7 +2703,7 @@ function renderBonRow(b) {
     <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${b.recipiendaire||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
     <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${(b.lignes||[]).map(l=>`${l.qty}× ${l.name||l.articleName}`).join(', ')}</td>
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
-    <td class="editable" id="td-bstat-${b.id}"><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
+    <td class="${_bonLocked?'':'editable'}" id="td-bstat-${b.id}" ${_bonLocked?'title="Bon validé — modification réservée à l\'admin" style="cursor:not-allowed;opacity:0.85"':''}><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
     <td><div style="display:flex;gap:4px">
       ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:(b.status==='validé'?(_isAdmin?`<button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕ Annuler</button>`:''):`<button class="btn btn-sm btn-success" onclick="reactivateBon('${b.id}')" title="Réactiver ce bon">↻ Réactiver</button>`)}
       <button class="btn btn-sm btn-secondary" onclick="previewBon('${b.id}')">👁</button>
@@ -2823,8 +2823,26 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
 
 function attachBonEditors(b) {
   const stTd=document.getElementById('td-bstat-'+b.id);
-  if(stTd) stTd.ondblclick=()=>{
+  if(!stTd) return;
+  const _u=(typeof _currentUser==='function')?_currentUser():null;
+  const _isAdmin=_u && _u.role==='admin';
+  // Verrou édition inline : un bon validé n'est modifiable que par admin
+  if (b.status==='validé' && !_isAdmin) {
+    stTd.ondblclick=()=>notify('Bon validé — modification réservée à l\'admin','warning');
+    return;
+  }
+  stTd.ondblclick=()=>{
+    // Défense finale : re-check au moment du double-click (l'état a pu changer)
+    const _u2=(typeof _currentUser==='function')?_currentUser():null;
+    const _isAdmin2=_u2 && _u2.role==='admin';
+    if (b.status==='validé' && !_isAdmin2) { notify('Bon validé — modification réservée à l\'admin','warning'); return; }
     makeEditable(stTd,b.status||'brouillon','select',BON_STATUSES.map(s=>s.key),(v)=>{
+      // Défense ultime dans le callback onSave
+      const _u3=(typeof _currentUser==='function')?_currentUser():null;
+      const _isAdmin3=_u3 && _u3.role==='admin';
+      if ((b.status==='validé' || v==='validé') && !_isAdmin3 && b.status!==v && b.status==='validé') {
+        notify('Bon validé — modification réservée à l\'admin','error'); return;
+      }
       const old=b.status;
       if(!_handleBonStatusStockChange(b, old, v)) return;
       b.status=v;
@@ -3441,15 +3459,15 @@ function filterMvt() {
   <div class="table-wrap"><table>
     <thead><tr>
       <th>Date / Heure</th><th>Type</th><th>Article</th><th>Code</th>
-      <th>Quantité</th><th>Agent / Source</th><th>Observation</th>
+      <th>Quantité</th><th title="Fournisseur pour les entrées · Commercial pour les sorties">Fournisseur · Commercial</th><th>Observation</th>
     </tr></thead>
     <tbody>${mvts.length ? mvts.map(m => {
       const isE  = m.type === 'entree';
       const art  = APP.articles.find(a => a.id === m.articleId);
       const who  = m.commercialId  ? APP.commerciaux.find(c => c.id === m.commercialId)   : null;
       const fourn= m.fournisseurId ? APP.fournisseurs.find(f => f.id === m.fournisseurId) : null;
-      const agentLabel = who   ? who.prenom+' '+who.nom
-                        : fourn ? fourn.nom
+      const agentLabel = who   ? '👤 '+who.prenom+' '+who.nom
+                        : fourn ? '🏭 '+fourn.nom
                         : '<span style="color:var(--text-2)">—</span>';
       return `<tr>
         <td style="font-size:11px;font-family:monospace;white-space:nowrap">${fmtDateTime(m.ts)}</td>
