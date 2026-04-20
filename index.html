@@ -144,5 +144,29 @@
 <script src="storage.js"></script>
 <script src="auth.js"></script>
 <script src="app.js"></script>
+<script>
+/* Lucide icons bootstrap — idempotent, stages Phase 2+ dynamic icons.
+   Safe: no-op if no element uses [data-lucide]. */
+(function(){
+  function _run(){ if(window.lucide && typeof lucide.createIcons==='function') try{ lucide.createIcons(); }catch(e){} }
+  if(document.readyState==='complete') _run();
+  else window.addEventListener('load', _run, {once:true});
+  // Re-run after SPA renders (observer, throttled)
+  var _t=null;
+  new MutationObserver(function(muts){
+    for (var i=0;i<muts.length;i++){
+      var m=muts[i];
+      if (m.addedNodes && m.addedNodes.length){
+        for (var j=0;j<m.addedNodes.length;j++){
+          var n=m.addedNodes[j];
+          if (n.nodeType===1 && (n.matches && n.matches('[data-lucide]') || n.querySelector && n.querySelector('[data-lucide]'))){
+            clearTimeout(_t); _t=setTimeout(_run, 60); return;
+          }
+        }
+      }
+    }
+  }).observe(document.body, {childList:true, subtree:true});
+})();
+</script>
 </body>
 </html>

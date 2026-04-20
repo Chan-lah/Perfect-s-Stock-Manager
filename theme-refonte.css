@@ -439,3 +439,203 @@ input[type="color"] {
   font-family: var(--font-mono) !important;
   font-feature-settings: 'zero', 'ss01';
 }
+
+/* =====================================================================
+   Phase 2 — Navigation (sidebar + topbar), icons, tabs, chips
+   ===================================================================== */
+
+/* --------- Sidebar --------- */
+#sidebar {
+  background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(251,248,243,0.88) 100%) !important;
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  border-right: 1px solid rgba(92,46,10,0.08) !important;
+  box-shadow: 2px 0 24px rgba(92,46,10,0.04);
+}
+#sidebar-nav {
+  padding: 6px 10px 24px !important;
+}
+.sb-collapse-btn {
+  margin: 0 8px 10px auto !important;
+  width: 28px; height: 28px;
+  border-radius: 8px !important;
+  background: rgba(232,98,26,0.08) !important;
+  color: var(--accent) !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: transform var(--transition), background var(--transition);
+}
+.sb-collapse-btn:hover { background: rgba(232,98,26,0.16) !important; transform: translateX(-2px); }
+
+.sb-section {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase;
+  color: var(--text-3) !important;
+  padding: 14px 14px 6px !important;
+  margin-top: 4px;
+  border: none !important;
+}
+
+.sb-item {
+  position: relative;
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 6px !important;
+  padding: 9px 12px !important;
+  border-radius: 10px !important;
+  color: var(--text-1) !important;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), transform 0.18s;
+  border: none !important;
+}
+.sb-item svg { width: 17px; height: 17px; opacity: 0.85; flex-shrink: 0; }
+.sb-item:hover {
+  background: rgba(232,98,26,0.07) !important;
+  color: var(--text-0) !important;
+  transform: translateX(2px);
+}
+.sb-item:hover svg { opacity: 1; color: var(--accent); }
+.sb-item.active {
+  background: linear-gradient(90deg, rgba(232,98,26,0.14), rgba(232,98,26,0.04)) !important;
+  color: var(--accent-dark) !important;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(232,98,26,0.18);
+}
+.sb-item.active::before {
+  content: "";
+  position: absolute;
+  left: -6px; top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.sb-item.active svg { color: var(--accent); opacity: 1; }
+
+.sb-pinned { color: var(--accent-dark) !important; }
+.sb-pinned::after {
+  content: "★";
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: var(--accent); opacity: 0.6;
+}
+
+.sb-badge {
+  margin-left: auto;
+  min-width: 20px; height: 20px;
+  padding: 0 7px;
+  border-radius: 10px;
+  font-size: 10.5px; font-weight: 700;
+  background: var(--danger) !important;
+  color: #fff !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(220,38,38,0.25);
+  font-feature-settings: 'tnum';
+}
+
+/* Collapsed sidebar */
+.sb-collapsed .sb-item { justify-content: center; padding: 11px 8px !important; }
+.sb-collapsed .sb-item span:not(.sb-badge) { display: none; }
+.sb-collapsed .sb-section { display: none; }
+
+/* --------- Topbar --------- */
+#topbar, .topbar {
+  background: rgba(255,255,255,0.72) !important;
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border-bottom: 1px solid rgba(92,46,10,0.08) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 4px 16px rgba(92,46,10,0.04);
+}
+#topbar h1, .topbar h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-0);
+}
+
+/* --------- Company panel (in sidebar) --------- */
+.company-panel, #sb-company-panel {
+  background: linear-gradient(135deg, rgba(232,98,26,0.08), rgba(232,98,26,0.02)) !important;
+  border: 1px solid rgba(232,98,26,0.16) !important;
+  border-radius: 14px !important;
+  padding: 12px !important;
+  margin: 10px 8px !important;
+}
+#sb-company-name { color: var(--text-0) !important; font-weight: 700; font-size: 13px; }
+
+/* --------- Chips --------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 999px !important;
+  background: var(--bg-3) !important;
+  color: var(--text-1) !important;
+  border: 1px solid var(--border) !important;
+  letter-spacing: 0.01em;
+}
+
+/* --------- Tabs (sub-navigation) --------- */
+.tabs, .nav-tabs, [role="tablist"] {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-3);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  width: fit-content;
+}
+.tab, .nav-tab, [role="tab"] {
+  padding: 7px 14px !important;
+  border-radius: 8px !important;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: background var(--transition), color var(--transition);
+}
+.tab:hover, .nav-tab:hover, [role="tab"]:hover {
+  background: rgba(255,255,255,0.6);
+  color: var(--text-0);
+}
+.tab.active, .nav-tab.active, [role="tab"][aria-selected="true"] {
+  background: #fff;
+  color: var(--accent-dark);
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(92,46,10,0.08);
+}
+
+/* --------- Emojis normalization --------- */
+/* Emojis that remain in buttons/titles: give them a consistent fallback font */
+.btn, .card-title, .badge, .chip, .sb-item, h1, h2, h3, h4 {
+  font-family: var(--font-sans), 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji' !important;
+}
+
+/* =====================================================================
+   Phase 2 — Icon polish (Lucide-style inline SVG)
+   Existing ICONS dict in app.js already uses inline SVG — this rule
+   applies color + transition uniformly.
+   ===================================================================== */
+.sb-item svg,
+.btn svg,
+.kpi-icon svg,
+.card-title svg {
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: color var(--transition), transform var(--transition);
+}
+
+/* Lucide dynamic icons (Phase 2 staging) */
+[data-lucide] { display: inline-block; vertical-align: -3px; }
+.lucide-sm [data-lucide], [data-lucide].lucide-sm { width: 14px; height: 14px; }
+.lucide-lg [data-lucide], [data-lucide].lucide-lg { width: 20px; height: 20px; }
