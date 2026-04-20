@@ -4813,17 +4813,23 @@ function saveGMALogo(input) {
 
 function renderGMACard(a, i=0) {
   const delay = Math.min(i*0.04, 0.4);
+  const price = a.price || 0;
+  const value = (a.stock || 0) * price;
   return `<div class="gma-art-card" style="animation-delay:${delay}s" onclick="openGMAArticleDetail('${a.id}')">
     <div class="gma-art-img">
       ${a.image?`<img src="${a.image}" alt="${a.name}">`:`<div class="gma-art-img-ph">📦</div>`}
       <div style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.5);border-radius:4px;padding:2px 6px;font-size:10px;color:white;font-weight:600">+Photo</div>
     </div>
     <div class="gma-art-body">
+      <div class="gma-art-fourn">🏭 <strong>${a.fournisseur}</strong></div>
       <div class="gma-art-cat">${a.category}</div>
       <div class="gma-art-name">${a.name}</div>
       ${a.code&&a.code!=='—'?`<div class="gma-art-code">${a.code}</div>`:''}
       ${a.colors?`<div style="font-size:11px;color:var(--warning);margin-bottom:4px">🎨 ${a.colors}</div>`:''}
-      <div class="gma-art-fourn">🏭 <strong>${a.fournisseur}</strong></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 4px;gap:8px;flex-wrap:wrap">
+        <span class="gma-art-price">${fmtCurrency(price)}</span>
+        ${value>0?`<span class="gma-art-value" title="Valeur stock">∑ ${fmtCurrency(value)}</span>`:''}
+      </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
         <span style="font-size:12px;color:${a.stock<=a.stockMin?'var(--danger)':'var(--success)'};font-weight:600">Stock: ${a.stock}</span>
         <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openCmdFromArticle('${a.id}')">Commander</button>

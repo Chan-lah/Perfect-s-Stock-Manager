@@ -333,8 +333,10 @@ canvas{width:100%!important}
 
 /* GMA ARTICLE CARDS */
 .gma-article-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:16px}
-.gma-art-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;cursor:pointer;transition:all var(--transition);animation:fadeInUp 0.4s ease both}
-.gma-art-card:hover{transform:translateY(-4px);border-color:var(--accent);box-shadow:0 8px 32px rgba(61,127,255,0.15)}
+.gma-art-card{position:relative;background:rgba(255,255,255,0.04);backdrop-filter:blur(18px) saturate(1.6);-webkit-backdrop-filter:blur(18px) saturate(1.6);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-lg);overflow:hidden;cursor:pointer;transition:all var(--transition);animation:fadeInUp 0.4s ease both;box-shadow:0 4px 16px rgba(0,0,0,0.18),inset 0 1px 0 rgba(255,255,255,0.08)}
+.gma-art-card::before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,0.06) 0%,transparent 40%,transparent 60%,rgba(61,127,255,0.04) 100%);pointer-events:none;z-index:0}
+.gma-art-card>*{position:relative;z-index:1}
+.gma-art-card:hover{transform:translateY(-4px);border-color:rgba(61,127,255,0.5);box-shadow:0 12px 40px rgba(61,127,255,0.22),inset 0 1px 0 rgba(255,255,255,0.14);background:rgba(255,255,255,0.06)}
 .gma-art-img{height:140px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .gma-art-img img{width:100%;height:100%;object-fit:cover;transition:transform 0.4s ease}
 .gma-art-card:hover .gma-art-img img{transform:scale(1.05)}
@@ -343,8 +345,10 @@ canvas{width:100%!important}
 .gma-art-cat{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--accent);margin-bottom:4px}
 .gma-art-name{font-size:13px;font-weight:700;color:var(--text-0);margin-bottom:6px;line-height:1.3}
 .gma-art-code{font-family:var(--font-mono);font-size:11px;color:var(--text-2);background:var(--bg-3);padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:6px}
-.gma-art-fourn{font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:4px}
-.gma-art-fourn strong{color:var(--accent2)}
+.gma-art-fourn{font-size:11px;color:#fff;display:flex;align-items:center;gap:6px;background:linear-gradient(90deg,rgba(0,229,170,0.22),rgba(61,127,255,0.18));padding:6px 10px;border-radius:8px;margin-bottom:8px;border:1px solid rgba(0,229,170,0.28);font-weight:600}
+.gma-art-fourn strong{color:var(--accent2);font-weight:800}
+.gma-art-price{font-size:16px;font-weight:800;color:var(--accent2);letter-spacing:-0.01em}
+.gma-art-value{font-size:10px;font-weight:600;color:var(--text-2);background:var(--bg-3);padding:3px 8px;border-radius:6px;display:inline-block}
 .gma-cat-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px}
 .gma-cat-tab{padding:5px 12px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text-2);font-size:12px;font-weight:600;cursor:pointer;transition:all var(--transition)}
 .gma-cat-tab:hover{border-color:var(--accent);color:var(--accent)}
