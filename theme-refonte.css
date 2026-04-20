@@ -1281,3 +1281,175 @@ button:focus-visible, .btn:focus-visible, .sb-item:focus-visible, a:focus-visibl
   outline-offset: 2px;
   border-radius: inherit;
 }
+
+
+/* ══════════════════════════════════════════════════════════════
+   SIDEBAR REFONTE (uncollapsed + collapsed) with Lucide icons
+   ══════════════════════════════════════════════════════════════ */
+#sidebar{
+  transition:width 280ms cubic-bezier(0.4,0,0.2,1)!important;
+}
+.sb-logo{
+  padding:20px 16px 18px!important;
+  border-bottom:1px solid rgba(255,255,255,0.05)!important;
+}
+.sb-logo-text{
+  font-family:'Inter','Segoe UI',sans-serif!important;
+  font-size:15px;font-weight:700!important;
+  background:linear-gradient(135deg,var(--accent),var(--accent2,#00e5aa));
+  -webkit-background-clip:text;
+  background-clip:text;
+  -webkit-text-fill-color:transparent;
+  color:transparent;
+}
+.sb-logo-sub{
+  font-family:'Inter','Segoe UI',sans-serif!important;
+  font-size:9.5px!important;font-weight:500!important;
+  letter-spacing:0.14em!important;
+  text-transform:uppercase;
+  color:var(--text-3)!important;
+}
+.sb-nav{
+  padding:10px 8px!important;
+  scrollbar-width:thin;
+}
+.sb-section{
+  font-family:'Inter','Segoe UI',sans-serif!important;
+  font-size:9.5px!important;font-weight:700!important;
+  letter-spacing:0.16em!important;
+  color:var(--text-3)!important;
+  padding:16px 10px 6px!important;
+  position:relative;
+}
+.sb-section + .sb-item{margin-top:2px}
+.sb-item{
+  padding:10px 12px!important;
+  gap:12px!important;
+  font-family:'Inter','Segoe UI',sans-serif!important;
+  font-size:13.5px!important;font-weight:500!important;
+  letter-spacing:0.005em!important;
+  border-radius:10px!important;
+  transition:background 180ms ease,color 180ms ease,transform 220ms cubic-bezier(0.34,1.56,0.64,1),box-shadow 180ms ease!important;
+}
+.sb-item:hover{
+  background:rgba(255,255,255,0.04)!important;
+  color:var(--text-0)!important;
+  transform:translateX(3px);
+}
+.sb-item.active{
+  background:linear-gradient(90deg,var(--accent-glow),transparent 75%)!important;
+  color:var(--accent)!important;
+  font-weight:600!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.sb-item.active::before{
+  width:3px!important;
+  background:linear-gradient(to bottom,var(--accent),var(--accent2,#00e5aa))!important;
+  border-radius:0 3px 3px 0!important;
+  box-shadow:0 0 10px var(--accent);
+  top:6px!important;bottom:6px!important;
+}
+.sb-item svg,.sb-item .sb-ico{
+  width:18px!important;height:18px!important;
+  stroke-width:1.75!important;
+  flex-shrink:0;
+}
+.sb-badge{
+  background:var(--danger)!important;
+  box-shadow:0 0 0 2px rgba(255,71,87,0.15);
+  font-size:10px!important;
+  font-weight:700!important;
+  min-width:18px;
+}
+.sb-bottom{
+  padding:10px!important;
+  border-top:1px solid rgba(255,255,255,0.05)!important;
+}
+.sb-bottom > div{
+  padding:8px!important;
+  background:linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))!important;
+  border:1px solid rgba(255,255,255,0.06)!important;
+  border-radius:10px!important;
+  transition:border-color 200ms ease;
+}
+.sb-bottom > div:hover{border-color:rgba(255,140,0,0.25)!important}
+#sb-company-icon{
+  width:36px!important;height:36px!important;
+  border-radius:9px!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.1),0 2px 6px rgba(0,0,0,0.2);
+  flex-shrink:0!important;
+}
+#sb-company-name{
+  font-family:'Inter','Segoe UI',sans-serif!important;
+  font-size:12.5px!important;font-weight:600!important;
+  color:var(--text-0)!important;
+}
+#clock{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:10px!important;
+  color:var(--text-2)!important;
+  letter-spacing:0.05em!important;
+  margin-top:2px;
+}
+.sb-collapse-btn{
+  padding:8px 12px!important;
+  border-radius:8px!important;
+  color:var(--text-3)!important;
+  transition:background 180ms,color 180ms!important;
+}
+.sb-collapse-btn:hover{
+  background:rgba(255,255,255,0.05)!important;
+  color:var(--accent)!important;
+}
+.sb-collapse-btn svg{
+  transition:transform 280ms cubic-bezier(0.4,0,0.2,1)!important;
+}
+
+/* ── COLLAPSED STATE (64px) ── */
+.sb-collapsed{
+  width:64px!important;min-width:64px!important;
+}
+.sb-collapsed .sb-item{
+  padding:11px 0!important;
+  justify-content:center!important;
+  margin:2px 6px!important;
+  border-radius:10px!important;
+}
+.sb-collapsed .sb-item:hover{
+  transform:scale(1.08)!important;
+  background:rgba(255,255,255,0.06)!important;
+}
+.sb-collapsed .sb-item.active::before{
+  left:-2px!important;top:20%!important;bottom:20%!important;
+  width:3px!important;
+}
+.sb-collapsed .sb-section{
+  display:none!important;
+}
+.sb-collapsed .sb-logo{
+  justify-content:center!important;
+  padding:18px 8px!important;
+}
+.sb-collapsed .sb-logo-text,
+.sb-collapsed .sb-logo-sub{display:none!important}
+/* Keep GMA block visible when collapsed — centered card */
+.sb-collapsed .sb-bottom{
+  padding:10px 6px!important;
+  border-top:1px solid rgba(255,255,255,0.05)!important;
+}
+.sb-collapsed .sb-bottom > div{
+  padding:6px!important;
+  justify-content:center!important;
+  background:linear-gradient(135deg,rgba(255,140,0,0.08),rgba(255,255,255,0.02))!important;
+  border-color:rgba(255,140,0,0.22)!important;
+}
+.sb-collapsed #sb-company-icon{
+  width:36px!important;height:36px!important;
+  margin:0 auto!important;
+}
+.sb-collapsed #sb-company-name,
+.sb-collapsed #clock{display:none!important}
+
+@media (prefers-reduced-motion:reduce){
+  .sb-item,.sb-collapse-btn svg,#sidebar{transition:none!important;transform:none!important}
+}
