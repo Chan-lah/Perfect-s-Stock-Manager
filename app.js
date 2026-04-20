@@ -4981,7 +4981,6 @@ function renderFournDashboard() {
   document.getElementById('content').innerHTML = '<div class="page-header">'
     + '<div><div class="page-title">Suivi des livraisons</div><div class="page-sub">Commandes fournisseurs & r\u00e9ceptions</div></div>'
     + '<div style="display:flex;gap:8px">'
-    + '<button class="btn btn-secondary" onclick="_importLowStockCmd()" title="Pr\u00e9-remplir avec les articles en rupture ou stock bas">\u26a0 Stock bas</button>'
     + '<button class="btn btn-primary" onclick="openNewCmdModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouvelle commande</button>'
     + '</div>'
     + '</div>'
@@ -5093,7 +5092,7 @@ function renderOrderCard(c) {
     var timelineHtml = '';
     if (receptions.length > 0) {
       var tlId = 'tl-' + c.id + '-' + i;
-      timelineHtml = '<tr><td colspan="7" style="padding:0 8px 8px">'
+      timelineHtml = '<tr><td colspan="8" style="padding:0 8px 8px">'
         + '<div style="cursor:pointer;font-size:10px;font-weight:700;color:var(--accent);padding:4px 0" onclick="var el=document.getElementById(\'' + tlId + '\');el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' + '\u25b6 ' + receptions.length + ' r\u00e9ception(s) \u2014 cliquer pour d\u00e9plier</div>'
         + '<div id="' + tlId + '" style="display:none;background:var(--bg-3);border-radius:6px;padding:8px 10px">'
         + receptions.map(function(r) {
@@ -5108,7 +5107,12 @@ function renderOrderCard(c) {
         + '</div></td></tr>';
     }
 
+    var _artRef = (APP.articles||[]).find(function(x){ return x.id === l.articleId; }) || {};
+    var _thumb = _artRef.image
+      ? '<img src="' + _artRef.image + '" style="width:40px;height:40px;object-fit:cover;border-radius:6px;display:block">'
+      : '<div style="width:40px;height:40px;border-radius:6px;background:var(--bg-3);display:flex;align-items:center;justify-content:center;font-size:14px;opacity:0.4">\ud83d\udce6</div>';
     return '<tr>'
+      + '<td style="padding:4px">' + _thumb + '</td>'
       + '<td style="font-weight:500">' + l.articleName + '</td>'
       + '<td style="text-align:center;font-weight:600">' + (l.qteCommandee||0) + '</td>'
       + '<td style="text-align:center;font-weight:600;color:var(--success)">' + (l.qteRecue||0) + '</td>'
@@ -5123,6 +5127,7 @@ function renderOrderCard(c) {
     + '<div class="order-card-header">'
     + '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap">'
     + '<span class="order-num" style="font-weight:700">' + c.numero + '</span>'
+    + (c.fournisseurNom ? '<span style="font-size:11px;color:var(--accent2);font-weight:600">\ud83c\udfed ' + c.fournisseurNom + '</span>' : '')
     + '<span class="order-status-badge ' + getCmdStatusClass(c.status) + '">' + getCmdStatusLabel(c.status) + '</span>'
     + (late ? '<span class="badge" style="background:var(--danger);color:#fff;font-size:10px">\u26a0 ' + latedays + 'j de retard</span>' : '')
     + (c.dateLivraisonPrevue ? '<span style="font-size:11px;color:var(--text-2)">\ud83d\udcc5 ' + fmtDate(c.dateLivraisonPrevue) + '</span>' : '')
@@ -5146,7 +5151,7 @@ function renderOrderCard(c) {
     + '<span style="font-weight:700;color:var(--accent2)">Total: ' + fmtCurrency(total) + '</span>'
     + '</div>'
     + '<table class="order-lignes-table" style="table-layout:fixed">'
-    + '<thead><tr><th>Article</th><th style="width:75px;text-align:center">Command\u00e9</th><th style="width:60px;text-align:center">Re\u00e7u</th><th style="width:65px;text-align:center">Restant</th><th style="width:85px;text-align:right">Montant</th><th style="width:90px;text-align:center">Progression</th><th style="width:40px;text-align:center">\u2713</th></tr></thead>'
+    + '<thead><tr><th style="width:48px"></th><th>Article</th><th style="width:75px;text-align:center">Command\u00e9</th><th style="width:60px;text-align:center">Re\u00e7u</th><th style="width:65px;text-align:center">Restant</th><th style="width:85px;text-align:right">Montant</th><th style="width:90px;text-align:center">Progression</th><th style="width:40px;text-align:center">\u2713</th></tr></thead>'
     + '<tbody>' + lignesHtml + '</tbody>'
     + '</table>'
     + (c.note ? '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">\ud83d\udcdd ' + c.note + '</div>' : '')
@@ -5588,9 +5593,16 @@ async function openNewCmdModal(prefFournId, preselectedArts) {
 }
 
 function _newCmdLineHtml(idx, artId, artName, qty, prix, artOpts) {
+  var _a = (APP.articles||[]).find(function(x){ return x.id === artId; }) || {};
+  var _f = _a.fournisseurId ? ((APP.fournisseurs||[]).find(function(f){return f.id===_a.fournisseurId;})||{}) : {};
+  var _thumb = _a.image
+    ? '<img src="' + _a.image + '" style="width:44px;height:44px;object-fit:cover;border-radius:6px;display:block">'
+    : '<div style="width:44px;height:44px;border-radius:6px;background:var(--bg-3);display:flex;align-items:center;justify-content:center;font-size:18px;opacity:0.4">\ud83d\udce6</div>';
+  var _fournHint = _f.nom ? '<div style="font-size:10px;color:var(--accent2);font-weight:600;margin-top:2px">\ud83c\udfed ' + _f.nom + '</div>' : '';
   return '<div class="nc-ligne-row" data-artid="' + artId + '" data-artname="' + (artName||'').replace(/"/g,'&quot;') + '" style="background:var(--bg-2);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">'
-    + '<div style="display:grid;grid-template-columns:2.5fr 1fr 1fr auto;gap:8px;align-items:end">'
-    + '<div><label style="font-size:10px">Article</label><input value="' + (artName||'') + '" disabled style="font-weight:600"></div>'
+    + '<div style="display:grid;grid-template-columns:44px 2.5fr 1fr 1fr auto;gap:8px;align-items:end">'
+    + '<div>' + _thumb + '</div>'
+    + '<div><label style="font-size:10px">Article</label><input value="' + (artName||'') + '" disabled style="font-weight:600">' + _fournHint + '</div>'
     + '<div><label style="font-size:10px">Qt\u00e9</label><input class="nc-ligne-qty" type="number" value="' + (qty||1) + '" min="1"></div>'
     + '<div><label style="font-size:10px">Prix unit.</label><input class="nc-ligne-prix" type="number" value="' + (prix||0) + '" min="0" step="0.01"></div>'
     + '<button class="btn btn-sm btn-danger" onclick="this.closest(\'.nc-ligne-row\').remove()" style="margin-bottom:2px">\u2716</button>'
