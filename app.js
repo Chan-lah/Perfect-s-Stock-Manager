@@ -622,13 +622,13 @@ function _pruneHistoricalData() {
     }
   }
 
-  // Dispatch history: keep last 12 months
-  if (APP.dispatch && APP.dispatch.history && APP.dispatch.history.length > 50) {
-    var cutoff12m = now - (365 * 86400000);
+  // Dispatch history: keep last 5 years (annual archive kept viewable)
+  if (APP.dispatch && APP.dispatch.history && APP.dispatch.history.length > 300) {
+    var cutoff5y = now - (5 * 365 * 86400000);
     var before = APP.dispatch.history.length;
-    APP.dispatch.history = APP.dispatch.history.filter(function(h) { return h.ts >= cutoff12m; });
+    APP.dispatch.history = APP.dispatch.history.filter(function(h) { return h.ts >= cutoff5y; });
     if (APP.dispatch.history.length < before) {
-      console.log('[PSM] Pruned ' + (before - APP.dispatch.history.length) + ' old dispatch records (>12mo)');
+      console.log('[PSM] Pruned ' + (before - APP.dispatch.history.length) + ' old dispatch records (>5y)');
       pruned = true;
     }
   }
@@ -9087,13 +9087,57 @@ function _renderDispTabHistory() {
   _dispEnsure();
   var hist = APP.dispatch.history || [];
   if (hist.length === 0) return '<div class="card" style="padding:32px;text-align:center;color:var(--text-2)"><i class="fa-solid fa-clock-rotate-left" style="font-size:2rem;margin-bottom:12px;display:block"></i>Aucun dispatch valid\u00e9</div>';
-  var html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">'
-    + '<label style="font-size:0.82rem;color:var(--text-2)">Du <input type="date" id="disp-hist-from" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
-    + '<label style="font-size:0.82rem;color:var(--text-2)">Au <input type="date" id="disp-hist-to" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
-    + '<button class="btn btn-sm" onclick="_filterDispHistory()"><i class="fa-solid fa-filter"></i>&nbsp;Filtrer</button>'
-    + '<button class="btn btn-sm" onclick="_resetDispHistFilter()">Tout</button>'
+  // Collect available years from history + include current year
+  var yrs = {};
+  hist.forEach(function(h){ yrs[new Date(h.ts).getFullYear()] = true; });
+  var curYear = new Date().getFullYear();
+  yrs[curYear] = true;
+  var yearList = Object.keys(yrs).map(function(y){return parseInt(y,10);}).sort(function(a,b){return b-a;});
+  var selYear = window._dispHistSelectedYear || curYear;
+  if (yearList.indexOf(selYear) === -1) selYear = yearList[0];
+  var yearOpts = yearList.map(function(y){
+    return '<option value="' + y + '"' + (y===selYear?' selected':'') + '>' + y + '</option>';
+  }).join('');
+  var html = '<div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">'
+    + '<label style="font-size:0.82rem;color:var(--text-2);font-weight:600"><i class="fa-solid fa-calendar-days" style="margin-right:6px;color:var(--accent)"></i>Ann\u00e9e</label>'
+    + '<select id="disp-hist-year" onchange="_dispHistSelectYear(this.value)" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);font-weight:600">' + yearOpts + '</select>'
+    + '<span style="font-size:0.78rem;color:var(--text-3);margin-left:auto">Dispatches mensuels - historique 5 ans</span>'
     + '</div>'
-    + '<div id="disp-hist-list">' + _buildDispHistRows(hist) + '</div>';
+    + '<div id="disp-hist-list">' + _buildDispHistByMonth(selYear) + '</div>';
+  return html;
+}
+
+function _dispHistSelectYear(y) {
+  window._dispHistSelectedYear = parseInt(y, 10) || new Date().getFullYear();
+  var el = document.getElementById('disp-hist-list');
+  if (el) el.innerHTML = _buildDispHistByMonth(window._dispHistSelectedYear);
+}
+
+function _buildDispHistByMonth(year) {
+  var hist = (APP.dispatch && APP.dispatch.history) || [];
+  year = parseInt(year, 10) || new Date().getFullYear();
+  var monthNames = ['Janvier','F\u00e9vrier','Mars','Avril','Mai','Juin','Juillet','Ao\u00fbt','Septembre','Octobre','Novembre','D\u00e9cembre'];
+  var byMonth = {};
+  hist.forEach(function(h){
+    var d = new Date(h.ts);
+    if (d.getFullYear() !== year) return;
+    var m = d.getMonth();
+    (byMonth[m] = byMonth[m] || []).push(h);
+  });
+  var html = '';
+  for (var m = 0; m < 12; m++) {
+    var items = byMonth[m] || [];
+    var monthHead = '<div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px 2px">'
+      + '<div style="width:28px;height:28px;border-radius:8px;background:' + (items.length ? 'var(--accent)22' : 'var(--border)') + ';display:flex;align-items:center;justify-content:center;color:' + (items.length ? 'var(--accent)' : 'var(--text-3)') + ';font-weight:700;font-size:0.82rem">' + (m+1) + '</div>'
+      + '<strong style="font-size:0.95rem;color:' + (items.length ? 'var(--text-0)' : 'var(--text-3)') + '">' + monthNames[m] + ' ' + year + '</strong>'
+      + (items.length ? '<span class="badge" style="background:var(--accent)22;color:var(--accent);font-size:10px">' + items.length + ' dispatch' + (items.length>1?'es':'') + '</span>' : '')
+      + '</div>';
+    if (items.length === 0) {
+      html += monthHead + '<div style="padding:8px 14px;margin-left:38px;font-size:0.78rem;color:var(--text-3);font-style:italic;border-left:2px solid var(--border)">Aucun dispatch ce mois-ci</div>';
+    } else {
+      html += monthHead + _buildDispHistRows(items);
+    }
+  }
   return html;
 }
 
@@ -9119,25 +9163,6 @@ function _buildDispHistRows(list) {
       + '</div>';
   });
   return rows || '<p style="color:var(--text-2);font-size:0.85rem">Aucun r\u00e9sultat</p>';
-}
-
-function _filterDispHistory() {
-  var fromEl = document.getElementById('disp-hist-from');
-  var toEl   = document.getElementById('disp-hist-to');
-  var from = fromEl && fromEl.value ? new Date(fromEl.value).getTime() : 0;
-  var to   = toEl && toEl.value ? new Date(toEl.value).setHours(23,59,59,999) : Infinity;
-  var hist = (APP.dispatch.history || []).filter(function(h) { return h.ts >= from && h.ts <= to; });
-  var el = document.getElementById('disp-hist-list');
-  if (el) el.innerHTML = _buildDispHistRows(hist);
-}
-
-function _resetDispHistFilter() {
-  var fromEl = document.getElementById('disp-hist-from');
-  var toEl   = document.getElementById('disp-hist-to');
-  if (fromEl) fromEl.value = '';
-  if (toEl)   toEl.value   = '';
-  var el = document.getElementById('disp-hist-list');
-  if (el) el.innerHTML = _buildDispHistRows(APP.dispatch.history || []);
 }
 
 function dInitCommercialDispatchFields(c) {
