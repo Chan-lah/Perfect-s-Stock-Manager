@@ -1783,13 +1783,29 @@ function printDashboard() {
   ${movsP.length > 0 ? `
   <div class="section-title">Mouvements sur la période (${movsP.length})</div>
   <table>
-    <thead><tr><th>Date</th><th>Type</th><th>Gadget</th><th style="text-align:center">Qté</th><th>Commercial / Fournisseur</th><th>Observations</th></tr></thead>
+    <thead><tr><th>Date / Heure</th><th>Type</th><th>Article</th><th>Code</th><th style="text-align:center">Quantité</th><th>Commanditaire</th><th>Observation</th></tr></thead>
     <tbody>${movsP.slice(0,100).map(m=>{
-      const who = m.commercialId ? APP.commerciaux.find(c=>c.id===m.commercialId) : m.fournisseurId ? APP.fournisseurs.find(f=>f.id===m.fournisseurId) : null;
-      const whoLabel = who ? (who.prenom ? who.prenom+' '+who.nom : who.nom) : '—';
-      return `<tr><td>${new Date(m.ts).toLocaleDateString('fr-FR')}</td><td style="color:${m.type==='entree'?'#007700':'#cc4400'};font-weight:700">${m.type==='entree'?'ENTRÉE':'SORTIE'}</td><td>${m.articleName||'—'}</td><td style="text-align:center;font-weight:700">${m.type==='entree'?'+':'−'}${m.qty}</td><td>${whoLabel}</td><td style="color:#666;font-style:italic">${m.note||m.obs||''}</td></tr>`;
+      const art  = APP.articles.find(a=>a.id===m.articleId);
+      const dt   = new Date(m.ts);
+      const isE  = m.type === 'entree';
+      const fourn= m.fournisseurId ? APP.fournisseurs.find(f=>f.id===m.fournisseurId) : null;
+      const who  = m.commercialId  ? APP.commerciaux.find(c=>c.id===m.commercialId)   : null;
+      let whoLabel;
+      const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
+      if (_bm) {
+        const _bon = APP.bons.find(b=>String(b.numero)===_bm[1]);
+        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bon.recipiendaire||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
+      }
+      if (typeof whoLabel === 'undefined') {
+        if (isE && fourn)         whoLabel = '🏭 '+fourn.nom;
+        else if (!isE && who)     whoLabel = '👤 '+who.prenom+' '+who.nom;
+        else if (m.userLogin)     whoLabel = '<span style="color:#666">👨‍💻 '+m.userLogin+'</span>';
+        else                      whoLabel = '—';
+      }
+      const dateStr = dt.toLocaleDateString('fr-FR')+' '+dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      return `<tr><td style="white-space:nowrap">${dateStr}</td><td style="color:${isE?'#007700':'#cc4400'};font-weight:700">${isE?'ENTRÉE':'SORTIE'}</td><td>${m.articleName||'—'}</td><td style="font-family:monospace;font-size:10px;color:#555">${art?art.code:'—'}</td><td style="text-align:center;font-weight:700">${isE?'+':'−'}${m.qty}</td><td>${whoLabel}</td><td style="color:#666;font-style:italic">${m.note||m.obs||''}</td></tr>`;
     }).join('')}
-    ${movsP.length>100?`<tr><td colspan="6" style="text-align:center;color:#888;font-style:italic">… ${movsP.length-100} mouvement(s) supplémentaire(s) non affichés</td></tr>`:''}
+    ${movsP.length>100?`<tr><td colspan="7" style="text-align:center;color:#888;font-style:italic">… ${movsP.length-100} mouvement(s) supplémentaire(s) non affichés</td></tr>`:''}
     </tbody>
   </table>` : ''}
 
@@ -1982,13 +1998,29 @@ function printStockReport() {
   ${movsP.length > 0 ? `
   <div class="section-title">Mouvements sur la période (${movsP.length})</div>
   <table>
-    <thead><tr><th>Date</th><th>Type</th><th>Gadget</th><th style="text-align:center">Qté</th><th>Commercial / Fournisseur</th><th>Observations</th></tr></thead>
+    <thead><tr><th>Date / Heure</th><th>Type</th><th>Article</th><th>Code</th><th style="text-align:center">Quantité</th><th>Commanditaire</th><th>Observation</th></tr></thead>
     <tbody>${movsP.slice(0,100).map(m=>{
-      const who = m.commercialId ? APP.commerciaux.find(c=>c.id===m.commercialId) : m.fournisseurId ? APP.fournisseurs.find(f=>f.id===m.fournisseurId) : null;
-      const whoLabel = who ? (who.prenom ? who.prenom+' '+who.nom : who.nom) : '—';
-      return '<tr><td>'+new Date(m.ts).toLocaleDateString('fr-FR')+'</td><td style="color:'+(m.type==='entree'?'#007700':'#cc4400')+';font-weight:700">'+(m.type==='entree'?'ENTRÉE':'SORTIE')+'</td><td>'+(m.articleName||'—')+'</td><td style="text-align:center;font-weight:700">'+(m.type==='entree'?'+':'−')+m.qty+'</td><td>'+whoLabel+'</td><td style="color:#666;font-style:italic">'+(m.note||m.obs||'')+'</td></tr>';
+      var art  = APP.articles.find(function(a){return a.id===m.articleId;});
+      var dt   = new Date(m.ts);
+      var isE  = m.type === 'entree';
+      var fourn= m.fournisseurId ? APP.fournisseurs.find(function(f){return f.id===m.fournisseurId;}) : null;
+      var who  = m.commercialId  ? APP.commerciaux.find(function(c){return c.id===m.commercialId;})   : null;
+      var whoLabel;
+      var _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
+      if (_bm) {
+        var _bon = APP.bons.find(function(b){return String(b.numero)===_bm[1];});
+        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bon.recipiendaire||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
+      }
+      if (typeof whoLabel === 'undefined') {
+        if (isE && fourn)         whoLabel = '🏭 '+fourn.nom;
+        else if (!isE && who)     whoLabel = '👤 '+who.prenom+' '+who.nom;
+        else if (m.userLogin)     whoLabel = '<span style="color:#666">👨‍💻 '+m.userLogin+'</span>';
+        else                      whoLabel = '—';
+      }
+      var dateStr = dt.toLocaleDateString('fr-FR')+' '+dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      return '<tr><td style="white-space:nowrap">'+dateStr+'</td><td style="color:'+(isE?'#007700':'#cc4400')+';font-weight:700">'+(isE?'ENTRÉE':'SORTIE')+'</td><td>'+(m.articleName||'—')+'</td><td style="font-family:monospace;font-size:10px;color:#555">'+(art?art.code:'—')+'</td><td style="text-align:center;font-weight:700">'+(isE?'+':'−')+m.qty+'</td><td>'+whoLabel+'</td><td style="color:#666;font-style:italic">'+(m.note||m.obs||'')+'</td></tr>';
     }).join('')}
-    ${movsP.length>100?`<tr><td colspan="6" style="text-align:center;color:#888;font-style:italic">… ${movsP.length-100} mouvement(s) supplémentaire(s) non affichés</td></tr>`:''}
+    ${movsP.length>100?`<tr><td colspan="7" style="text-align:center;color:#888;font-style:italic">… ${movsP.length-100} mouvement(s) supplémentaire(s) non affichés</td></tr>`:''}
     </tbody>
   </table>` : ''}
   <div class="footer">
@@ -3850,23 +3882,29 @@ function _renderComTable(coms, color) {
       <th>PDV réels</th><th>Boul/Dist</th><th>Zone Dispatch</th><th>Bons</th><th>Retraits</th><th>Actions</th>
     </tr></thead>
     <tbody>${coms.map(c=>{
-      const _fullA = ((c.prenom||'')+' '+(c.nom||'')).trim().toUpperCase();
-      const _fullB = ((c.nom||'')+' '+(c.prenom||'')).trim().toUpperCase();
+      const _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
+      const _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
+      const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
       const _matchBon = function(b){
         if (b.commercialId===c.id) return true;
         if (!_fullA) return false;
-        const _d = String(b.demandeur||'').trim().toUpperCase();
-        const _r = String(b.recipiendaire||'').trim().toUpperCase();
+        const _d = _norm(b.demandeur);
+        const _r = _norm(b.recipiendaire);
         return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
       };
-      const _matchedBonIds = new Set(APP.bons.filter(_matchBon).map(function(b){return String(b.numero);}));
+      const _matchedBons = APP.bons.filter(_matchBon);
+      const _matchedBonIds = new Set(_matchedBons.map(function(b){return String(b.numero);}));
       const bonsCount = _matchedBonIds.size;
-      const totalQty = APP.mouvements.filter(function(m){
+      // Retraits reels = lignes des bons valides + mouvements sortie manuels (sans ref Bon) de ce commercial
+      const _retFromBons = _matchedBons.filter(function(b){return b.status==='validé';}).reduce(function(s,b){
+        return s + (b.lignes||[]).reduce(function(sl,l){return sl + (parseInt(l.qty)||0);}, 0);
+      }, 0);
+      const _retFromManual = APP.mouvements.filter(function(m){
         if (m.type!=='sortie') return false;
-        if (m.commercialId===c.id) return true;
-        const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
-        return _bm ? _matchedBonIds.has(_bm[1]) : false;
+        if (m.commercialId!==c.id) return false;
+        return !/^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i.test(m.note||'');
       }).reduce(function(s,m){return s+m.qty;},0);
+      const totalQty = _retFromBons + _retFromManual;
       const realPDV = comPDVCount(c.id);
       const boul = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='boulangerie'&&p.actif!==false).length;
       const dist = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.type==='distributeur'&&p.actif!==false).length;
@@ -5840,16 +5878,36 @@ function getTopArticles(limit=5) {
 }
 
 function getActiveAgents(limit=5) {
-  const w30=Date.now()-30*86400000, agentData={};
-  APP.mouvements.filter(m=>m.type==='sortie'&&m.commercialId&&m.ts>w30).forEach(m=>{
-    if(!agentData[m.commercialId]){const com=APP.commerciaux.find(c=>c.id===m.commercialId);agentData[m.commercialId]={id:m.commercialId,name:com?com.prenom+' '+com.nom:'Inconnu',qty:0,bons:0};}
-    agentData[m.commercialId].qty+=m.qty;
+  const w30 = Date.now() - 30*86400000;
+  const _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
+  const agentData = {};
+  (APP.commerciaux||[]).forEach(function(c){
+    const _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
+    const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
+    const _matchBon = function(b){
+      if (b.commercialId === c.id) return true;
+      if (!_fullA) return false;
+      const _d = _norm(b.demandeur);
+      const _r = _norm(b.recipiendaire);
+      return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
+    };
+    const matchedBons = (APP.bons||[]).filter(function(b){ return _matchBon(b) && (b.createdAt||0) > w30; });
+    const bonsCount = matchedBons.length;
+    const qtyFromBons = matchedBons.filter(function(b){return b.status==='validé';}).reduce(function(s,b){
+      return s + (b.lignes||[]).reduce(function(sl,l){return sl + (parseInt(l.qty)||0);}, 0);
+    }, 0);
+    const qtyFromManual = (APP.mouvements||[]).filter(function(m){
+      if (m.type !== 'sortie') return false;
+      if ((m.ts||0) <= w30) return false;
+      if (m.commercialId !== c.id) return false;
+      return !/^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i.test(m.note||'');
+    }).reduce(function(s,m){return s+m.qty;}, 0);
+    const qty = qtyFromBons + qtyFromManual;
+    if (qty > 0 || bonsCount > 0) {
+      agentData[c.id] = { id:c.id, name:((c.prenom||'')+' '+(c.nom||'')).trim()||'Inconnu', qty:qty, bons:bonsCount };
+    }
   });
-  APP.bons.filter(b=>b.commercialId&&b.createdAt>w30).forEach(b=>{
-    if(agentData[b.commercialId]) agentData[b.commercialId].bons++;
-    else{const com=APP.commerciaux.find(c=>c.id===b.commercialId);agentData[b.commercialId]={id:b.commercialId,name:com?com.prenom+' '+com.nom:'Inconnu',qty:0,bons:1};}
-  });
-  return Object.values(agentData).sort((a,b)=>b.qty-a.qty).slice(0,limit);
+  return Object.values(agentData).sort(function(a,b){return b.qty-a.qty;}).slice(0, limit);
 }
 
 function getEntryExitRatio() {
