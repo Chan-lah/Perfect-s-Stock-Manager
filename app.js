@@ -49,14 +49,14 @@ if (typeof window !== 'undefined') {
     var bar = document.getElementById('splash-bar-fill');
     var label = document.getElementById('splash-label');
     if (pct > _splashProgress) _splashProgress = pct;
-    if (bar) { bar.style.transition = 'width 0.6s ease'; bar.style.width = _splashProgress + '%'; }
+    if (bar) { bar.style.transition = 'width 0.25s ease'; bar.style.width = _splashProgress + '%'; }
     if (label && text) label.textContent = text;
   };
 
   var _splashStart = Date.now();
   window._splashHide = function() {
     var elapsed = Date.now() - _splashStart;
-    var MIN_SPLASH_MS = 2000;
+    var MIN_SPLASH_MS = 200;
     var wait = Math.max(0, MIN_SPLASH_MS - elapsed);
     setTimeout(function(){
       clearInterval(_splashInterval);
@@ -64,15 +64,15 @@ if (typeof window !== 'undefined') {
       var label = document.getElementById('splash-label');
       var splash = document.getElementById('splash');
       var app = document.getElementById('app');
-      if(bar) { bar.style.transition = 'width 0.7s cubic-bezier(0.4,0,0.2,1)'; bar.style.width = '100%'; }
+      if(bar) { bar.style.transition = 'width 0.25s cubic-bezier(0.4,0,0.2,1)'; bar.style.width = '100%'; }
       if(label) label.textContent = 'Pr\u00eat !';
       setTimeout(function(){
         if(splash) splash.classList.add('splash-out');
         if(app) app.classList.remove('splash-hidden');
         setTimeout(function(){
           if(splash && splash.parentNode) splash.parentNode.removeChild(splash);
-        }, 1200);
-      }, 700);
+        }, 500);
+      }, 150);
     }, wait);
   };
 
@@ -82,12 +82,12 @@ if (typeof window !== 'undefined') {
     var label = document.getElementById('splash-label');
     if(label) label.textContent = 'Connexion au serveur\u2026';
     _splashInterval = setInterval(function(){
-      if(_splashProgress < 25) {
-        _splashProgress += Math.random() * 1.2 + 0.3;
-        if(_splashProgress > 25) _splashProgress = 25;
+      if(_splashProgress < 30) {
+        _splashProgress += Math.random() * 2 + 0.8;
+        if(_splashProgress > 30) _splashProgress = 30;
         if(bar) bar.style.width = _splashProgress + '%';
       }
-    }, 350);
+    }, 220);
   });
 })();
 
