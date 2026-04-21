@@ -9413,7 +9413,10 @@ async function validateDispatchV3(articleIds) {
   if (_constraintErr) { notify(_constraintErr, 'error'); return; }
 
   var confirmMsg = results.map(function(r) {
-    return r.art.name + ' \u00d7' + r.pool + ' \u2192 ' + r.alloc.length + ' commerciaux';
+    var _nCom = r.alloc.filter(function(a){ return a.type !== 'ann' && a.qty > 0; }).length;
+    var _nAnn = r.alloc.filter(function(a){ return a.type === 'ann' && a.qty > 0; }).length;
+    var _who = _nAnn > 0 ? (_nCom + ' com. + ' + _nAnn + ' annuaire') : (_nCom + ' commerciaux');
+    return r.art.name + ' \u00d7' + r.pool + ' \u2192 ' + _who;
   }).join('\n');
   if (!confirm('Valider le dispatch ?\n\n' + confirmMsg + (errors.length > 0 ? '\n\nIgnor\u00e9s:\n' + errors.join('\n') : ''))) return;
 
@@ -9437,40 +9440,67 @@ async function validateDispatchV3(articleIds) {
     });
   });
 
-  // Generate bons de sortie per commercial
-  var bonsByComm = {};
+  // Generate bons de sortie per recipient (commercial ou annuaire)
+  // Group par id, en capturant le type et le nom snapshot
+  var bonsByRecipient = {};
   results.forEach(function(r) {
     r.alloc.forEach(function(a) {
       if (a.qty > 0) {
-        if (!bonsByComm[a.id]) bonsByComm[a.id] = { name: a.name, lignes: [] };
-        bonsByComm[a.id].lignes.push({ articleId: r.art.id, code: r.art.code || '', name: r.art.name, qty: a.qty });
+        if (!bonsByRecipient[a.id]) bonsByRecipient[a.id] = { name: a.name, lignes: [], type: a.type || 'com' };
+        bonsByRecipient[a.id].lignes.push({ articleId: r.art.id, code: r.art.code || '', name: r.art.name, qty: a.qty });
       }
     });
   });
   var bonIds = [];
-  for (var comId in bonsByComm) {
-    var bd = bonsByComm[comId];
+  for (var recipId in bonsByRecipient) {
+    var bd = bonsByRecipient[recipId];
     var bonNum = await bonNumber();
-    var com = APP.commerciaux.find(function(x){ return x.id === comId; });
-    var fullName = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : bd.name;
-    var bon = {
-      id: generateId(), numero: bonNum,
-      companyId: (APP.settings && APP.settings.companyId) || '',
-      demandeur: _dispDemandeur || 'DCM',
-      _demandeurType: (_dispDemandeur==='DCM' || !_dispDemandeur) ? 'list' : (_dispDemType || 'list'),
-      _demandeurAnnuaireId: (_dispDemandeur==='DCM' || !_dispDemandeur) ? (window._DCM_ID || '') : '',
-      recipiendaire: fullName,
-      commercialId: comId,
-      commercialName: fullName,
-      objet: _dispObjet || 'DOTATION MENSUELLE',
-      date: new Date().toISOString().split('T')[0],
-      validite: '',
-      lignes: bd.lignes,
-      status: 'brouillon',
-      sigDemandeur: '', sigMKT: '',
-      _isDispatch: true,
-      createdAt: ts, _version: 1
-    };
+    var bon;
+    if (bd.type === 'ann') {
+      // Snapshot du nom annuaire au moment du dispatch (pas de lookup ulterieur)
+      bon = {
+        id: generateId(), numero: bonNum,
+        companyId: (APP.settings && APP.settings.companyId) || '',
+        demandeur: _dispDemandeur || 'DCM',
+        _demandeurType: (_dispDemandeur==='DCM' || !_dispDemandeur) ? 'list' : (_dispDemType || 'list'),
+        _demandeurAnnuaireId: (_dispDemandeur==='DCM' || !_dispDemandeur) ? (window._DCM_ID || '') : '',
+        recipiendaire: bd.name,
+        commercialId: '',
+        commercialName: '',
+        _recipientType: 'annuaire',
+        _annuaireId: recipId,
+        objet: _dispObjet || 'DOTATION MENSUELLE',
+        date: new Date().toISOString().split('T')[0],
+        validite: '',
+        lignes: bd.lignes,
+        status: 'brouillon',
+        sigDemandeur: '', sigMKT: '',
+        _isDispatch: true,
+        createdAt: ts, _version: 1
+      };
+    } else {
+      var com = APP.commerciaux.find(function(x){ return x.id === recipId; });
+      var fullName = com ? ((com.prenom||'') + ' ' + (com.nom||'')).trim() : bd.name;
+      bon = {
+        id: generateId(), numero: bonNum,
+        companyId: (APP.settings && APP.settings.companyId) || '',
+        demandeur: _dispDemandeur || 'DCM',
+        _demandeurType: (_dispDemandeur==='DCM' || !_dispDemandeur) ? 'list' : (_dispDemType || 'list'),
+        _demandeurAnnuaireId: (_dispDemandeur==='DCM' || !_dispDemandeur) ? (window._DCM_ID || '') : '',
+        recipiendaire: fullName,
+        commercialId: recipId,
+        commercialName: fullName,
+        _recipientType: 'commercial',
+        objet: _dispObjet || 'DOTATION MENSUELLE',
+        date: new Date().toISOString().split('T')[0],
+        validite: '',
+        lignes: bd.lignes,
+        status: 'brouillon',
+        sigDemandeur: '', sigMKT: '',
+        _isDispatch: true,
+        createdAt: ts, _version: 1
+      };
+    }
     APP.bons.push(bon);
     bonIds.push(bon.id);
   }
@@ -9651,6 +9681,12 @@ function renderDispatchPage() {
   tabDispatch += '<div id="dp-shares-body" style="padding:12px 16px">' + _renderSharesTable(shares, totalPdv) + '</div>';
   tabDispatch += '</div>';
 
+  // Split ratio control (global, editable)
+  tabDispatch += _renderDispSplitControl();
+
+  // Annuaire dispatchables (if any)
+  tabDispatch += _renderDispAnnuaireTable();
+
   // Gadget cards
   if (articles.length === 0) {
     tabDispatch += '<div class="card" style="padding:32px;text-align:center;color:var(--text-2)"><i class="fa-solid fa-box-open" style="font-size:2rem;margin-bottom:12px;display:block"></i>Aucun gadget en stock</div>';
@@ -9715,6 +9751,81 @@ function _renderSharesTable(shares, totalPdv) {
     + '<td style="border-top:1px solid var(--border)"></td>'
     + '<td style="text-align:right;padding:6px 8px;border-top:1px solid var(--border);font-weight:700;color:var(--accent)">100%</td></tr></tfoot>'
     + '</table>';
+}
+
+// Carte de controle du split global commerciaux/annuaire
+function _renderDispSplitControl() {
+  var split = dispGetSplit();
+  var annList = _dispActiveAnnuaire();
+  var annWarn = annList.length === 0
+    ? '<span style="font-size:0.72rem;color:var(--text-3);margin-left:8px"><i class="fa-solid fa-info-circle"></i> Aucune personne annuaire marqu\u00e9e — le pool ira à 100% aux commerciaux.</span>'
+    : '';
+  return '<div class="card" style="margin-bottom:16px;padding:12px 16px">'
+    + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<i class="fa-solid fa-scale-balanced" style="color:var(--accent2)"></i>'
+    + '<strong style="font-size:0.95rem">R\u00e9partition du pool</strong>'
+    + '<span style="font-size:0.8rem;color:var(--text-2);margin-left:4px">Commerciaux</span>'
+    + '<input type="number" id="dp-split-com" value="' + split.com + '" min="0" max="100" '
+    + 'oninput="_dispUpdateSplit()" '
+    + 'style="width:60px;text-align:center;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input,var(--bg-card));color:var(--text-1);font-weight:700">'
+    + '<span style="font-size:0.8rem;color:var(--text-2)">%</span>'
+    + '<span style="margin:0 6px;color:var(--text-3)">↔</span>'
+    + '<span style="font-size:0.8rem;color:var(--text-2)">Annuaire</span>'
+    + '<span id="dp-split-ann-lbl" style="font-weight:800;color:var(--accent);font-size:0.95rem">' + split.ann + '%</span>'
+    + annWarn
+    + '</div>'
+    + '</div>';
+}
+
+// Table des personnes de l'annuaire concernees par le dispatch (collapsible)
+function _renderDispAnnuaireTable() {
+  var list = _dispActiveAnnuaire();
+  if (list.length === 0) return '';
+  var rows = list.map(function(p) {
+    var fullName = ((p.prenom||'') + ' ' + (p.nom||'')).trim() || p.id;
+    return '<tr>'
+      + '<td style="padding:4px 8px;font-weight:600;font-size:0.85rem">' + fullName + '</td>'
+      + '<td style="padding:4px 8px;font-size:0.78rem;color:var(--text-2)">' + (p.poste || '\u2014') + '</td>'
+      + '<td style="padding:4px 8px;font-size:0.78rem;color:var(--text-2)">' + (p.departement || '\u2014') + '</td>'
+      + '<td style="padding:4px 8px;text-align:right;font-size:0.78rem;color:var(--text-2)">' + (p.matricule || '\u2014') + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">'
+    + '<div onclick="var b=document.getElementById(\'dp-ann-body\');b.style.display=b.style.display===\'none\'?\'block\':\'none\';this.querySelector(\'.dp-caret\').style.transform=b.style.display===\'none\'?\'rotate(0deg)\':\' rotate(180deg)\'" '
+    + 'style="padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">'
+    + '<i class="fa-solid fa-address-book" style="color:#00c875"></i>'
+    + '<strong style="font-size:0.95rem">Annuaire — personnes concern\u00e9es par le dispatch</strong>'
+    + '<span class="badge" style="background:#00c87522;color:#00c875;font-size:0.7rem;padding:2px 8px;border-radius:99px;font-weight:700">' + list.length + '</span>'
+    + '<span class="dp-caret" style="margin-left:auto;display:inline-block;transition:transform .2s;color:var(--text-2)">&#8964;</span>'
+    + '</div>'
+    + '<div id="dp-ann-body" style="padding:8px 16px;display:none">'
+    + '<div style="font-size:0.78rem;color:var(--text-2);margin-bottom:6px">Part équitable du pool annuaire (entiers). Si le pool ne se divise pas, les premiers dans l’ordre alphabétique reçoivent +1.</div>'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr>'
+    + '<th style="text-align:left;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.72rem;text-transform:uppercase">Nom</th>'
+    + '<th style="text-align:left;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.72rem;text-transform:uppercase">Poste</th>'
+    + '<th style="text-align:left;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.72rem;text-transform:uppercase">D\u00e9partement</th>'
+    + '<th style="text-align:right;padding:4px 8px;color:var(--text-2);font-weight:600;font-size:0.72rem;text-transform:uppercase">Matricule</th>'
+    + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
+// Handler d'edit du split global
+function _dispUpdateSplit() {
+  var inp = document.getElementById('dp-split-com');
+  if (!inp) return;
+  var v = parseInt(inp.value);
+  if (isNaN(v) || v < 0) v = 0;
+  if (v > 100) v = 100;
+  inp.value = v;
+  dispSetSplit(v);
+  var lbl = document.getElementById('dp-split-ann-lbl');
+  if (lbl) lbl.textContent = (100 - v) + '%';
+  // Refresh toutes les previews de gadgets
+  (APP.articles || []).forEach(function(a) {
+    var prev = document.getElementById('dp-prev-' + a.id);
+    if (prev) prev.innerHTML = _renderDispPreview(a.id);
+  });
 }
 
 function _renderDispGadgetCard(art, shares) {
@@ -9800,17 +9911,22 @@ function _renderDispPreview(articleId) {
   alloc.forEach(function(a) {
     var barW = Math.round((a.qty / (total || 1)) * 100);
     var isFixed = a.fixed ? true : false;
+    var isAnn = a.type === 'ann';
+    var typeBadge = isAnn
+      ? ' <span style="font-size:8px;background:#00c875;color:#fff;padding:1px 5px;border-radius:99px;font-weight:700;vertical-align:middle;margin-left:4px">ANN</span>'
+      : '';
+    var barColor = isFixed ? 'var(--warning)' : (isAnn ? '#00c875' : 'var(--accent2)');
     rows += '<tr>'
-      + '<td style="padding:3px 6px;font-size:0.8rem">' + a.name + (isFixed ? ' <i class="fa-solid fa-lock" style="font-size:0.6rem;color:var(--warning)" title="Allocation fixe"></i>' : '') + '</td>'
+      + '<td style="padding:3px 6px;font-size:0.8rem">' + a.name + (isFixed ? ' <i class="fa-solid fa-lock" style="font-size:0.6rem;color:var(--warning)" title="Allocation fixe"></i>' : '') + typeBadge + '</td>'
       + '<td style="padding:3px 6px;text-align:center"><div style="background:var(--border);border-radius:2px;height:5px;width:60px;display:inline-block;vertical-align:middle;overflow:hidden">'
-      + '<div style="background:' + (isFixed ? 'var(--warning)' : 'var(--accent2)') + ';height:100%;width:' + barW + '%;border-radius:2px"></div></div></td>'
-      + '<td style="padding:3px 6px;text-align:right;font-weight:700;font-size:0.8rem;color:' + (isFixed ? 'var(--warning)' : 'var(--accent2)') + '">' + a.qty + '</td>'
+      + '<div style="background:' + barColor + ';height:100%;width:' + barW + '%;border-radius:2px"></div></div></td>'
+      + '<td style="padding:3px 6px;text-align:right;font-weight:700;font-size:0.8rem;color:' + barColor + '">' + a.qty + '</td>'
       + '<td style="padding:3px 6px;text-align:right;font-size:0.75rem;color:var(--text-2)">' + a.pct.toFixed(1) + '%</td>'
       + '</tr>';
   });
   return '<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">'
     + '<table style="width:100%;border-collapse:collapse">'
-    + '<thead><tr><th style="text-align:left;font-size:0.72rem;color:var(--text-2);padding:2px 6px;text-transform:uppercase">Commercial</th>'
+    + '<thead><tr><th style="text-align:left;font-size:0.72rem;color:var(--text-2);padding:2px 6px;text-transform:uppercase">Destinataire</th>'
     + '<th style="font-size:0.72rem;color:var(--text-2);padding:2px 6px"></th>'
     + '<th style="text-align:right;font-size:0.72rem;color:var(--text-2);padding:2px 6px">Qtt\u00e9</th>'
     + '<th style="text-align:right;font-size:0.72rem;color:var(--text-2);padding:2px 6px">%</th></tr></thead>'
