@@ -2301,7 +2301,7 @@ function printDashboard() {
       const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
       if (_bm) {
         const _bon = APP.bons.find(b=>String(b.numero)===_bm[1]);
-        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bon.recipiendaire||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
+        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bonLiveName(_bon)||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
       }
       if (typeof whoLabel === 'undefined') {
         if (isE && fourn)         whoLabel = '🏭 '+fourn.nom;
@@ -2529,7 +2529,7 @@ function printStockReport() {
       var _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
       if (_bm) {
         var _bon = APP.bons.find(function(b){return String(b.numero)===_bm[1];});
-        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bon.recipiendaire||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
+        if (_bon) whoLabel = '<div style="font-weight:600">'+(_bonLiveName(_bon)||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
       }
       if (typeof whoLabel === 'undefined') {
         if (isE && fourn)         whoLabel = '🏭 '+fourn.nom;
@@ -3222,7 +3222,7 @@ function _buildBonsHistoryRows(list) {
       + '</div></div>'
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:0.82rem;color:var(--text-2)">'
       + '<div><strong>Demandeur:</strong> ' + (b.demandeur || '\u2014') + '</div>'
-      + '<div><strong>Destinataire:</strong> ' + (b.recipiendaire || '\u2014') + '</div>'
+      + '<div><strong>Destinataire:</strong> ' + (_bonLiveName(b) || '\u2014') + '</div>'
       + '<div><strong>Objet:</strong> ' + (b.objet || '\u2014') + '</div>'
       + '<div><strong>Date bon:</strong> ' + (b.date || fmtDate(b.createdAt)) + '</div>'
       + '</div>'
@@ -3295,7 +3295,7 @@ function renderBonRow(b) {
   const _bonLocked = b.status === 'validé' && !_isAdmin;
   return `<tr id="bon-row-${b.id}">
     <td style="font-family:monospace;font-weight:700;color:var(--accent)">${b.numero}</td>
-    <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${b.recipiendaire||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
+    <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${_bonLiveName(b)||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
     <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${(b.lignes||[]).map(l=>`${l.qty}× ${l.name||l.articleName}`).join(', ')}</td>
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
     <td class="${_bonLocked?'':'editable'}" id="td-bstat-${b.id}" ${_bonLocked?'title="Bon validé — modification réservée à l\'admin" style="cursor:not-allowed;opacity:0.85"':''}><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
@@ -3813,6 +3813,28 @@ function vcCheck() {
     + '</div>';
 }
 
+// Nom live du destinataire d'un bon: resoud via commercialId / _annuaireId
+// au moment de l'affichage. Fallback sur le snapshot (bon.recipiendaire /
+// bon.commercialName) si l'entite n'existe plus.
+function _bonLiveName(bon) {
+  if (!bon) return '';
+  if (bon.commercialId) {
+    var c = (APP.commerciaux || []).find(function(x){ return x.id === bon.commercialId; });
+    if (c) {
+      var n = ((c.prenom||'') + ' ' + (c.nom||'')).trim();
+      if (n) return n;
+    }
+  }
+  if (bon._annuaireId) {
+    var p = (APP.annuaire || []).find(function(x){ return x.id === bon._annuaireId; });
+    if (p) {
+      var n2 = ((p.prenom||'') + ' ' + (p.nom||'')).trim();
+      if (n2) return n2;
+    }
+  }
+  return bon.recipiendaire || bon.commercialName || '';
+}
+
 function generateBonHTML(bon, overrides) {
   const co=null;
   const ov=overrides||{};
@@ -3872,7 +3894,7 @@ function generateBonHTML(bon, overrides) {
         <strong>DEMANDEUR :</strong> <span style="display:inline-block;width:400px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.demandeur||(commercial?commercial.prenom+' '+commercial.nom:'—')}</span>
       </div>
       <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:5px">
-        <strong>DESTINATAIRE / RÉCIPIENDAIRE :</strong> <span style="display:inline-block;width:340px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.recipiendaire||''}</span>
+        <strong>DESTINATAIRE / RÉCIPIENDAIRE :</strong> <span style="display:inline-block;width:340px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${_bonLiveName(bon)}</span>
       </div>
       <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:10px">
         <strong>Objet / Motif :</strong> <span style="display:inline-block;width:${bon._isDispatch?'460':'330'}px;border-bottom:1px dotted #555;padding-left:8px;font-weight:400">${bon.objet||''}</span>
@@ -4067,7 +4089,7 @@ function filterMvt() {
         if (_bm) {
           const _bon = APP.bons.find(b => String(b.numero) === _bm[1]);
           if (_bon) {
-            const _dest = _bon.recipiendaire || '—';
+            const _dest = _bonLiveName(_bon) || '—';
             const _dem  = _bon.demandeur    || '—';
             return '<div style="font-weight:600">' + _dest + '</div>'
                  + '<div style="font-size:10px;color:var(--text-2)">Dem: ' + _dem + '</div>';
@@ -7877,7 +7899,7 @@ function runSmartSearch(q) {
   const results=[];
   APP.articles.forEach(a=>{if(fuzzyMatch(a.name,q)||fuzzyMatch(a.code,q)||fuzzyMatch(a.category||'',q)){const isAlert=a.stock<=a.stockMin;results.push({type:'gadget',icon:'📦',color:'#3d7fff',title:a.name,sub:`${a.code} · ${a.category} · Stock: ${a.stock}${isAlert?' ⚠️':''}`,action:()=>{closeSmartSearch();showPage('articles');}});}});
   APP.commerciaux.forEach(c=>{const name=c.prenom+' '+c.nom;if(fuzzyMatch(name,q)||fuzzyMatch(c.email||'',q)||fuzzyMatch(c.service||'',q)){const bons=APP.bons.filter(b=>b.commercialId===c.id).length;results.push({type:'commercial',icon:'👤',color:'#00e5aa',title:name,sub:`${c.service||''} · ${bons} bons émis`,action:()=>{closeSmartSearch();showPage('commerciaux');}});}});
-  APP.bons.forEach(b=>{if(fuzzyMatch(b.numero,q)||fuzzyMatch(b.commercialName||'',q)||fuzzyMatch(b.recipiendaire||'',q)){results.push({type:'bon',icon:'📋',color:'#ffa502',title:b.numero,sub:`${b.recipiendaire||'—'} · ${fmtDate(b.createdAt)} · ${b.status}`,action:()=>{closeSmartSearch();showPage('bons');}});}});
+  APP.bons.forEach(b=>{if(fuzzyMatch(b.numero,q)||fuzzyMatch(b.commercialName||'',q)||fuzzyMatch(b.recipiendaire||'',q)||fuzzyMatch(_bonLiveName(b),q)){results.push({type:'bon',icon:'📋',color:'#ffa502',title:b.numero,sub:`${_bonLiveName(b)||'—'} · ${fmtDate(b.createdAt)} · ${b.status}`,action:()=>{closeSmartSearch();showPage('bons');}});}});
   APP.fournisseurs.forEach(f=>{if(fuzzyMatch(f.nom,q)||fuzzyMatch(f.entreprise||'',q)||fuzzyMatch(f.contact||'',q)){results.push({type:'fournisseur',icon:'🚚',color:'#ff6b35',title:f.nom+(f.entreprise?' — '+f.entreprise:''),sub:f.contact||f.adresse||'',action:()=>{closeSmartSearch();viewFournDetail(f.id);}});}});
   (APP.commandesFourn||[]).forEach(c=>{if(fuzzyMatch(c.numero,q)||fuzzyMatch(c.fournisseurNom||'',q)){const pct=calcCmdPct(c);results.push({type:'commande',icon:'📦',color:'#ffa502',title:c.numero,sub:`${c.fournisseurNom} · ${getCmdStatusLabel(c.status)} · ${pct}%`,action:()=>{closeSmartSearch();showPage('fourn-dashboard');}});}});
   // companies search removed
