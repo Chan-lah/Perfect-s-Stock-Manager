@@ -60,3 +60,24 @@ avec `[OUTDATED YYYY-MM-DD]` et expliquer en une ligne pourquoi.
 - **Règle**: quand un substring patch échoue, faire un `grep` rapide sur le pattern (pas une regex) pour voir toutes les occurrences réelles et choisir un contexte plus spécifique. Ne jamais deviner.
 - **Pourquoi**: les fichiers de ~10k lignes répètent beaucoup de patterns (`createdAt:Date.now()`, `_version:1`, etc.). Une regex vague matche souvent 2-3 sites et casse silencieusement si on ne vérifie pas. L'assertion du script sauve mais coûte 1 itération chaque fois.
 - **Contexte**: C:/tmp/bons_retroactif.py, 2 retries avant succès
+
+## 2026-04-21 — Grandfather rule pour ownership rétroactif
+- **Type**: validated-pattern
+- **Trigger**: H1 — ajout d'`createdBy` sur les bons. Problème : les bons existants n'ont pas ce champ, comment gérer leur suppression ?
+- **Règle**: quand on introduit un champ de propriété (ex: `createdBy`, `ownerId`) rétroactivement, les entités legacy (sans ce champ) doivent tomber dans le path le plus restrictif (admin only). Pas de "fallback permissif" type "si pas de champ, tout le monde peut".
+- **Pourquoi**: rétro-attribuer la propriété est risqué (faux positifs, perte d'audit). Mieux vaut une frustration temporaire (admin doit cleaner les vieux bons) qu'un trou permanent. Visible dès le 1er test : l'UI affiche "Bon ancien — réservé admin" qui est explicite.
+- **Contexte**: commit ce7dd99, app.js:3740 (deleteBon)
+
+## 2026-04-21 — Firebase .on('value') initial fire = pas de logique de 1er passage
+- **Type**: finding
+- **Trigger**: C3 — profile listener devait force-logout sur change de rôle, sans se déclencher au premier fire
+- **Règle**: Firebase `.on('value')` fire immédiatement avec la valeur courante quand on attache. Pour détecter un "change" et pas juste "lecture initiale", capturer la valeur AVANT d'attacher dans une var locale (ici `_initialRole`), puis comparer dans le callback. Le 1er fire passera naturellement (valeur identique).
+- **Pourquoi**: sans ce pattern, il faut un flag `_firstFire=true` qui embrouille le code. La capture pré-attach est plus simple et ne rajoute pas de branche conditionnelle.
+- **Contexte**: commit 86ab4f3, auth.js:74-87
+
+## 2026-04-21 — Force-logout avec garde de réentrance obligatoire
+- **Type**: validated-pattern
+- **Trigger**: C3 — un listener qui appelle logoutUser() peut re-fire pendant le logout et boucler
+- **Règle**: toute fonction de "force-action-destructive-déclenchée-par-observer" (force logout, force reload, force modal) doit avoir un flag de réentrance global (`window._psmForcingLogout`) testé en entrée ET reset en fin d'action. setTimeout(..., 400) pour laisser le logout terminer avant de rouvrir la garde.
+- **Pourquoi**: un listener Firebase peut fire 2-3 fois pendant une transition (detach, auth.signOut, etc.). Sans garde → double notif, double logActivity, double signOut → erreur console + UX cassée.
+- **Contexte**: commit 86ab4f3, auth.js:97-102 (_forceLogout)
