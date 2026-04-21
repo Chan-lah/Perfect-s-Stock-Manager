@@ -9150,7 +9150,35 @@ function _dispEnsure() {
   if (!D.eligibility) D.eligibility = {};
   if (!D.fixedAlloc)  D.fixedAlloc = {};
   if (!D.history)     D.history = [];
+  if (!D.splitRatio)  D.splitRatio = { com: 90, ann: 10 };
   return D;
+}
+
+// Lit le split commerciaux/annuaire (0-100). Annuaire = 100 - com.
+function dispGetSplit() {
+  _dispEnsure();
+  var s = APP.dispatch.splitRatio || { com: 90, ann: 10 };
+  var com = Math.max(0, Math.min(100, parseInt(s.com) || 0));
+  return { com: com, ann: 100 - com };
+}
+
+function dispSetSplit(comPct) {
+  _dispEnsure();
+  var c = Math.max(0, Math.min(100, parseInt(comPct) || 0));
+  APP.dispatch.splitRatio = { com: c, ann: 100 - c };
+  saveDB();
+}
+
+// Liste des personnes de l'annuaire concernees par le dispatch (ordre alphabetique stable)
+function _dispActiveAnnuaire() {
+  return (APP.annuaire || []).filter(function(p) { return !!p.includeDispatch; })
+    .slice().sort(function(a, b) {
+      var an = ((a.nom||'') + ' ' + (a.prenom||'')).trim().toLowerCase();
+      var bn = ((b.nom||'') + ' ' + (b.prenom||'')).trim().toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return (a.id || '').localeCompare(b.id || '');
+    });
 }
 
 function _dispActiveCommerciaux() {
@@ -9237,7 +9265,10 @@ function dispSetAllEligible(articleId, eligible) {
 }
 
 // Compute allocation for one gadget.
-// Returns null if pool=0 or no eligible, else array of {id, name, pdv, pct, qty}
+// Split le pool entre commerciaux (PDV-pondere Hamilton) et personnes de l'annuaire
+// marquees includeDispatch (part equitable integer, reste distribue Hamilton alphabetique).
+// Returns null si rien a dispatcher, sinon tableau plat d'items {id, name, pdv?, pct, qty, type}
+// avec type = 'com' | 'ann'.
 function dispCompute(articleId) {
   _dispEnsure();
   var pool = dispGetPool(articleId);
@@ -9246,44 +9277,76 @@ function dispCompute(articleId) {
   var eligible = _dispActiveCommerciaux().filter(function(c) {
     return dispIsEligible(articleId, c.id);
   });
-  if (eligible.length === 0) return null;
+  var annuaireList = _dispActiveAnnuaire();
+  if (eligible.length === 0 && annuaireList.length === 0) return null;
 
-  var fixedMap = (APP.dispatch.fixedAlloc || {})[articleId] || {};
-  var fixedResults = [];
-  var pdvEligible = [];
-  var fixedTotal = 0;
-  eligible.forEach(function(c) {
-    var fa = parseInt(fixedMap[c.id]) || 0;
-    if (fa > 0) {
-      fixedResults.push({ id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: _dispGetPdv(c), qty: fa, pct: 0, fixed: true });
-      fixedTotal += fa;
-    } else {
-      pdvEligible.push(c);
-    }
-  });
-  var remainingPool = pool - fixedTotal;
-  var pdvResults = [];
-  if (remainingPool > 0 && pdvEligible.length > 0) {
-    var eligiblePdvTotal = pdvEligible.reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
-    pdvResults = pdvEligible.map(function(c) {
-      var pdv = _dispGetPdv(c);
-      var raw = remainingPool * (pdv / eligiblePdvTotal);
-      return { id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: pdv, raw: raw, floor: Math.floor(raw), rem: raw - Math.floor(raw), qty: 0 };
-    });
-    var floorSum = pdvResults.reduce(function(s, r) { return s + r.floor; }, 0);
-    var leftover = remainingPool - floorSum;
-    pdvResults.forEach(function(r) { r.qty = r.floor; });
-    pdvResults.sort(function(a, b) { return b.rem - a.rem; });
-    for (var i = 0; i < leftover; i++) pdvResults[i].qty++;
-  } else if (remainingPool > 0 && pdvEligible.length === 0 && fixedResults.length === 0) {
-    return null;
+  // Split le pool selon splitRatio global. Si un des deux groupes est vide,
+  // l'autre recupere TOUT le pool (pas de gaspillage).
+  var split = dispGetSplit();
+  var poolCom, poolAnn;
+  if (eligible.length === 0) { poolCom = 0; poolAnn = pool; }
+  else if (annuaireList.length === 0) { poolCom = pool; poolAnn = 0; }
+  else {
+    poolCom = Math.floor(pool * split.com / 100);
+    poolAnn = pool - poolCom;
   }
-  var raws = fixedResults.concat(pdvResults);
-  raws.sort(function(a, b) { return (shares[a.id] ? shares[a.id].pct : 0) > (shares[b.id] ? shares[b.id].pct : 0) ? -1 : 1; });
-  raws.forEach(function(r) {
-    r.pct = (r.qty / pool) * 100;
-  });
-  return raws;
+
+  // ---- Groupe COMMERCIAUX (allocation fixe + Hamilton PDV sur le reste) ----
+  var comResults = [];
+  if (poolCom > 0 && eligible.length > 0) {
+    var fixedMap = (APP.dispatch.fixedAlloc || {})[articleId] || {};
+    var fixedResults = [];
+    var pdvEligible = [];
+    var fixedTotal = 0;
+    eligible.forEach(function(c) {
+      var fa = parseInt(fixedMap[c.id]) || 0;
+      if (fa > 0) {
+        fixedResults.push({ id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: _dispGetPdv(c), qty: fa, pct: 0, fixed: true, type: 'com' });
+        fixedTotal += fa;
+      } else {
+        pdvEligible.push(c);
+      }
+    });
+    var remainingPool = poolCom - fixedTotal;
+    var pdvResults = [];
+    if (remainingPool > 0 && pdvEligible.length > 0) {
+      var eligiblePdvTotal = pdvEligible.reduce(function(s, c) { return s + _dispGetPdv(c); }, 0) || 1;
+      pdvResults = pdvEligible.map(function(c) {
+        var pdv = _dispGetPdv(c);
+        var raw = remainingPool * (pdv / eligiblePdvTotal);
+        return { id: c.id, name: shares[c.id] ? shares[c.id].name : c.id, pdv: pdv, raw: raw, floor: Math.floor(raw), rem: raw - Math.floor(raw), qty: 0, type: 'com' };
+      });
+      var floorSum = pdvResults.reduce(function(s, r) { return s + r.floor; }, 0);
+      var leftover = remainingPool - floorSum;
+      pdvResults.forEach(function(r) { r.qty = r.floor; });
+      pdvResults.sort(function(a, b) { return b.rem - a.rem; });
+      for (var i = 0; i < leftover; i++) pdvResults[i].qty++;
+    }
+    comResults = fixedResults.concat(pdvResults);
+    comResults.sort(function(a, b) { return (shares[a.id] ? shares[a.id].pct : 0) > (shares[b.id] ? shares[b.id].pct : 0) ? -1 : 1; });
+  }
+
+  // ---- Groupe ANNUAIRE (equitable integer + remainder Hamilton alphabetique) ----
+  var annResults = [];
+  if (poolAnn > 0 && annuaireList.length > 0) {
+    var perPerson = Math.floor(poolAnn / annuaireList.length);
+    var remainder = poolAnn - perPerson * annuaireList.length;
+    annuaireList.forEach(function(p, idx) {
+      var fullName = ((p.prenom||'') + ' ' + (p.nom||'')).trim() || p.id;
+      annResults.push({
+        id: p.id,
+        name: fullName,
+        qty: perPerson + (idx < remainder ? 1 : 0),
+        pct: 0,
+        type: 'ann'
+      });
+    });
+  }
+
+  var all = comResults.concat(annResults);
+  if (all.length === 0) return null;
+  all.forEach(function(r) { r.pct = (r.qty / pool) * 100; });
+  return all;
 }
 
 // Validate a specific list of articleIds (or all configured ones)
@@ -9359,7 +9422,19 @@ async function validateDispatchV3(articleIds) {
     // No stock deduction here — stock is deducted when bon status changes from brouillon
     // Reset pool after validation
     APP.dispatch.pools[r.art.id] = 0;
-    APP.dispatch.history.unshift({ ts: ts, articleId: r.art.id, articleName: r.art.name, totalQty: r.pool, stockAtDispatch: (parseInt(r.art.stock)||0), alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty }; }) });
+    var _split = dispGetSplit();
+    var _hasCom = r.alloc.some(function(a){ return a.type === 'com' && a.qty > 0; });
+    var _hasAnn = r.alloc.some(function(a){ return a.type === 'ann' && a.qty > 0; });
+    APP.dispatch.history.unshift({
+      ts: ts,
+      articleId: r.art.id,
+      articleName: r.art.name,
+      totalQty: r.pool,
+      stockAtDispatch: (parseInt(r.art.stock)||0),
+      splitRatio: { com: _split.com, ann: _split.ann },
+      mixed: _hasCom && _hasAnn,
+      alloc: r.alloc.map(function(a) { return { id: a.id, name: a.name, qty: a.qty, type: a.type || 'com' }; })
+    });
   });
 
   // Generate bons de sortie per commercial
