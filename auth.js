@@ -322,6 +322,7 @@ async function _handleLogin(e) {
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
       APP.users = _usersBackup;
+      _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
       try {
         var cachedImgs = localStorage.getItem('psm_images_cache');
         if (cachedImgs && typeof _restoreImages === 'function') {
@@ -351,6 +352,7 @@ async function _handleLogin(e) {
             var _ub = APP.users ? APP.users.slice() : [];
             Object.assign(APP, _cd);
             APP.users = _ub;
+            _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
             try {
               var _ci = localStorage.getItem('psm_images_cache');
               if (_ci && typeof _restoreImages === 'function') _restoreImages(APP, JSON.parse(_ci));
