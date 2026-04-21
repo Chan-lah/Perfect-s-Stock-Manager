@@ -3723,7 +3723,7 @@ async function saveBon(existingId) {
         return;
       }
     }
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_retroactif:_retroactif,_version:1};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_retroactif:_retroactif,createdBy:((_currentUser()&&_currentUser().email)||null),_version:1};
     if(_newStatus === 'validé') {
       bon._validatedAt = Date.now();
       if (!_retroactif) lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};var _sb9=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero,stockBefore:_sb9,stockAfter:art.stock});auditLog('STOCK_OUT','article',art.id,old,art);}});
@@ -3737,7 +3737,14 @@ async function saveBon(existingId) {
 
 function deleteBon(id) {
   const bon=APP.bons.find(b=>b.id===id); if(!bon) return;
-  if (bon.status === 'validé' && (!_currentUser() || _currentUser().role !== 'admin')) {
+  var _u = _currentUser();
+  var _isAdmin = _u && _u.role === 'admin';
+  // Ownership: créateur OU admin. Bons anciens sans createdBy → admin uniquement.
+  if (!_isAdmin) {
+    if (!bon.createdBy) { notify('Bon ancien — suppression réservée à l\'admin', 'warning'); return; }
+    if (bon.createdBy !== (_u && _u.email)) { notify('Suppression réservée au créateur ou à l\'admin', 'warning'); return; }
+  }
+  if (bon.status === 'validé' && !_isAdmin) {
     notify('Bon validé — suppression réservée à l\'admin', 'warning'); return;
   }
   var _wasDeducted = (bon.status === 'validé');
