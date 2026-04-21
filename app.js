@@ -10261,11 +10261,41 @@ var _annuaireTagFilter = 'all';
 
 function _syncUsersToAnnuaire() {
   if (!APP.annuaire) APP.annuaire = [];
-  var users = APP.users || [];
+  if (!APP._annuaireTombstones) APP._annuaireTombstones = {};
   var changed = false;
+  // Dedupe: fusionner les entrees liees au meme utilisateur (meme _fromUserId)
+  var _byUid = {};
+  APP.annuaire.forEach(function(a) {
+    if (!a._fromUserId) return;
+    (_byUid[a._fromUserId] = _byUid[a._fromUserId] || []).push(a);
+  });
+  Object.keys(_byUid).forEach(function(uid) {
+    var grp = _byUid[uid];
+    if (grp.length <= 1) return;
+    grp.sort(function(a, b) {
+      var aM = a.matricule ? 1 : 0, bM = b.matricule ? 1 : 0;
+      if (aM !== bM) return bM - aM;
+      var aF = [a.prenom, a.nom, a.email, a.poste, a.departement, a.telephone].filter(Boolean).length;
+      var bF = [b.prenom, b.nom, b.email, b.poste, b.departement, b.telephone].filter(Boolean).length;
+      if (aF !== bF) return bF - aF;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    var keeper = grp[0];
+    grp.slice(1).forEach(function(dup) {
+      ['prenom','nom','email','matricule','poste','departement','telephone','tag','notes'].forEach(function(f) {
+        if (!keeper[f] && dup[f]) keeper[f] = dup[f];
+      });
+    });
+    var dupIds = grp.slice(1).map(function(d) { return d.id; });
+    APP.annuaire = APP.annuaire.filter(function(a) { return dupIds.indexOf(a.id) < 0; });
+    changed = true;
+  });
+  var users = APP.users || [];
   users.forEach(function(uu) {
     // Skip admin account
     if (uu.email && uu.email.toLowerCase() === 'ibkonate26@gmail.com') return;
+    // Skip users explicitement retires de l'annuaire (tombstone)
+    if (APP._annuaireTombstones[uu.id]) return;
     // Derive prenom/nom from user
     var uPrenom = uu.prenom || '';
     var uNom = uu.nom || '';
@@ -10501,7 +10531,13 @@ async function deleteAnnuaire(id) {
   if (!APP.annuaire) APP.annuaire = [];
   var p = APP.annuaire.find(function(x) { return x.id === id; });
   if (!p) return;
-  if (!confirm('Supprimer ' + (p.prenom||'') + ' ' + (p.nom||'') + ' de l\u2019annuaire ?')) return;
+  var _msg = 'Supprimer ' + (p.prenom||'') + ' ' + (p.nom||'') + ' de l\u2019annuaire ?';
+  if (p._fromUserId) _msg += '\n\nCette personne est li\u00e9e \u00e0 un compte utilisateur. Le compte reste actif, mais l\u2019entr\u00e9e ne sera plus recr\u00e9\u00e9e automatiquement dans l\u2019annuaire.';
+  if (!confirm(_msg)) return;
+  if (p._fromUserId) {
+    if (!APP._annuaireTombstones) APP._annuaireTombstones = {};
+    APP._annuaireTombstones[p._fromUserId] = true;
+  }
   APP.annuaire = APP.annuaire.filter(function(x) { return x.id !== id; });
   auditLog('DELETE', 'annuaire', id, p, null);
   saveDB();
