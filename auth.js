@@ -5,6 +5,8 @@
 
 var _cloudUser = null;    // Firebase auth user object
 var _userProfile = null;  // Profile from Realtime Database
+var _profileListenerRef = null;  // DatabaseReference attached after login (C3)
+var _initialRole = null;          // role captured at login, detects changes (C3)
 
 // ── Firebase Auth ──────────────────────────────────────────
 
@@ -66,6 +68,37 @@ async function _loadUserProfile() {
     }
   } catch(e) { console.warn('[PSM] profile load:', e); }
   return null;
+}
+
+// ── Profile listener: revoke access in real time (C3) ─────
+
+function _startProfileListener() {
+  if (!_firebaseDB || !_cloudUser || _profileListenerRef) return;
+  _initialRole = _userProfile ? _userProfile.role : null;
+  _profileListenerRef = _firebaseDB.ref('profiles/' + _cloudUser.uid);
+  _profileListenerRef.on('value', function(snap) {
+    try {
+      if (!snap.exists()) { _forceLogout('Votre compte a \u00e9t\u00e9 supprim\u00e9.'); return; }
+      var p = snap.val();
+      if (p.is_active === false) { _forceLogout('Votre compte a \u00e9t\u00e9 d\u00e9sactiv\u00e9 par un administrateur.'); return; }
+      if (_initialRole && p.role !== _initialRole) { _forceLogout('Votre r\u00f4le a chang\u00e9. Reconnectez-vous pour appliquer les nouveaux droits.'); return; }
+      _userProfile = p;
+      if (typeof _syncProfileToLocal === 'function') _syncProfileToLocal(p);
+      if (typeof updateUserBadge === 'function') updateUserBadge();
+    } catch(e) { console.warn('[PSM] profile listener:', e); }
+  });
+}
+
+function _stopProfileListener() {
+  if (_profileListenerRef) { try { _profileListenerRef.off(); } catch(e) {} _profileListenerRef = null; }
+  _initialRole = null;
+}
+
+function _forceLogout(reason) {
+  if (window._psmForcingLogout) return;
+  window._psmForcingLogout = true;
+  try { if (typeof notify === 'function') notify(reason, 'error', 8000); else alert(reason); } catch(e) {}
+  setTimeout(function() { try { logoutUser(); } catch(e) {} window._psmForcingLogout = false; }, 400);
 }
 
 function _syncProfileToLocal(profile) {
@@ -388,6 +421,9 @@ async function _handleLogin(e) {
     // 5c. Always start real-time sync after login for instant cross-device updates
     if (typeof startRealtimeSync === 'function') startRealtimeSync();
 
+    // 5c-bis. Profile listener — force-logout on profile delete/disable/role change (C3)
+    _startProfileListener();
+
     // 5d. Purge old cloud snapshots (keep 7 days)
     if (typeof _purgeOldCloudSnapshots === 'function') {
       try { _purgeOldCloudSnapshots(); } catch(e) {}
@@ -598,6 +634,7 @@ function canEdit(pageId) { return hasPermission(pageId, 'edit'); }
 // ── Logout ─────────────────────────────────────────────────
 
 function logoutUser() {
+  _stopProfileListener();
   if (typeof stopRealtimeSync === 'function') stopRealtimeSync();
   logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
