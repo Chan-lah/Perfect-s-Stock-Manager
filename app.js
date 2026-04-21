@@ -4444,6 +4444,8 @@ function _renderComTable(coms, color) {
       const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
       const _matchBon = function(b){
         if (b.commercialId===c.id) return true;
+        // Bon annuaire: ne jamais le rattacher a un commercial homonyme
+        if (b._recipientType === 'annuaire') return false;
         if (!_fullA) return false;
         const _d = _norm(b.demandeur);
         const _r = _norm(b.recipiendaire);
@@ -4734,7 +4736,25 @@ function deleteCommercial(id) {
   (APP.pdv||[]).forEach(p=>{ if(p.commercialId===id) p.commercialId=''; });
   const idx = APP.commerciaux.findIndex(c=>c.id===id); if(idx<0) return;
   auditLog('DELETE','commercial',id,APP.commerciaux[idx],null);
-  APP.commerciaux.splice(idx,1); saveDB(); renderCommerciaux();
+  APP.commerciaux.splice(idx,1);
+  // Nettoie les references dispatch (eligibilite + alloc fixe) pour eviter les orphelins
+  if (APP.dispatch) {
+    if (APP.dispatch.eligibility) {
+      Object.keys(APP.dispatch.eligibility).forEach(function(aid){
+        if (APP.dispatch.eligibility[aid] && APP.dispatch.eligibility[aid][id] !== undefined) {
+          delete APP.dispatch.eligibility[aid][id];
+        }
+      });
+    }
+    if (APP.dispatch.fixedAlloc) {
+      Object.keys(APP.dispatch.fixedAlloc).forEach(function(aid){
+        if (APP.dispatch.fixedAlloc[aid] && APP.dispatch.fixedAlloc[aid][id] !== undefined) {
+          delete APP.dispatch.fixedAlloc[aid][id];
+        }
+      });
+    }
+  }
+  saveDB(); renderCommerciaux();
   notify('Commercial supprimé','warning');
 }
 
@@ -6453,6 +6473,8 @@ function getActiveAgents(limit=5) {
     const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
     const _matchBon = function(b){
       if (b.commercialId === c.id) return true;
+      // Bon annuaire: ne jamais le rattacher a un commercial homonyme
+      if (b._recipientType === 'annuaire') return false;
       if (!_fullA) return false;
       const _d = _norm(b.demandeur);
       const _r = _norm(b.recipiendaire);
@@ -7450,6 +7472,8 @@ function printComReport() {
     const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
     const _matchBon = function(b){
       if (b.commercialId===c.id) return true;
+      // Bon annuaire: ne jamais le rattacher a un commercial homonyme
+      if (b._recipientType === 'annuaire') return false;
       if (!_fullA) return false;
       const _d = _norm(b.demandeur);
       const _r = _norm(b.recipiendaire);
@@ -8334,6 +8358,17 @@ async function deleteUser(userId) {
   var userEmail = user ? user.email : null;
   var userIdToRemove = user ? user.id : userId;
   APP.users = (APP.users||[]).filter(u => u.id !== userIdToRemove);
+  // Nettoie les entrees annuaire liees a ce user (et tombstone pour bloquer la recreation auto)
+  var annBefore = (APP.annuaire||[]).length;
+  APP.annuaire = (APP.annuaire||[]).filter(function(a){
+    if (a._fromUserId === userIdToRemove) {
+      if (!Array.isArray(APP._annuaireTombstones)) APP._annuaireTombstones = [];
+      if (APP._annuaireTombstones.indexOf(userIdToRemove) < 0) APP._annuaireTombstones.push(userIdToRemove);
+      return false;
+    }
+    return true;
+  });
+  if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
 
   // Delete profile from Firebase
@@ -9192,8 +9227,20 @@ function dispSetSplit(comPct) {
 }
 
 // Liste des personnes de l'annuaire concernees par le dispatch (ordre alphabetique stable)
+// Exclut les homonymes d'un commercial actif (email OU matricule) pour eviter
+// la double-attribution dans le dispatch.
 function _dispActiveAnnuaire() {
-  return (APP.annuaire || []).filter(function(p) { return !!p.includeDispatch; })
+  var actCom = (APP.commerciaux || []).filter(function(c){ return c.actif !== false && c.dispatchActive !== false; });
+  var comEmails = new Set(actCom.map(function(c){ return (c.email||'').trim().toLowerCase(); }).filter(Boolean));
+  var comMats = new Set(actCom.map(function(c){ return (c.matricule||'').trim().toLowerCase(); }).filter(Boolean));
+  return (APP.annuaire || []).filter(function(p) {
+      if (!p.includeDispatch) return false;
+      var pe = (p.email||'').trim().toLowerCase();
+      var pm = (p.matricule||'').trim().toLowerCase();
+      if (pe && comEmails.has(pe)) return false;
+      if (pm && comMats.has(pm)) return false;
+      return true;
+    })
     .slice().sort(function(a, b) {
       var an = ((a.nom||'') + ' ' + (a.prenom||'')).trim().toLowerCase();
       var bn = ((b.nom||'') + ' ' + (b.prenom||'')).trim().toLowerCase();
@@ -10364,7 +10411,7 @@ function reactivateBon(bonId) {
 }
 
 function undoDispatch(histIdx) {
-  _ensureDispatch();
+  _dispEnsure();
   var hist = APP.dispatch.history || [];
   if(histIdx < 0 || histIdx >= hist.length) return;
   var snap = hist[histIdx];
