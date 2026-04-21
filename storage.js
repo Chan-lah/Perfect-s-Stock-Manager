@@ -306,8 +306,8 @@ function startRealtimeSync() {
     var cloudData = snap.val();
     if (!cloudData || !cloudData._ts) return;
 
-    // Skip if this is our own save echoing back (within 2 seconds)
-    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 2000) return;
+    // Skip if this is our own save echoing back (within 500ms)
+    if (Math.abs(cloudData._ts - _lastLocalSaveTs) < 500) return;
 
     // Only update if cloud data is strictly newer
     if (cloudData._ts > (APP._ts || 0)) {
@@ -427,7 +427,7 @@ function saveDB() {
   try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   // Also save to file if available
   if (_dirHandle) { try { saveToFile(); } catch(e) {} }
-  // Cloud sync: debounced 800ms (groups rapid successive changes into one upload)
+  // Cloud sync: debounced 250ms (groups rapid successive changes into one upload)
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
     clearTimeout(_cloudSaveDebounceTimer);
     _updateSyncStatus('syncing');
@@ -449,7 +449,37 @@ function saveDB() {
           }
         }, 5000);
       });
-    }, 800);
+    }, 250);
+  }
+}
+
+// saveDBNow — flush immediately, no debounce. Use for atomic user actions
+// (button clicks, modal submits, status changes) where perceived instant feedback matters.
+function saveDBNow() {
+  APP._ts = Date.now();
+  _invalidatePageCache();
+  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  if (_dirHandle) { try { saveToFile(); } catch(e) {} }
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser) {
+    // Cancel any pending debounce — we save immediately
+    clearTimeout(_cloudSaveDebounceTimer);
+    _cloudSaveDebounceTimer = null;
+    _updateSyncStatus('syncing');
+    _cloudSavePending = _doSaveToCloud().then(function() {
+      _cloudSavePending = null;
+      _updateSyncStatus('synced');
+    }).catch(function(e) {
+      console.warn('[PSM] Cloud save failed:', e);
+      _cloudSavePending = null;
+      _updateSyncStatus('error');
+      setTimeout(function() {
+        if (typeof _doSaveToCloud === 'function') {
+          _updateSyncStatus('syncing');
+          _doSaveToCloud().then(function() { _updateSyncStatus('synced'); })
+            .catch(function() { _updateSyncStatus('error'); });
+        }
+      }, 5000);
+    });
   }
 }
 

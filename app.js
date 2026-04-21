@@ -3420,7 +3420,7 @@ function attachBonEditors(b) {
       b.status=v;
       _setBonStatusTimestamp(b, v);
       b._version=(b._version||1)+1;
-      auditLog('EDIT','bon',b.id,{status:old},{status:v}); saveDB(); updateAlertBadge();
+      auditLog('EDIT','bon',b.id,{status:old},{status:v}); saveDBNow(); updateAlertBadge();
       const row=document.getElementById('bon-row-'+b.id);
       if(row){row.outerHTML=renderBonRow(b);attachBonEditors(b);}
     });
