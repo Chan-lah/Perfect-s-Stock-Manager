@@ -104,9 +104,13 @@ var _cloudSaveQueue = null; // pending save promise
 
 // ── Granular section tracking ────────────────────────────
 // Sections that are synced to Firebase (images excluded — too large)
+// IMPORTANT: toute nouvelle section editable DOIT etre listee ici, sinon
+// les modifs de cette section seule produisent un diff vide -> save cloud
+// skip -> rollback au prochain reload (cf bug annuaire corrige 2026-04-21)
 var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
                       'commandesFourn','zones','secteurs','pdv','settings',
-                      'dispatch','companies','audit','users'];
+                      'dispatch','companies','audit','users',
+                      'annuaire','_annuaireTombstones'];
 // Note: 'backups' removed — backups stay local (filesystem only), not synced to Firebase
 
 // Fast djb2-style hash to detect changes per section

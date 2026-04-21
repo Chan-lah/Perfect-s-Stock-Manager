@@ -8359,11 +8359,12 @@ async function deleteUser(userId) {
   var userIdToRemove = user ? user.id : userId;
   APP.users = (APP.users||[]).filter(u => u.id !== userIdToRemove);
   // Nettoie les entrees annuaire liees a ce user (et tombstone pour bloquer la recreation auto)
+  // _annuaireTombstones est un object { userId: true } (cf deleteAnnuaire + _syncUsersToAnnuaire)
   var annBefore = (APP.annuaire||[]).length;
   APP.annuaire = (APP.annuaire||[]).filter(function(a){
     if (a._fromUserId === userIdToRemove) {
-      if (!Array.isArray(APP._annuaireTombstones)) APP._annuaireTombstones = [];
-      if (APP._annuaireTombstones.indexOf(userIdToRemove) < 0) APP._annuaireTombstones.push(userIdToRemove);
+      if (!APP._annuaireTombstones || typeof APP._annuaireTombstones !== 'object' || Array.isArray(APP._annuaireTombstones)) APP._annuaireTombstones = {};
+      APP._annuaireTombstones[userIdToRemove] = true;
       return false;
     }
     return true;
