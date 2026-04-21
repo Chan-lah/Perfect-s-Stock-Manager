@@ -8288,7 +8288,10 @@ async function deleteUser(userId) {
         await _firebaseDB.ref('profiles').update(updates);
         console.log('[PSM] Firebase profile deleted:', userEmail);
       }
-    } catch(e) { console.warn('[PSM] Firebase profile delete error:', e); }
+    } catch(e) {
+      console.warn('[PSM] Firebase profile delete error:', e);
+      if (typeof notify === 'function') notify('⚠ Profil cloud non supprimé pour ' + userEmail + ' — réessayer (sinon le compte peut réapparaitre)', 'error');
+    }
     if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
   }
 
@@ -8637,7 +8640,15 @@ function _initAdminPage() {
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && typeof _cloudUser !== 'undefined' && _cloudUser && typeof _adminGetAllProfiles === 'function') {
     _adminGetAllProfiles().then(function(profiles) {
       if (profiles && profiles.length > 0) {
-        profiles.forEach(function(p) { if (typeof _syncProfileToLocal === 'function') _syncProfileToLocal(p); });
+        profiles.forEach(function(p) {
+          if (typeof _syncProfileToLocal !== 'function') return;
+          // Only refresh fields of locally-known users. Do NOT re-create a user
+          // that has been deleted locally (prevents zombie profiles from reappearing).
+          var email = p && p.email;
+          if (!email) return;
+          var existsLocal = (APP.users || []).some(function(u) { return u.email && u.email.toLowerCase() === email.toLowerCase(); });
+          if (existsLocal) _syncProfileToLocal(p);
+        });
       }
     }).catch(function() {});
   }
@@ -8774,7 +8785,10 @@ async function _confirmDeleteUser(uid) {
         Object.keys(snap.val()).forEach(function(k) { updates[k] = null; });
         await _firebaseDB.ref('profiles').update(updates);
       }
-    } catch(e) { console.warn('[PSM] Firebase profile delete:', e); }
+    } catch(e) {
+      console.warn('[PSM] Firebase profile delete:', e);
+      if (typeof notify === 'function') notify('⚠ Profil cloud non supprimé pour ' + userEmail + ' — réessayer (sinon le compte peut réapparaitre)', 'error');
+    }
   }
 
   // Save to cloud and wait

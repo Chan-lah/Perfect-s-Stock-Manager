@@ -260,14 +260,13 @@ async function _loadFromCloud() {
     if (cloudData) {
       // Fix Firebase arrays-as-objects (symmetric with realtime sync)
       if (typeof _fixFirebaseArrays === 'function') cloudData = _fixFirebaseArrays(cloudData);
-      // Preserve current users before cloud overwrite (roles come from Firebase profiles)
+      // Fallback users if cloud has never persisted a users array
       var _savedUsers = APP.users ? APP.users.slice() : [];
-      // Cloud is authoritative for business data
       // Save companyLogo before cloud overwrite
       var _savedLogo = APP.settings ? APP.settings.companyLogo : undefined;
       Object.assign(APP, cloudData);
-      // Restore users (not synced via cloud)
-      APP.users = _savedUsers;
+      // Cloud wins for users (propagates admin deletions). Fallback only if cloud has no users array.
+      if (!('users' in cloudData)) APP.users = _savedUsers;
       // Restore companyLogo if cloud version is empty/stripped
       if (_savedLogo && _savedLogo.indexOf('__img:') !== 0 && _savedLogo.length > 100) {
         if (!APP.settings) APP.settings = {};
@@ -329,8 +328,8 @@ function startRealtimeSync() {
 
       Object.assign(APP, cloudData);
 
-      // Restore local-only data (users come from Firebase profiles, not cloud)
-      APP.users = _savedUsers;
+      // Cloud wins for users (propagates admin deletions). Fallback only if cloud has no users array.
+      if (!('users' in cloudData)) APP.users = _savedUsers;
       if (!APP.settings) APP.settings = {};
       APP.settings.theme = _savedTheme;
       APP.settings._sidebarCollapsed = _savedSidebar;

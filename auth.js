@@ -321,7 +321,9 @@ async function _handleLogin(e) {
       if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
-      APP.users = _usersBackup;
+      // Cloud wins for users too (propagates admin deletions across devices).
+      // Fallback only if cloud has never persisted a users array.
+      if (!('users' in _cloudData)) APP.users = _usersBackup;
       _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
       try {
         var cachedImgs = localStorage.getItem('psm_images_cache');
@@ -351,7 +353,7 @@ async function _handleLogin(e) {
             if (typeof _fixFirebaseArrays === 'function') _cd = _fixFirebaseArrays(_cd);
             var _ub = APP.users ? APP.users.slice() : [];
             Object.assign(APP, _cd);
-            APP.users = _ub;
+            if (!('users' in _cd)) APP.users = _ub;
             _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
             try {
               var _ci = localStorage.getItem('psm_images_cache');
@@ -366,12 +368,11 @@ async function _handleLogin(e) {
       }
     }
 
-    // Restore local-only settings
-    APP.users = _savedUsers;
+    // Restore local-only settings (users are now cloud-authoritative — see cloud merge above)
     if (!APP.settings) APP.settings = {};
     APP.settings.theme = _savedTheme;
 
-    // 5b. Re-sync profile after cloud load (cloud may have overwritten APP.users)
+    // 5b. Re-sync profile after cloud load (ensures current user is present in APP.users)
     if (_userProfile) _syncProfileToLocal(_userProfile);
     // Deduplicate users (cloud + local may have created duplicates)
     if (typeof _deduplicateUsers === 'function') _deduplicateUsers();
