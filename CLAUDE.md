@@ -102,3 +102,71 @@ Si l'utilisateur valide une approche inhabituelle sans pushback :
 - Pas de sugarcoating. Pas de "c'est une bonne idée mais..." quand ce n'est pas une bonne idée.
 - Direct, factuel, court. Exemple acceptable : "Non. Ça casse X. Fais Y à la place."
 - Pas de condescendance. Le ton reste pro, mais l'avis est franc.
+
+## Mécanisme de feedback (triggers explicites)
+
+À chaque fois qu'un de ces triggers apparaît, capturer **immédiatement** en
+mémoire + dans `LEARNINGS.md` :
+
+| Trigger (ce que dit l'utilisateur) | Action |
+|---|---|
+| "corrige-toi", "ne refais plus ça" | feedback memory + LEARNINGS.md (type: correction) |
+| "tu as fait X mal" | feedback memory + LEARNINGS.md (type: correction) |
+| "souviens-toi que…", "rappelle-toi…" | mémoire appropriée selon type |
+| "oublie X", "ne retiens pas Y" | suppression de la mémoire concernée |
+| "yes exactement", "parfait continue comme ça" | feedback memory (type: validated-pattern) + LEARNINGS.md |
+| Validation d'une approche inhabituelle sans pushback | LEARNINGS.md (type: validated-pattern) |
+| Découverte d'un bug / faiblesse en cours de tâche | LEARNINGS.md (type: finding) |
+| Proposition écartée avec raison | LEARNINGS.md (type: discard) |
+
+**Règle** : ne jamais reporter la capture à "plus tard". Si trigger détecté pendant
+une tâche, la capture se fait AVANT de passer à l'étape suivante.
+
+## Fichier de learnings persistant
+
+Toutes les corrections, patterns validés, findings et décisions écartées sont
+consignés dans **`LEARNINGS.md`** (racine du projet). Append-only, une entrée
+par événement, dates absolues.
+
+Format de chaque entrée :
+```
+## YYYY-MM-DD — [titre court]
+- **Type**: correction | validated-pattern | finding | discard
+- **Trigger**: ce qui a déclenché cette entrée
+- **Règle**: ce qu'il faut faire (ou ne pas faire) désormais
+- **Pourquoi**: la raison (le plus important, permet de juger les cas limites)
+- **Contexte**: tâche / commit / fichier
+```
+
+À chaque **début** de session, lire les 20 dernières entrées de `LEARNINGS.md`
+pour calibrer le comportement. Si une entrée contredit le code actuel (ex : une
+règle "ne jamais toucher X" alors que X a été refactor) → vérifier le code,
+puis archiver l'entrée obsolète avec un marqueur `[OUTDATED YYYY-MM-DD]`.
+
+## Wrap-up step (fin de tâche significative)
+
+"Tâche significative" = tout ce qui modifie du code, change un design, ou
+apprend quelque chose de non-trivial. Pas nécessaire pour une simple question
+ou un grep.
+
+À la fin d'une tâche significative, produire systématiquement :
+
+1. **Résumé 1-3 lignes** : ce qui a été fait concrètement
+2. **Findings** : observations non-actées (bugs vus en passant, faiblesses,
+   idées d'amélioration). Si vide → "aucun".
+3. **Capture learnings** : si trigger feedback détecté pendant la tâche →
+   append à `LEARNINGS.md` MAINTENANT, pas après
+4. **Update memory** : si nouveau pattern/fait projet/préférence utilisateur →
+   update `MEMORY.md` et les fichiers de mémoire liés
+5. **Prochain pas suggéré** : 1 ligne, optionnel
+
+Format :
+```
+### Wrap-up
+- **Fait** : <résumé>
+- **Findings** : <liste ou "aucun">
+- **Learnings ajoutés** : <liste ou "aucun">
+- **Next** : <suggestion ou "—">
+```
+
+Ce wrap-up remplace le résumé final habituel. Il est concis — max 10 lignes.
