@@ -3227,7 +3227,7 @@ function _buildBonsHistoryRows(list) {
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
       + '<div style="display:flex;align-items:center;gap:10px">'
       + '<span style="font-family:monospace;font-weight:700;font-size:0.95rem;color:var(--accent)">' + b.numero + '</span>'
-      + statusBadge + '</div>'
+      + statusBadge + (b._retroactif ? '<span class="badge badge-orange" style="margin-left:4px">RÉTRO</span>' : '') + '</div>'
       + '<div style="display:flex;gap:6px;align-items:center">'
       + '<button class="btn btn-sm btn-secondary" onclick="previewBon(\'' + b.id + '\')" title="Aper\u00e7u"><i class="fa-solid fa-eye"></i></button>'
       + '<button class="btn btn-sm btn-secondary" onclick="printBon(\'' + b.id + '\')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
@@ -3311,7 +3311,7 @@ function renderBonRow(b) {
     <td style="font-size:13px" title="Demandeur: ${b.demandeur||'—'}">${_bonLiveName(b)||'—'}<div style="font-size:10px;color:var(--text-2)">Dem: ${b.demandeur||'—'}</div></td>
     <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${(b.lignes||[]).map(l=>`${l.qty}× ${l.name||l.articleName}`).join(', ')}</td>
     <td style="font-size:12px;color:var(--text-2)">${fmtDate(b.createdAt)}</td>
-    <td class="${_bonLocked?'':'editable'}" id="td-bstat-${b.id}" ${_bonLocked?'title="Bon validé — modification réservée à l\'admin" style="cursor:not-allowed;opacity:0.85"':''}><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span></td>
+    <td class="${_bonLocked?'':'editable'}" id="td-bstat-${b.id}" ${_bonLocked?'title="Bon validé — modification réservée à l\'admin" style="cursor:not-allowed;opacity:0.85"':''}><span class="badge ${statusColor}">${(BON_STATUSES.find(s=>s.key===(b.status||'brouillon'))?.icon||'')+' '+(b.status||'brouillon')}</span>${b._retroactif?'<span class="badge badge-orange" style="margin-left:4px" title="Rétroactif — sans impact stock">RÉTRO</span>':''}</td>
     <td><div style="display:flex;gap:4px">
       ${(b.status||'brouillon')==='brouillon'?`<button class="btn btn-sm btn-success" onclick="validateBon('${b.id}')" title="Valider et prélever le stock">✓ Valider</button><button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕</button>`:(b.status==='validé'?(_isAdmin?`<button class="btn btn-sm btn-warning" onclick="cancelBon('${b.id}')" title="Annuler ce bon">✕ Annuler</button>`:''):`<button class="btn btn-sm btn-success" onclick="reactivateBon('${b.id}')" title="Réactiver ce bon">↻ Réactiver</button>`)}
       <button class="btn btn-sm btn-secondary" onclick="previewBon('${b.id}')">👁</button>
@@ -3345,6 +3345,7 @@ function _computeAvailableForBon(articleId, excludeBonId) {
   // validé bons already deducted from art.stock, so only count brouillons here
   (APP.bons||[]).forEach(function(b){
     if (b.id === excludeBonId) return;
+    if (b._retroactif) return; // bons rétroactifs n'engagent pas le stock
     if ((b.status||'brouillon') !== 'brouillon') return;
     (b.lignes||[]).forEach(function(l){
       if (l.articleId === articleId) avail -= (parseInt(l.qty)||0);
@@ -3354,6 +3355,8 @@ function _computeAvailableForBon(articleId, excludeBonId) {
 }
 
 function _handleBonStatusStockChange(b, oldStatus, newStatus) {
+  // Bon rétroactif : aucun changement de stock quel que soit le statut
+  if (b && b._retroactif) return true;
   // brouillon → validé : deduct stock
   if(oldStatus === 'brouillon' && newStatus === 'validé') {
     for(const l of (b.lignes||[])) {
@@ -3499,6 +3502,13 @@ function openBonModal(bonId) {
   <div class="form-row">
     '<div></div>'
     <div class="form-group"><label>Statut</label><select id="bon-status"><option value="brouillon" ${!bon||bon?.status==='brouillon'?'selected':''}>Brouillon</option><option value="validé" ${bon?.status==='validé'?'selected':''}>Validé</option><option value="annulé" ${bon?.status==='annulé'?'selected':''}>Annulé</option></select></div>
+    <div class="form-group"><label>🕒 Rétroactif</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:${bon?'not-allowed':'pointer'};padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);opacity:${bon?'0.7':'1'}">
+        <input type="checkbox" id="bon-retroactif" ${bon && bon._retroactif?'checked':''} ${bon?'disabled':''}>
+        <span style="font-size:12px">Bon déjà délivré (n'impacte pas le stock)</span>
+      </label>
+      <div style="font-size:10px;color:var(--text-2);margin-top:2px">${bon?'Verrouillé après création':'Pour bons manuscrits déjà remis manuellement'}</div>
+    </div>
   </div>
   <div class="form-row">
     <div class="form-group"><label>Demandeur</label>
@@ -3644,6 +3654,8 @@ async function saveBon(existingId) {
   }
   var _rp = (typeof _lookupAnnuaireByName === 'function') ? _lookupAnnuaireByName(recip) : null;
   if (_rp) _recipiendaireAnnuaireId = _rp.id;
+  // Bon rétroactif : flag lu uniquement à la création (immutable après)
+  var _retroactif = !!((document.getElementById('bon-retroactif')||{}).checked);
 
   if(existingId) {
     const bon=APP.bons.find(b=>b.id===existingId); if(!bon) return;
@@ -3653,7 +3665,8 @@ async function saveBon(existingId) {
     var _wasDeducted = (_oldStatus === 'validé');
     var _willDeduct = (_newStatus === 'validé');
     // Restore old stock ONLY if it was previously deducted (with audit mouvement)
-    if(_wasDeducted) {
+    // Skip if rétroactif : aucun stock n'a jamais été prélevé
+    if(_wasDeducted && !bon._retroactif) {
       (bon.lignes||[]).forEach(function(l){
         var art=APP.articles.find(function(a){return a.id===l.articleId;});
         if(art && l.qty>0){
@@ -3666,7 +3679,7 @@ async function saveBon(existingId) {
     // Aggregate qty per article in this bon
     var _aggThis = {};
     lignes.forEach(function(l){ _aggThis[l.articleId]=(_aggThis[l.articleId]||0)+(parseInt(l.qty)||0); });
-    for(var _aid in _aggThis){
+    if (!bon._retroactif) for(var _aid in _aggThis){
       var _avail = _computeAvailableForBon(_aid, existingId);
       if(_aggThis[_aid] > _avail){
         var _art=APP.articles.find(function(a){return a.id===_aid;});
@@ -3684,8 +3697,8 @@ async function saveBon(existingId) {
         return;
       }
     }
-    // Deduct new ONLY if needed
-    if(_willDeduct) {
+    // Deduct new ONLY if needed (skip si rétroactif)
+    if(_willDeduct && !bon._retroactif) {
       lignes.forEach(function(l){var art=APP.articles.find(function(a){return a.id===l.articleId;});if(art){var _sb8=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Modif Bon '+bon.numero,stockBefore:_sb8,stockAfter:art.stock});}});
     }
     Object.assign(bon,{recipiendaire:recip,companyId:coId,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,_version:(bon._version||1)+1});
@@ -3702,7 +3715,7 @@ async function saveBon(existingId) {
     // Global stock constraint: even brouillons must not exceed real available stock
     var _aggThis = {};
     lignes.forEach(function(l){ _aggThis[l.articleId]=(_aggThis[l.articleId]||0)+(parseInt(l.qty)||0); });
-    for(var _aid in _aggThis){
+    if (!_retroactif) for(var _aid in _aggThis){
       var _avail = _computeAvailableForBon(_aid, null);
       if(_aggThis[_aid] > _avail){
         var _art=APP.articles.find(function(a){return a.id===_aid;});
@@ -3710,10 +3723,10 @@ async function saveBon(existingId) {
         return;
       }
     }
-    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_version:1};
+    const bon={id:generateId(),numero:await bonNumber(),companyId:coId,recipiendaire:recip,commercialId:comId||null,commercialName:com?com.prenom+' '+com.nom:'',demandeur:demandeur,_demandeurType:_demandeurType,_recipType:_recipType,_demandeurAnnuaireId:_demandeurAnnuaireId,_recipiendaireAnnuaireId:_recipiendaireAnnuaireId,objet:document.getElementById('bon-objet').value,date:document.getElementById('bon-date').value,validite:document.getElementById('bon-validite').value,lignes,status:_newStatus,sigDemandeur:'',sigMKT:'',createdAt:Date.now(),_retroactif:_retroactif,_version:1};
     if(_newStatus === 'validé') {
       bon._validatedAt = Date.now();
-      lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};var _sb9=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero,stockBefore:_sb9,stockAfter:art.stock});auditLog('STOCK_OUT','article',art.id,old,art);}});
+      if (!_retroactif) lignes.forEach(l=>{const art=APP.articles.find(a=>a.id===l.articleId);if(art){const old={...art};var _sb9=art.stock;art.stock-=l.qty;APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),articleId:art.id,articleName:art.name,qty:l.qty,commercialId:comId||null,note:'Bon '+bon.numero,stockBefore:_sb9,stockAfter:art.stock});auditLog('STOCK_OUT','article',art.id,old,art);}});
     }
     APP.bons.push(bon);auditLog('CREATE','bon',bon.id,null,bon);
     saveDB();closeModal();renderBons();updateAlertBadge();renderSidebar();
@@ -3895,6 +3908,7 @@ function generateBonHTML(bon, overrides) {
         <td style="vertical-align:top;text-align:right">
           <div style="font-size:11px;color:#111;margin-bottom:12px">Abidjan, le <strong>${bon.date||new Date(bon.createdAt||Date.now()).toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</strong></div>
           <div style="font-size:20px;font-weight:900;color:#111;text-align:center;border:2px solid #111;padding:10px 18px;display:inline-block;letter-spacing:0.01em;line-height:1.3">${bonTitle}</div>
+          ${bon._retroactif?'<div style="background:#fff3cd;border:2px dashed #ff9800;color:#b45309;padding:8px 14px;margin-top:10px;font-size:12px;font-weight:900;letter-spacing:0.08em;text-align:center;display:inline-block">⚠ BON RÉTROACTIF — SANS IMPACT SUR LE STOCK</div>':''}
           <div style="text-align:center;margin-top:8px;font-size:14px;font-weight:700;color:#111">
             Valable ${bon.validite||'1 mois'}
             <span style="font-size:22px;font-weight:900;color:${cPrimary};margin-left:8px;letter-spacing:0.05em">N° ${bon.numero}</span>
