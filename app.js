@@ -6851,17 +6851,38 @@ function printComReport() {
   const name = APP.settings.companyName || 'Mon Entreprise';
   const addr = APP.settings.companyAddress || '';
   const tel  = APP.settings.companyTel || '';
+  const _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
   const comRows = APP.commerciaux.map(c => {
-    const mvts = APP.mouvements.filter(m=>m.commercialId===c.id);
-    const totalQty = mvts.filter(m=>m.type==='sortie').reduce((s,m)=>s+m.qty,0);
-    const bons = APP.bons.filter(b=>b.commercialId===c.id);
+    const _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
+    const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
+    const _matchBon = function(b){
+      if (b.commercialId===c.id) return true;
+      if (!_fullA) return false;
+      const _d = _norm(b.demandeur);
+      const _r = _norm(b.recipiendaire);
+      return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
+    };
+    const matchedBons = APP.bons.filter(_matchBon);
+    const bonsCount = matchedBons.length;
+    // Retraits reels = lignes des bons valides + mouvements sortie manuels (sans ref Bon) de ce commercial
+    const artMap = {};
+    matchedBons.filter(b => b.status==='valid\u00e9').forEach(b => {
+      (b.lignes||[]).forEach(l => {
+        const n = l.name || l.articleName || 'Article';
+        const q = parseInt(l.qty)||0;
+        artMap[n] = (artMap[n]||0) + q;
+      });
+    });
+    APP.mouvements.filter(m => {
+      if (m.type!=='sortie') return false;
+      if (m.commercialId!==c.id) return false;
+      return !/^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i.test(m.note||'');
+    }).forEach(m => { artMap[m.articleName||'Article'] = (artMap[m.articleName||'Article']||0) + m.qty; });
+    const totalQty = Object.values(artMap).reduce((s,q)=>s+q,0);
     const zone = (APP.zones||[]).find(z=>z.id===(c.dispatchZoneId||c.zoneId));
     const pdv = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.actif!==false).length;
-    // Per-article breakdown
-    const artMap = {};
-    mvts.filter(m=>m.type==='sortie').forEach(m => { artMap[m.articleName] = (artMap[m.articleName]||0) + m.qty; });
     const artDetail = Object.entries(artMap).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([n,q])=>n+': '+q).join(', ');
-    return '<tr><td style="font-weight:600">'+c.prenom+' '+c.nom+'</td><td>'+(zone?zone.label:'\u2014')+'</td><td style="text-align:center">'+pdv+'</td><td style="text-align:center">'+bons.length+'</td><td style="text-align:center;font-weight:700;color:#cc4400">'+totalQty+'</td><td style="font-size:10px;color:#666">'+artDetail+'</td></tr>';
+    return '<tr><td style="font-weight:600">'+c.prenom+' '+c.nom+'</td><td>'+(zone?zone.label:'\u2014')+'</td><td style="text-align:center">'+pdv+'</td><td style="text-align:center">'+bonsCount+'</td><td style="text-align:center;font-weight:700;color:#cc4400">'+totalQty+'</td><td style="font-size:10px;color:#666">'+(artDetail||'\u2014')+'</td></tr>';
   }).join('');
   const win = window.open('','_blank','width=1000,height=750');
   win.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>R\u00e9capitulatif par commercial</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:24px 32px;color:#111;background:#fff;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th{background:#1a3a8b;color:white;padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:7px 10px;border-bottom:1px solid #eee;font-size:11px}tr:nth-child(even) td{background:#f9f9f9}.header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:16px}@media print{@page{margin:10mm;size:A4 landscape}}</style></head><body><div class="header"><div>'+(logo?'<img src="'+logo+'" style="max-height:80px;max-width:180px;object-fit:contain;display:block;margin-bottom:6px">':'')+'<div style="font-size:11px;color:#444">'+(addr||'')+'</div>'+(tel?'<div style="font-size:11px">T\u00e9l: '+tel+'</div>':'')+'</div><div style="text-align:right"><div style="font-size:18px;font-weight:900;border:2px solid #111;padding:8px 16px;display:inline-block">R\u00c9CAPITULATIF PAR COMMERCIAL</div><div style="font-size:11px;color:#555;margin-top:4px">Imprim\u00e9 le '+new Date().toLocaleDateString('fr-FR')+'</div></div></div><table><thead><tr><th>Commercial</th><th>Zone</th><th style="text-align:center">PDV</th><th style="text-align:center">Bons</th><th style="text-align:center">Total sorti</th><th>Top gadgets</th></tr></thead><tbody>'+comRows+'</tbody></table><div style="margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px">Document g\u00e9n\u00e9r\u00e9 automatiquement \u2014 Perfect\'s Stock Manager</div><script>window.onload=()=>{setTimeout(()=>window.print(),400)}<\/script></body></html>');
