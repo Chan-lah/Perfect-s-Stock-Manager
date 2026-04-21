@@ -806,6 +806,10 @@ function _restoreImages(appObj, refs) {
 
 let _dirHandle = null;
 
+// Sur Android, la File System Access API n'est pas disponible (ou tres limitee).
+// On desactive completement les prompts "Sauvegarde persistante" pour ne pas polluer l'UX mobile.
+const _IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
+
 function _openIDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open('psm_dir_storage', 1);
@@ -929,6 +933,7 @@ let _autoReconnectBound = false;
 async function initFileStorage() {
   // Toujours charger depuis localStorage en premier (fallback fiable)
   loadDB();
+  if(_IS_ANDROID) return; // Android : pas de sauvegarde persistante locale (cloud + localStorage uniquement)
   if(!('showDirectoryPicker' in window)) return; // Firefox : localStorage seulement
   try {
     const db = await _openIDB();
@@ -1040,6 +1045,7 @@ async function pickSaveDirectory() {
 
 
 function _showReconnectBar() {
+  if(_IS_ANDROID) return;
   if(document.getElementById('psm-reconnect-bar')) return;
   const el = document.createElement('div');
   el.id = 'psm-reconnect-bar';
@@ -1055,6 +1061,7 @@ function _showReconnectBar() {
 }
 
 function _showStorageBanner() {
+  if(_IS_ANDROID) return;
   if(document.getElementById('psm-storage-banner')) return;
   const el = document.createElement('div');
   el.id = 'psm-storage-banner';
@@ -1111,6 +1118,7 @@ function _closeSaveSetupModal() {
 function updateFileSaveIndicator(ok, errMsg) {
   var el = document.getElementById('file-save-indicator');
   if(!el) return;
+  if(_IS_ANDROID) { el.innerHTML = ''; return; }
   if(!_dirHandle) {
     el.innerHTML = '<span onclick="_showSaveSetupModal()" title="Configurer le dossier de sauvegarde" style="color:var(--warning);font-size:10px;cursor:pointer;white-space:nowrap">⚠️ Non persistant</span>';
   } else if(ok === true) {

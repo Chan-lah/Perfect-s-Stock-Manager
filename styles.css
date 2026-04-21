@@ -524,6 +524,27 @@ kbd{background:var(--bg-3);border:1px solid var(--border);border-radius:4px;padd
   .sb-item{min-height:40px}
   input[type="checkbox"],input[type="radio"]{width:18px;height:18px}
   select{min-height:36px}
+  /* Reduce 300ms tap delay + avoid accidental zoom/select on double-tap */
+  .btn,button,.sb-item,.tab-btn,.disp-tab-btn,select,input[type="checkbox"],input[type="radio"]{touch-action:manipulation;-webkit-tap-highlight-color:rgba(61,127,255,0.28)}
+  /* Prevent long-press selection on action buttons (iOS/Android) */
+  .btn,button.btn,.sb-item,.page-header .btn{-webkit-user-select:none;user-select:none}
+  /* Larger hit area for icon-only buttons */
+  button[title]:not(.btn):not(.btn-sm){min-width:32px;min-height:32px}
+}
+
+/* Defense-in-depth: when sidebar is closed on mobile, guarantee it does not capture taps */
+@media(max-width:600px){
+  #sidebar:not(.mob-open){pointer-events:none}
+  #sidebar.mob-open{pointer-events:auto}
+  /* Overlay only intercepts when actually visible */
+  #sidebar-overlay:not(.visible){pointer-events:none!important;display:none!important}
+  /* Give page-header buttons enough room when they stack */
+  .page-header > *{max-width:100%}
+  .page-header .btn{min-height:38px}
+  /* Scrollable containers need flick-scroll to reveal buttons at bottom edge */
+  .modal,.table-wrap{-webkit-overflow-scrolling:touch}
+  /* Prevent body horizontal overflow that hides right-edge buttons */
+  html,body{overflow-x:hidden;max-width:100vw}
 }
 
 /* Better table responsiveness */
