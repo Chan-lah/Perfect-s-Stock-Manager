@@ -10285,6 +10285,8 @@ function _syncUsersToAnnuaire() {
       ['prenom','nom','email','matricule','poste','departement','telephone','tag','notes'].forEach(function(f) {
         if (!keeper[f] && dup[f]) keeper[f] = dup[f];
       });
+      // Preserver includeDispatch si un des duplicats l'avait active
+      if (!keeper.includeDispatch && dup.includeDispatch) keeper.includeDispatch = true;
     });
     var dupIds = grp.slice(1).map(function(d) { return d.id; });
     APP.annuaire = APP.annuaire.filter(function(a) { return dupIds.indexOf(a.id) < 0; });
@@ -10431,7 +10433,7 @@ function _annuaireRow(p) {
   var tagColor = tagColors[p.tag] || 'var(--text-2)';
   var tagLabel = tagLabels[p.tag] || '\u2014';
   return `<tr>
-    <td style="font-weight:600">${p.prenom||''} ${p.nom||''}${p._fromUserId ? ' <span style="font-size:8px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:99px;vertical-align:middle;margin-left:4px">Auto</span>' : ''}</td>
+    <td style="font-weight:600">${p.prenom||''} ${p.nom||''}${p._fromUserId ? ' <span style="font-size:8px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:99px;vertical-align:middle;margin-left:4px">Auto</span>' : ''}${p.includeDispatch ? ' <span title="Concern\u00e9(e) par le dispatch" style="font-size:8px;background:#00c875;color:#fff;padding:1px 5px;border-radius:99px;vertical-align:middle;margin-left:4px">Dispatch</span>' : ''}</td>
     <td style="font-size:12px">${p.poste||'\u2014'}</td>
     <td style="font-size:12px;color:var(--text-2)">${p.departement||'\u2014'}</td>
     <td style="font-size:11px;color:var(--text-2)">${p.email||''}${p.email&&p.telephone?'<br>':''}${p.telephone||''}</td>
@@ -10469,6 +10471,15 @@ function openAnnuaireModal(id) {
         <option value="mixte"${(!p||!p.tag||p.tag==='mixte')?' selected':''}>Mixte (les deux)</option>
       </select></div>
     </div>
+    <div class="form-row">
+      <div class="form-group" style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+          <input type="checkbox" id="an-include-dispatch" ${p&&p.includeDispatch?'checked':''} style="width:18px;height:18px;cursor:pointer">
+          <span style="font-weight:600">Concern\u00e9(e) par le dispatch</span>
+        </label>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;padding-left:26px">Inclure cette personne dans la distribution automatique lors des dispatches (en plus des commerciaux).</div>
+      </div>
+    </div>
 `;
   openModal('modal-annuaire', id ? 'Modifier personne' : 'Nouvelle personne', body, function() { saveAnnuaire(id); }, 'modal-lg');
 }
@@ -10502,6 +10513,7 @@ async function saveAnnuaire(existingId) {
     email: document.getElementById('an-email').value.trim(),
     matricule: matricule,
     tag: tag,
+    includeDispatch: !!(document.getElementById('an-include-dispatch') && document.getElementById('an-include-dispatch').checked),
   };
   if (!APP.annuaire) APP.annuaire = [];
   if (existingId) {
