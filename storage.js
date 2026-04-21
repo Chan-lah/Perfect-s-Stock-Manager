@@ -110,7 +110,8 @@ var _cloudSaveQueue = null; // pending save promise
 var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
                       'commandesFourn','zones','secteurs','pdv','settings',
                       'dispatch','companies','audit','users',
-                      'annuaire','_annuaireTombstones','_migrations'];
+                      'annuaire','_annuaireTombstones','_migrations',
+                      'dispatchHistory','recentlyViewed'];
 // Note: 'backups' removed — backups stay local (filesystem only), not synced to Firebase
 
 // Fast djb2-style hash to detect changes per section
