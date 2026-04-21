@@ -1693,10 +1693,15 @@ function toggleCustomPeriod() {
 
 function printDashboard() {
   const {tFrom, tTo, label} = getDashPeriod();
+  const _isGhostEntree = (n) => /^(?:Annulation|Retour brouillon|Suppression)\s+Bon\s/i.test(n||'') || /^Modif\s+Bon\s.*\(restauration\)/i.test(n||'');
+  const _isBonSortie = (n) => /^(?:Modif\s+|Suppression\s+|Renvoi\s+)?Bon\s+\S+/i.test(n||'');
+  const _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
+  const _artMatch = (l,a) => l.articleId===a.id || l.code===a.code || (l.name||l.articleName)===a.name;
   const totalQte  = APP.articles.reduce((s,a) => s + (a.stock||0), 0);
   const alerts    = APP.articles.filter(a => a.stock <= a.stockMin);
-  const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-  const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+  const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+                  + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
+  const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
   const bonsP     = APP.bons.filter(b=>b.createdAt>=tFrom&&b.createdAt<=tTo).length;
   const logo      = _safeCompanyLogo();
   const addr      = APP.settings.companyAddress || '';
@@ -1709,8 +1714,9 @@ function printDashboard() {
 
   // Stock par gadget
   const stockRows = APP.articles.map(a => {
-    const sorties = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-    const entrees = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+    const sorties = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+                  + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).filter(l=>_artMatch(l,a)).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
+    const entrees = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
     const isAlert = a.stock <= a.stockMin;
     return `<tr style="${isAlert?'background:#fff5f5':''}">
       <td>${a.code}</td>
@@ -1855,10 +1861,16 @@ function refreshReportCard() {
   const tableEl = document.getElementById('rpt-table-wrap');
   if(!kpiEl || !tableEl) return;
 
+  const _isGhostEntree = (n) => /^(?:Annulation|Retour brouillon|Suppression)\s+Bon\s/i.test(n||'') || /^Modif\s+Bon\s.*\(restauration\)/i.test(n||'');
+  const _isBonSortie = (n) => /^(?:Modif\s+|Suppression\s+|Renvoi\s+)?Bon\s+\S+/i.test(n||'');
+  const _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
+  const _artMatch = (l,a) => l.articleId===a.id || l.code===a.code || (l.name||l.articleName)===a.name;
+
   const totalStock  = APP.articles.reduce((s,a) => s + (a.stock||0), 0);
   const alertCount  = APP.articles.filter(a => a.stock <= a.stockMin).length;
-  const entreesP    = APP.mouvements.filter(m => m.type==='entree' && m.ts>=tFrom && m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-  const sortiesP    = APP.mouvements.filter(m => m.type==='sortie' && m.ts>=tFrom && m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+  const entreesP    = APP.mouvements.filter(m => m.type==='entree' && m.ts>=tFrom && m.ts<=tTo && !_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
+  const sortiesP    = APP.mouvements.filter(m => m.type==='sortie' && m.ts>=tFrom && m.ts<=tTo && !_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+                    + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
   const bonsP       = APP.bons.filter(b => b.createdAt>=tFrom && b.createdAt<=tTo).length;
 
   kpiEl.innerHTML = `
@@ -1887,8 +1899,9 @@ function refreshReportCard() {
     </div>`;
 
   const rows = APP.articles.map(a => {
-    const ent = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-    const sor = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+    const ent = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
+    const sor = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+              + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).filter(l=>_artMatch(l,a)).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
     const isAlert = a.stock <= a.stockMin;
     return `<tr style="${isAlert?'background:rgba(255,71,87,.07)':''}">
       <td style="font-size:11px;color:var(--text-3)">${a.code}</td>
@@ -1916,10 +1929,15 @@ function refreshReportCard() {
 
 function printStockReport() {
   const {tFrom, tTo, label} = getReportPeriod();
+  const _isGhostEntree = (n) => /^(?:Annulation|Retour brouillon|Suppression)\s+Bon\s/i.test(n||'') || /^Modif\s+Bon\s.*\(restauration\)/i.test(n||'');
+  const _isBonSortie = (n) => /^(?:Modif\s+|Suppression\s+|Renvoi\s+)?Bon\s+\S+/i.test(n||'');
+  const _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
+  const _artMatch = (l,a) => l.articleId===a.id || l.code===a.code || (l.name||l.articleName)===a.name;
   const totalQte  = APP.articles.reduce((s,a) => s + (a.stock||0), 0);
   const alerts    = APP.articles.filter(a => a.stock <= a.stockMin);
-  const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-  const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+  const sortiesP  = APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+                  + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
+  const entreesP  = APP.mouvements.filter(m=>m.type==='entree'&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
   const bonsP     = APP.bons.filter(b=>b.createdAt>=tFrom&&b.createdAt<=tTo).length;
   const logo      = _safeCompanyLogo();
   const addr      = APP.settings.companyAddress || '';
@@ -1930,8 +1948,9 @@ function printStockReport() {
   const movsP = APP.mouvements.filter(m=>m.ts>=tFrom&&m.ts<=tTo).slice().sort((a,b)=>b.ts-a.ts);
 
   const stockRows = APP.articles.map(a => {
-    const sorties = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
-    const entrees = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo).reduce((s,m)=>s+m.qty,0);
+    const sorties = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
+                  + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).filter(l=>_artMatch(l,a)).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
+    const entrees = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
     const isAlert = a.stock <= a.stockMin;
     return `<tr style="${isAlert?'background:#fff5f5':''}">
       <td>${a.code}</td>
