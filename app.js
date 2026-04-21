@@ -10500,6 +10500,9 @@ function _syncUsersToAnnuaire() {
     // Check if already linked
     var existing = APP.annuaire.find(function(a) { return a._fromUserId === uu.id; });
     if (existing) {
+      // Respect l'edition manuelle: si _manualEdit est set, on ne touche
+      // plus prenom/nom/email/matricule depuis le profil user.
+      if (existing._manualEdit) return;
       // Update if name/email/matricule changed
       if (existing.prenom !== uPrenom || existing.nom !== uNom || existing.email !== (uu.email||'') || existing.matricule !== (uu.matricule||'')) {
         existing.prenom = uPrenom;
@@ -10712,6 +10715,9 @@ async function saveAnnuaire(existingId) {
     if (!p) return;
     var old = Object.assign({}, p);
     Object.assign(p, fields);
+    // Marque l'entree comme editee manuellement: _syncUsersToAnnuaire
+    // ne re-ecrasera plus prenom/nom/email/matricule depuis APP.users
+    if (p._fromUserId) p._manualEdit = true;
     p._version = (p._version||1) + 1;
     auditLog('EDIT', 'annuaire', p.id, old, p);
     notify('Personne mise \u00e0 jour \u2713', 'success');
