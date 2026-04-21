@@ -595,56 +595,548 @@ function _sendBrowserNotif(title, body, tag) {
 var _notifSentAlerts = new Set();
 
 // ── Storage pruning: remove old historical data ──────────────
+// ============================================================
+// ARCHIVE SYSTEM — Cold storage with rolling window
+// Hot window: APP.settings.archiveRetentionMonths (default 12)
+// Archives in Firebase: app_data/archives/{bons|mouvements|audit}/{year}
+// ============================================================
+if (typeof APP !== 'undefined' && !APP._archivesCache) {
+  APP._archivesCache = { bons: {}, mouvements: {}, audit: {} };
+}
+
+function _archRetentionMonths() {
+  var m = parseInt(APP.settings && APP.settings.archiveRetentionMonths);
+  if (!m || m < 1) m = 12;
+  return m;
+}
+function _archCutoffTs() {
+  return Date.now() - _archRetentionMonths() * 30 * 86400000;
+}
+function _archItemTs(item, type) {
+  if (!item) return 0;
+  if (type === 'bons') return item.createdAt || item.ts || item._validatedAt || 0;
+  return item.ts || 0;
+}
+function _archArrayFromSnap(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(function(x){ return x != null; });
+  if (typeof val === 'object') return Object.keys(val).map(function(k){ return val[k]; }).filter(function(x){ return x != null; });
+  return [];
+}
+function _archGroupByYear(items, type) {
+  var out = {};
+  items.forEach(function(item) {
+    var ts = _archItemTs(item, type);
+    if (!ts) return;
+    var y = new Date(ts).getFullYear();
+    (out[y] = out[y] || []).push(item);
+  });
+  return out;
+}
+
+async function archiveDryRun() {
+  var cutoff = _archCutoffTs();
+  var bonsOld  = (APP.bons        || []).filter(function(b){ return _archItemTs(b,'bons')        < cutoff; });
+  var mvtsOld  = (APP.mouvements  || []).filter(function(m){ return _archItemTs(m,'mouvements')  < cutoff; });
+  var auditOld = (APP.audit       || []).filter(function(a){ return _archItemTs(a,'audit')       < cutoff; });
+  var byYear = {};
+  function _add(type, list) {
+    var grp = _archGroupByYear(list, type);
+    Object.keys(grp).forEach(function(y){
+      byYear[y] = byYear[y] || { bons:0, mouvements:0, audit:0 };
+      byYear[y][type] = grp[y].length;
+    });
+  }
+  _add('bons', bonsOld); _add('mouvements', mvtsOld); _add('audit', auditOld);
+  return {
+    cutoff: cutoff,
+    cutoffDate: new Date(cutoff).toLocaleDateString('fr-FR'),
+    bons: bonsOld.length, mouvements: mvtsOld.length, audit: auditOld.length,
+    total: bonsOld.length + mvtsOld.length + auditOld.length,
+    byYear: byYear
+  };
+}
+
+async function archiveSweep() {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) {
+    throw new Error('Firebase indisponible — archivage impossible');
+  }
+  var cutoff = _archCutoffTs();
+  var bonsOld  = (APP.bons        || []).filter(function(b){ return _archItemTs(b,'bons')        < cutoff; });
+  var mvtsOld  = (APP.mouvements  || []).filter(function(m){ return _archItemTs(m,'mouvements')  < cutoff; });
+  var auditOld = (APP.audit       || []).filter(function(a){ return _archItemTs(a,'audit')       < cutoff; });
+
+  if (bonsOld.length + mvtsOld.length + auditOld.length === 0) {
+    APP.settings._lastArchiveRun = Date.now();
+    if (typeof saveDB === 'function') saveDB();
+    return { moved: 0, bons: 0, mouvements: 0, audit: 0, message: 'Aucun élément à archiver' };
+  }
+
+  var groups = {
+    bons:       _archGroupByYear(bonsOld,  'bons'),
+    mouvements: _archGroupByYear(mvtsOld,  'mouvements'),
+    audit:      _archGroupByYear(auditOld, 'audit')
+  };
+
+  // COPY phase: merge into archives (dedupe by id)
+  async function _mergeYear(type, year, items) {
+    var ref = _firebaseDB.ref('app_data/archives/' + type + '/' + year);
+    var snap = await ref.once('value');
+    var existing = _archArrayFromSnap(snap.val());
+    var seen = {};
+    existing.forEach(function(e){ if (e && e.id) seen[e.id] = true; });
+    var merged = existing.concat(items.filter(function(i){ return i && i.id && !seen[i.id]; }));
+    await ref.set(merged);
+    // Invalidate cache for that year
+    if (APP._archivesCache[type]) delete APP._archivesCache[type][year];
+  }
+
+  for (var type in groups) {
+    for (var y in groups[type]) {
+      await _mergeYear(type, y, groups[type][y]);
+    }
+  }
+
+  // PRUNE phase: remove from hot data only after successful copy
+  APP.bons       = (APP.bons       || []).filter(function(b){ return _archItemTs(b,'bons')       >= cutoff; });
+  APP.mouvements = (APP.mouvements || []).filter(function(m){ return _archItemTs(m,'mouvements') >= cutoff; });
+  APP.audit      = (APP.audit      || []).filter(function(a){ return _archItemTs(a,'audit')      >= cutoff; });
+
+  APP.settings._lastArchiveRun = Date.now();
+  if (typeof saveDB === 'function') saveDB();
+
+  return {
+    moved: bonsOld.length + mvtsOld.length + auditOld.length,
+    bons: bonsOld.length, mouvements: mvtsOld.length, audit: auditOld.length
+  };
+}
+
+async function maybeAutoArchive() {
+  try {
+    var last = (APP.settings && APP.settings._lastArchiveRun) || 0;
+    if (Date.now() - last < 30 * 86400000) return;
+    if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
+    var r = await archiveSweep();
+    if (r.moved > 0) console.log('[PSM] Archive auto: ' + r.moved + ' éléments déplacés');
+  } catch(e) { console.warn('[PSM] Archive auto échec:', e); }
+}
+
+async function loadArchiveYears(type) {
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return [];
+  try {
+    var snap = await _firebaseDB.ref('app_data/archives/' + type).once('value');
+    var val = snap.val() || {};
+    return Object.keys(val).sort(function(a,b){ return parseInt(b) - parseInt(a); });
+  } catch(e) { return []; }
+}
+
+async function loadArchiveYear(type, year) {
+  if (!year) return [];
+  if (APP._archivesCache[type] && APP._archivesCache[type][year]) return APP._archivesCache[type][year];
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return [];
+  try {
+    var snap = await _firebaseDB.ref('app_data/archives/' + type + '/' + year).once('value');
+    var items = _archArrayFromSnap(snap.val());
+    APP._archivesCache[type] = APP._archivesCache[type] || {};
+    APP._archivesCache[type][year] = items;
+    return items;
+  } catch(e) { return []; }
+}
+
+async function deleteArchiveEntry(type, year, id) {
+  var _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  if (!_cu || _cu.role !== 'admin') {
+    if (typeof notify === 'function') notify('Action réservée aux administrateurs', 'error');
+    return false;
+  }
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return false;
+  var ref = _firebaseDB.ref('app_data/archives/' + type + '/' + year);
+  var snap = await ref.once('value');
+  var items = _archArrayFromSnap(snap.val()).filter(function(i){ return i.id !== id; });
+  await ref.set(items);
+  if (APP._archivesCache[type] && APP._archivesCache[type][year]) {
+    APP._archivesCache[type][year] = APP._archivesCache[type][year].filter(function(i){ return i.id !== id; });
+  }
+  if (typeof auditLog === 'function') auditLog('DELETE', 'archive_' + type, id, { year: year }, null);
+  return true;
+}
+
+function confirmDeleteArchiveEntry(type, year, id, label) {
+  var _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  if (!_cu || _cu.role !== 'admin') {
+    if (typeof notify === 'function') notify('Action réservée aux administrateurs', 'error');
+    return;
+  }
+  var msg = '⚠️ SUPPRESSION PERMANENTE\n\n'
+    + 'Vous êtes sur le point de supprimer définitivement cet élément archivé :\n\n'
+    + '• Type : ' + type + '\n'
+    + '• Année : ' + year + '\n'
+    + '• ' + (label || id) + '\n\n'
+    + 'Cette action est irréversible. L\'élément ne sera plus consultable.\n\n'
+    + 'Continuer ?';
+  if (!confirm(msg)) return;
+  deleteArchiveEntry(type, year, id).then(function(ok){
+    if (ok) {
+      if (typeof notify === 'function') notify('Élément archivé supprimé', 'success');
+      var sel = document.getElementById('arch-year-select');
+      if (sel) openArchivesModal(type, year);
+    }
+  });
+}
+
+// ============================================================
+// ARCHIVES UI — Modal for Bons / Mouvements / Audit
+// ============================================================
+async function openArchivesModal(type, preselectYear) {
+  var titles = { bons: 'Archives — Bons', mouvements: 'Archives — Mouvements de stock', audit: 'Archives — Audit Trail' };
+  var title = titles[type] || 'Archives';
+  openModal('modal-archives-' + type, '📦 ' + title,
+    '<div style="text-align:center;padding:40px;color:#888">⏳ Chargement des années disponibles…</div>',
+    null, 'modal-xl');
+  var years = await loadArchiveYears(type);
+  var bodyEl = document.querySelector('#active-modal .modal-body');
+  if (!bodyEl) return;
+  if (years.length === 0) {
+    bodyEl.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center"><p style="font-size:14px;color:var(--text-2)">Aucune archive disponible pour le moment.</p><p style="font-size:12px;color:var(--text-3);margin-top:8px">Les éléments de plus de ' + _archRetentionMonths() + ' mois sont déplacés ici automatiquement.</p></div>';
+    return;
+  }
+  var selected = preselectYear && years.indexOf(String(preselectYear)) >= 0 ? String(preselectYear) : years[0];
+  var yearOpts = years.map(function(y){ return '<option value="'+y+'"'+(y===selected?' selected':'')+'>'+y+'</option>'; }).join('');
+  var selectorHtml = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:var(--bg-2);border-radius:8px;margin-bottom:12px">'
+    + '<label style="font-size:12px;font-weight:600;color:var(--text-1)">Année :</label>'
+    + '<select id="arch-year-select" onchange="_loadArchiveBody(\''+type+'\', this.value)" style="width:auto;font-weight:600">' + yearOpts + '</select>'
+    + '<span style="flex:1"></span>'
+    + '<span style="font-size:11px;color:var(--text-3);font-style:italic">Lecture seule · Rétention chaude : ' + _archRetentionMonths() + ' mois</span>'
+    + '</div>';
+  bodyEl.innerHTML = selectorHtml + '<div id="arch-body-wrap"><div style="text-align:center;padding:30px;color:#888">⏳</div></div>';
+  _loadArchiveBody(type, selected);
+}
+
+async function _loadArchiveBody(type, year) {
+  var wrap = document.getElementById('arch-body-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="text-align:center;padding:30px;color:#888">⏳ Chargement de ' + year + '…</div>';
+  var items = await loadArchiveYear(type, year);
+  if (type === 'bons')          wrap.innerHTML = _renderArchivesBonsBody(year, items);
+  else if (type === 'mouvements') wrap.innerHTML = _renderArchivesMvtsBody(year, items);
+  else                            wrap.innerHTML = _renderArchivesAuditBody(year, items);
+}
+
+function _renderArchivesBonsBody(year, items) {
+  if (!items || items.length === 0) return '<div class="empty-state" style="padding:30px;text-align:center"><p>Aucun bon archivé pour ' + year + '</p></div>';
+  var statuses = [''].concat(Array.from(new Set(items.map(function(b){ return b.status || ''; }))).sort());
+  var statusOpts = statuses.map(function(s){ return '<option value="'+s+'">'+(s||'Tous statuts')+'</option>'; }).join('');
+  var filterHtml = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    + '<select id="arch-bons-status" onchange="_filterArchBons(\''+year+'\')" style="width:auto"><option value="">Tous statuts</option>'
+    + statuses.filter(function(s){return s;}).map(function(s){ return '<option value="'+s+'">'+s+'</option>'; }).join('')
+    + '</select>'
+    + '<input type="text" id="arch-bons-search" placeholder="Numéro, demandeur, objet…" oninput="_filterArchBons(\''+year+'\')" style="flex:1;min-width:180px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1)">'
+    + '<span id="arch-bons-count" style="font-size:11px;color:var(--text-2);white-space:nowrap">' + items.length + ' bon(s)</span>'
+    + '</div>';
+  return filterHtml + '<div id="arch-bons-list" style="max-height:60vh;overflow:auto">' + _buildArchBonsRows(year, items) + '</div>';
+}
+
+function _buildArchBonsRows(year, list) {
+  if (!list || list.length === 0) return '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-2)">Aucun résultat</div>';
+  var _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  var _isAdmin = !!(_cu && _cu.role === 'admin');
+  var html = '';
+  list.slice().sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); }).forEach(function(b) {
+    var st = b.status || '—';
+    var badgeCls = st==='validé' ? 'badge-green' : (st==='annulé' ? 'badge-red' : (st==='brouillon' ? 'badge-gray' : 'badge-orange'));
+    var gadgets = (b.lignes || []).map(function(l){ return l.qty + '× ' + (l.name || l.articleName || ''); }).join(', ');
+    html += '<div class="card" style="margin-bottom:6px;padding:10px 14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;flex-wrap:wrap">'
+      + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<span style="font-family:monospace;font-weight:700;color:var(--accent)">' + (b.numero || '?') + '</span>'
+      + '<span class="badge ' + badgeCls + '">' + st + '</span>'
+      + '<span style="font-size:11px;color:var(--text-3)">' + (b.date || (b.createdAt ? new Date(b.createdAt).toLocaleDateString('fr-FR') : '—')) + '</span>'
+      + '</div>'
+      + '<div style="display:flex;gap:4px">'
+      + '<button class="btn btn-sm btn-secondary" onclick="previewArchivedBon(\''+year+'\',\''+b.id+'\')" title="Aperçu"><i class="fa-solid fa-eye"></i></button>'
+      + '<button class="btn btn-sm btn-secondary" onclick="printArchivedBon(\''+year+'\',\''+b.id+'\')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
+      + '<button class="btn btn-sm btn-secondary" onclick="exportArchivedBonPDF(\''+year+'\',\''+b.id+'\')" title="PDF"><i class="fa-solid fa-file-pdf"></i></button>'
+      + (_isAdmin ? '<button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'bons\',\''+year+'\',\''+b.id+'\',\'Bon '+(b.numero||'?')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button>' : '')
+      + '</div>'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;font-size:11px;color:var(--text-2)">'
+      + '<div><b>Demandeur:</b> ' + (b.demandeur || '—') + '</div>'
+      + '<div><b>Destinataire:</b> ' + (b.recipiendaire || '—') + '</div>'
+      + '<div style="grid-column:1/-1"><b>Objet:</b> ' + (b.objet || '—') + '</div>'
+      + '</div>'
+      + (gadgets ? '<div style="margin-top:4px;font-size:11px"><b>Gadgets:</b> ' + gadgets + '</div>' : '')
+      + '</div>';
+  });
+  return html;
+}
+
+function _filterArchBons(year) {
+  var items = (APP._archivesCache.bons && APP._archivesCache.bons[year]) || [];
+  var st = (document.getElementById('arch-bons-status')||{}).value || '';
+  var q = ((document.getElementById('arch-bons-search')||{}).value || '').toLowerCase();
+  var filtered = items.filter(function(b) {
+    if (st && b.status !== st) return false;
+    if (q) {
+      var hay = [b.numero, b.demandeur, b.recipiendaire, b.objet].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  var list = document.getElementById('arch-bons-list');
+  var cnt  = document.getElementById('arch-bons-count');
+  if (list) list.innerHTML = _buildArchBonsRows(year, filtered);
+  if (cnt) cnt.textContent = filtered.length + ' bon(s)';
+}
+
+function _renderArchivesMvtsBody(year, items) {
+  if (!items || items.length === 0) return '<div class="empty-state" style="padding:30px;text-align:center"><p>Aucun mouvement archivé pour ' + year + '</p></div>';
+  var filterHtml = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    + '<select id="arch-mvt-type" onchange="_filterArchMvt(\''+year+'\')" style="width:auto">'
+    + '<option value="all">Tous types</option><option value="entree">↑ Entrées</option><option value="sortie">↓ Sorties</option>'
+    + '</select>'
+    + '<input type="text" id="arch-mvt-search" placeholder="Article, code, observation…" oninput="_filterArchMvt(\''+year+'\')" style="flex:1;min-width:180px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1)">'
+    + '<span id="arch-mvt-count" style="font-size:11px;color:var(--text-2);white-space:nowrap">' + items.length + ' mvt(s)</span>'
+    + '</div>';
+  return filterHtml + '<div id="arch-mvt-list" style="max-height:60vh;overflow:auto">' + _buildArchMvtsRows(year, items) + '</div>';
+}
+
+function _buildArchMvtsRows(year, list) {
+  if (!list || list.length === 0) return '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-2)">Aucun résultat</div>';
+  var _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  var _isAdmin = !!(_cu && _cu.role === 'admin');
+  var rows = list.slice().sort(function(a,b){ return (b.ts||0)-(a.ts||0); }).map(function(m) {
+    var isE = m.type === 'entree';
+    return '<tr>'
+      + '<td style="font-size:11px;font-family:monospace;white-space:nowrap">' + (typeof fmtDateTime==='function' ? fmtDateTime(m.ts) : new Date(m.ts).toLocaleString('fr-FR')) + '</td>'
+      + '<td><span class="badge ' + (isE?'badge-green':'badge-orange') + '">' + (isE?'↑ Entrée':'↓ Sortie') + '</span></td>'
+      + '<td style="font-weight:600">' + (m.articleName||'—') + '</td>'
+      + '<td style="white-space:nowrap;font-size:13px;font-weight:700;color:' + (isE?'var(--success)':'var(--accent3)') + '">' + (isE?'+':'-') + m.qty + '</td>'
+      + '<td style="font-size:11px;color:var(--text-2);max-width:240px">' + (m.obs||m.note||'—') + '</td>'
+      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'mouvements\',\''+year+'\',\''+m.id+'\',\'Mvt '+(m.articleName||'?')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
+      + '</tr>';
+  }).join('');
+  return '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Type</th><th>Article</th><th>Quantité</th><th>Observation</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function _filterArchMvt(year) {
+  var items = (APP._archivesCache.mouvements && APP._archivesCache.mouvements[year]) || [];
+  var t = (document.getElementById('arch-mvt-type')||{}).value || 'all';
+  var q = ((document.getElementById('arch-mvt-search')||{}).value || '').toLowerCase();
+  var filtered = items.filter(function(m) {
+    if (t !== 'all' && m.type !== t) return false;
+    if (q) {
+      var hay = [m.articleName, m.obs, m.note].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  var list = document.getElementById('arch-mvt-list');
+  var cnt  = document.getElementById('arch-mvt-count');
+  if (list) list.innerHTML = _buildArchMvtsRows(year, filtered);
+  if (cnt) cnt.textContent = filtered.length + ' mvt(s)';
+}
+
+function _renderArchivesAuditBody(year, items) {
+  if (!items || items.length === 0) return '<div class="empty-state" style="padding:30px;text-align:center"><p>Aucun événement archivé pour ' + year + '</p></div>';
+  var types = Array.from(new Set(items.map(function(a){ return a.type||''; }))).sort();
+  var entities = Array.from(new Set(items.map(function(a){ return a.entity||''; }))).sort();
+  var filterHtml = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    + '<select id="arch-aud-type" onchange="_filterArchAudit(\''+year+'\')" style="width:auto"><option value="all">Tous types</option>'
+    + types.map(function(t){ return '<option value="'+t+'">'+(typeof _auditTypeLabel==='function'?_auditTypeLabel(t):t)+'</option>'; }).join('')
+    + '</select>'
+    + '<select id="arch-aud-ent" onchange="_filterArchAudit(\''+year+'\')" style="width:auto"><option value="all">Toutes entités</option>'
+    + entities.map(function(e){ return '<option value="'+e+'">'+e+'</option>'; }).join('')
+    + '</select>'
+    + '<input type="text" id="arch-aud-search" placeholder="Rechercher…" oninput="_filterArchAudit(\''+year+'\')" style="flex:1;min-width:160px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1)">'
+    + '<span id="arch-aud-count" style="font-size:11px;color:var(--text-2);white-space:nowrap">' + items.length + ' event(s)</span>'
+    + '</div>';
+  return filterHtml + '<div id="arch-aud-list" style="max-height:60vh;overflow:auto">' + _buildArchAuditRows(year, items) + '</div>';
+}
+
+function _buildArchAuditRows(year, list) {
+  if (!list || list.length === 0) return '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-2)">Aucun résultat</div>';
+  var _cu = typeof _currentUser==='function' ? _currentUser() : null;
+  var _isAdmin = !!(_cu && _cu.role === 'admin');
+  var rows = list.slice().sort(function(a,b){ return (b.ts||0)-(a.ts||0); }).map(function(a) {
+    return '<tr>'
+      + '<td style="font-size:11px;font-family:monospace;white-space:nowrap">' + (typeof fmtDateTime==='function' ? fmtDateTime(a.ts) : new Date(a.ts).toLocaleString('fr-FR')) + '</td>'
+      + '<td>' + (typeof _auditTypeLabel==='function' ? _auditTypeLabel(a.type) : (a.type||'—')) + '</td>'
+      + '<td style="font-weight:600">' + (a.entity||'—') + '</td>'
+      + '<td style="font-size:11px;color:var(--text-2)">' + (a.entityId||'—') + '</td>'
+      + '<td style="font-size:11px;color:var(--text-2)">' + (a.userName||a.userLogin||'—') + '</td>'
+      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'audit\',\''+year+'\',\''+a.id+'\',\''+(a.type||'?')+' '+(a.entity||'')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
+      + '</tr>';
+  }).join('');
+  return '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Type</th><th>Entité</th><th>ID</th><th>Utilisateur</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function _filterArchAudit(year) {
+  var items = (APP._archivesCache.audit && APP._archivesCache.audit[year]) || [];
+  var t = (document.getElementById('arch-aud-type')||{}).value || 'all';
+  var e = (document.getElementById('arch-aud-ent')||{}).value || 'all';
+  var q = ((document.getElementById('arch-aud-search')||{}).value || '').toLowerCase();
+  var filtered = items.filter(function(a) {
+    if (t !== 'all' && a.type !== t) return false;
+    if (e !== 'all' && a.entity !== e) return false;
+    if (q) {
+      var hay = [a.type, a.entity, a.entityId, a.userName, a.userLogin].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  var list = document.getElementById('arch-aud-list');
+  var cnt  = document.getElementById('arch-aud-count');
+  if (list) list.innerHTML = _buildArchAuditRows(year, filtered);
+  if (cnt) cnt.textContent = filtered.length + ' event(s)';
+}
+
+// ============================================================
+// Preview / Print / PDF for ARCHIVED bons
+// ============================================================
+async function previewArchivedBon(year, bonId) {
+  var items = await loadArchiveYear('bons', year);
+  var bon = items.find(function(b){ return b.id === bonId; });
+  if (!bon) { if (typeof notify==='function') notify('Bon archivé introuvable','error'); return; }
+  openModal('modal-arch-bon-preview', 'Aperçu — ' + (bon.numero||'?') + ' (archive ' + year + ')',
+    '<div style="text-align:center;padding:40px;color:#888">⏳ Chargement…</div>', null, 'modal-xl');
+  if (typeof _loadSignaturesCache === 'function') { try { await _loadSignaturesCache(); } catch(e) {} }
+  var bodyEl = document.querySelector('#active-modal .modal-body');
+  if (!bodyEl) return;
+  var sizes = ['A4','A5','Letter','Legal'];
+  var opts = sizes.map(function(s){ return '<option value="'+s+'">'+s+'</option>'; }).join('');
+  bodyEl.innerHTML = '<div style="max-height:70vh;overflow:auto">'
+    + '<div style="display:flex;gap:8px;align-items:center;padding:10px 14px;background:var(--bg-2);border-radius:8px;margin-bottom:10px;flex-wrap:wrap">'
+    + '<label style="font-size:12px;font-weight:600">Format :</label>'
+    + '<select id="arch-preview-paper" onchange="_refreshArchPreview(\''+year+'\',\''+bonId+'\')" style="width:auto">' + opts + '</select>'
+    + '<div style="flex:1"></div>'
+    + '<button class="btn btn-sm btn-secondary" onclick="printArchivedBon(\''+year+'\',\''+bonId+'\',document.getElementById(\'arch-preview-paper\').value)">Imprimer</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="exportArchivedBonPDF(\''+year+'\',\''+bonId+'\',document.getElementById(\'arch-preview-paper\').value)">PDF</button>'
+    + '</div>'
+    + '<div id="arch-preview-content">' + generateBonHTML(bon, { paperSize: 'A4', minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined }) + '</div>'
+    + '</div>';
+}
+
+function _refreshArchPreview(year, bonId) {
+  var items = (APP._archivesCache.bons && APP._archivesCache.bons[year]) || [];
+  var bon = items.find(function(b){ return b.id === bonId; });
+  if (!bon) return;
+  var paper = (document.getElementById('arch-preview-paper')||{}).value || 'A4';
+  var el = document.getElementById('arch-preview-content');
+  if (el) el.innerHTML = generateBonHTML(bon, { paperSize: paper, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined });
+}
+
+async function printArchivedBon(year, bonId, paperSize) {
+  paperSize = (paperSize || 'A4').toUpperCase();
+  var items = await loadArchiveYear('bons', year);
+  var bon = items.find(function(b){ return b.id === bonId; });
+  if (!bon) { if (typeof notify==='function') notify('Bon archivé introuvable','error'); return; }
+  var win = window.open('', '_blank', 'width=900,height=750');
+  if (!win) { if (typeof notify==='function') notify('Popup bloquée','warning'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="padding:40px;text-align:center;font-family:Arial,sans-serif;color:#666"><div>⏳ Chargement…</div></body></html>');
+  if (typeof _loadSignaturesCache === 'function') { try { await _loadSignaturesCache(); } catch(e) {} }
+  if (win.closed) return;
+  win.document.open();
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon ' + (bon.numero||'?') + ' (archive)</title>'
+    + '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f0f0;padding:20px;font-family:Arial,sans-serif}'
+    + '@media print{body{background:white;padding:0}@page{margin:10mm;size:' + paperSize.toLowerCase() + '}}</style></head><body>'
+    + generateBonHTML(bon, { paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined })
+    + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<' + '/script></body></html>');
+  win.document.close();
+  if (typeof auditLog === 'function') auditLog('PRINT','archive_bon',bon.id,null,{numero:bon.numero,year:year});
+}
+
+async function exportArchivedBonPDF(year, bonId, paperSize) {
+  paperSize = (paperSize || 'A4').toUpperCase();
+  var items = await loadArchiveYear('bons', year);
+  var bon = items.find(function(b){ return b.id === bonId; });
+  if (!bon) { if (typeof notify==='function') notify('Bon archivé introuvable','error'); return; }
+  if (typeof auditLog === 'function') auditLog('DOWNLOAD','archive_bon',bon.numero,null,{format:'PDF',year:year});
+  var win = window.open('', '_blank');
+  if (!win) { if (typeof notify==='function') notify('Popup bloquée','warning'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="padding:40px;text-align:center;font-family:Arial,sans-serif;color:#666"><div>⏳ Chargement…</div></body></html>');
+  if (typeof _loadSignaturesCache === 'function') { try { await _loadSignaturesCache(); } catch(e) {} }
+  if (win.closed) return;
+  win.document.open();
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PDF — ' + (bon.numero||'?') + ' (archive)</title>'
+    + '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;padding:20px;font-family:Arial,sans-serif}'
+    + '@media print{body{padding:0}@page{margin:10mm;size:' + paperSize.toLowerCase() + '}}'
+    + '.no-print{margin:16px auto;text-align:center}@media print{.no-print{display:none}}</style></head><body>'
+    + '<div class="no-print"><p style="margin-bottom:8px;color:#666;font-size:14px">💡 Sélectionnez <strong>"Enregistrer au format PDF"</strong> comme imprimante</p>'
+    + '<button onclick="window.print()" style="padding:10px 24px;background:#f5a623;color:#000;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">📥 Télécharger en PDF</button></div>'
+    + generateBonHTML(bon, { paperSize: paperSize, minRows: (APP.settings && APP.settings.bonMinRows!=null) ? APP.settings.bonMinRows : undefined })
+    + '</body></html>');
+  win.document.close();
+}
+
+// ============================================================
+// Settings actions for archive panel
+// ============================================================
+async function runArchiveDryRun() {
+  var btn = document.getElementById('btn-arch-dryrun');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyse…'; }
+  try {
+    var r = await archiveDryRun();
+    var html = '<div style="margin-top:10px;padding:10px 14px;background:var(--bg-2);border-radius:8px;font-size:12px;line-height:1.6">'
+      + '<div style="font-weight:700;margin-bottom:6px">🔍 Résultat du dry-run (aucune modification)</div>'
+      + '<div>Seuil : éléments antérieurs au <b>' + r.cutoffDate + '</b></div>'
+      + '<div style="margin-top:6px"><b>Total :</b> ' + r.total + ' élément(s) — '
+      + r.bons + ' bons · ' + r.mouvements + ' mouvements · ' + r.audit + ' audits</div>';
+    var yrs = Object.keys(r.byYear).sort();
+    if (yrs.length) {
+      html += '<div style="margin-top:6px"><b>Par année :</b></div><ul style="margin:4px 0 0 18px">';
+      yrs.forEach(function(y){
+        var b = r.byYear[y];
+        html += '<li>' + y + ' : ' + (b.bons||0) + ' bons · ' + (b.mouvements||0) + ' mvts · ' + (b.audit||0) + ' audits</li>';
+      });
+      html += '</ul>';
+    }
+    html += '</div>';
+    var out = document.getElementById('arch-dryrun-output');
+    if (out) out.innerHTML = html;
+  } catch(e) {
+    if (typeof notify==='function') notify('Dry-run échoué : ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 Simuler (dry-run)'; }
+  }
+}
+
+async function runArchiveSweep() {
+  var msg = '⚠️ ARCHIVAGE IMMÉDIAT\n\n'
+    + 'Les éléments de plus de ' + _archRetentionMonths() + ' mois seront déplacés vers les archives.\n\n'
+    + 'Les archives restent consultables via le bouton "📦 Archives" dans chaque module.\n\n'
+    + 'Continuer ?';
+  if (!confirm(msg)) return;
+  var btn = document.getElementById('btn-arch-sweep');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Archivage…'; }
+  try {
+    var r = await archiveSweep();
+    if (typeof notify==='function') {
+      if (r.moved === 0) notify(r.message || 'Rien à archiver', 'info');
+      else notify('✅ ' + r.moved + ' éléments archivés (' + r.bons + ' bons · ' + r.mouvements + ' mvts · ' + r.audit + ' audits)', 'success');
+    }
+    if (typeof renderSettings === 'function') renderSettings();
+  } catch(e) {
+    if (typeof notify==='function') notify('Archivage échoué : ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📦 Archiver maintenant'; }
+  }
+}
+
+function saveArchiveRetention() {
+  var v = parseInt((document.getElementById('set-arch-retention')||{}).value);
+  if (!v || v < 1 || v > 120) {
+    if (typeof notify==='function') notify('Durée invalide (1 à 120 mois)','error');
+    return;
+  }
+  APP.settings.archiveRetentionMonths = v;
+  if (typeof saveDB === 'function') saveDB();
+  if (typeof notify==='function') notify('Rétention mise à jour : ' + v + ' mois','success');
+}
+
 function _pruneHistoricalData() {
-  if (typeof APP === 'undefined') return;
-  var now = Date.now();
-  var pruned = false;
-
-  // Mouvements: keep last 24 months
-  if (APP.mouvements && APP.mouvements.length > 500) {
-    var cutoff24m = now - (730 * 86400000);
-    var before = APP.mouvements.length;
-    APP.mouvements = APP.mouvements.filter(function(m) { return m.ts >= cutoff24m; });
-    if (APP.mouvements.length < before) {
-      console.log('[PSM] Pruned ' + (before - APP.mouvements.length) + ' old mouvements (>24mo)');
-      pruned = true;
-    }
-  }
-
-  // Bons: keep last 36 months
-  if (APP.bons && APP.bons.length > 200) {
-    var cutoff36m = now - (1095 * 86400000);
-    var before = APP.bons.length;
-    APP.bons = APP.bons.filter(function(b) { return (b.createdAt || b.ts || now) >= cutoff36m; });
-    if (APP.bons.length < before) {
-      console.log('[PSM] Pruned ' + (before - APP.bons.length) + ' old bons (>36mo)');
-      pruned = true;
-    }
-  }
-
-  // Dispatch history: keep last 5 years (annual archive kept viewable)
-  if (APP.dispatch && APP.dispatch.history && APP.dispatch.history.length > 300) {
-    var cutoff5y = now - (5 * 365 * 86400000);
-    var before = APP.dispatch.history.length;
-    APP.dispatch.history = APP.dispatch.history.filter(function(h) { return h.ts >= cutoff5y; });
-    if (APP.dispatch.history.length < before) {
-      console.log('[PSM] Pruned ' + (before - APP.dispatch.history.length) + ' old dispatch records (>5y)');
-      pruned = true;
-    }
-  }
-
-  // Audit: keep last 6 months (in addition to the 500 cap)
-  if (APP.audit && APP.audit.length > 100) {
-    var cutoff6m = now - (180 * 86400000);
-    var before = APP.audit.length;
-    APP.audit = APP.audit.filter(function(a) { return a.ts >= cutoff6m; });
-    if (APP.audit.length < before) {
-      console.log('[PSM] Pruned ' + (before - APP.audit.length) + ' old audit entries (>6mo)');
-      pruned = true;
-    }
-  }
-
-  if (pruned) saveDB();
+  // Replaced by archive system (archives/{type}/{year} in Firebase).
+  // Fire-and-forget auto-archive if last run > 30 days ago.
+  if (typeof maybeAutoArchive === 'function') maybeAutoArchive();
 }
 
 // Cursor-tracking shine on liquid-glass cards (event delegation, 1 listener)
@@ -2673,6 +3165,7 @@ function renderBonsHistory() {
 
   var filterHtml = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">'
     + '<button class="btn btn-sm" onclick="renderBons()" style="font-weight:600"><i class="fa-solid fa-arrow-left" style="margin-right:4px"></i>Retour</button>'
+    + '<button class="btn btn-sm btn-secondary" onclick="openArchivesModal(\'bons\')" title="Consulter les bons archiv\u00e9s"><i class="fa-solid fa-box-archive" style="margin-right:4px"></i>Archives</button>'
     + '<span style="font-size:0.85rem;color:var(--text-2);margin-left:8px">' + validatedBons.length + ' bon(s) valid\u00e9s/annul\u00e9s</span>'
     + '<label style="font-size:0.82rem;color:var(--text-2);margin-left:auto">Du <input type="date" id="bh-from" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
     + '<label style="font-size:0.82rem;color:var(--text-2)">Au <input type="date" id="bh-to" style="padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-1);margin-left:4px"></label>'
@@ -3482,7 +3975,7 @@ function renderMouvements() {
         <span style="color:var(--text-2)">${APP.mouvements.length} mouvements au total</span>
       </div>
     </div>
-    <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" id="btn-mvt-summary" onclick="toggleMvtSummary()">📊 Résumé Audit</button><button class="btn btn-secondary btn-sm" onclick="exportMvtCSV()">📥 Export CSV</button></div>
+    <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="openArchivesModal('mouvements')" title="Consulter les mouvements archivés">📦 Archives</button><button class="btn btn-secondary btn-sm" id="btn-mvt-summary" onclick="toggleMvtSummary()">📊 Résumé Audit</button><button class="btn btn-secondary btn-sm" onclick="exportMvtCSV()">📥 Export CSV</button></div>
   </div>
   <div id="mvt-summary-wrap" style="display:none"></div>
   <div class="filters">
@@ -6017,6 +6510,7 @@ function renderAudit() {
       <div class="page-sub">${APP.audit.length} événements enregistrés</div>
     </div>
     <div class="flex-center gap-8">
+      <button class="btn btn-secondary btn-sm" onclick="openArchivesModal('audit')" title="Consulter les événements archivés">📦 Archives</button>
       <button class="btn btn-secondary btn-sm" onclick="printAuditTrail()">🖨 Imprimer</button>
       <button class="btn btn-primary btn-sm" onclick="downloadAuditPDF()">📄 Télécharger PDF</button>
     </div>
@@ -6726,6 +7220,27 @@ ${_isAdmin ? `    <div class="card" style="margin-top:12px">
 ${_isAdmin ? `    <div style="margin-top:10px;padding:8px 12px;background:var(--bg-2);border-radius:8px;display:flex;align-items:center;gap:8px">
       <span style="font-size:18px">🛡️</span>
       <span id="backup-indicator" style="font-size:12px;color:var(--text-2)">Aucun backup</span>
+    </div>` : ''}
+${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba(245,166,35,0.3)">
+      <div class="card-header"><span class="card-title">📦 Archivage des historiques</span></div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.5">
+        Les bons, mouvements et événements d'audit de plus de <b>${_archRetentionMonths()} mois</b> sont déplacés vers des archives permanentes (consultables depuis chaque module via le bouton 📦 Archives).
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Rétention chaude (mois)</label>
+          <input type="number" id="set-arch-retention" min="1" max="120" value="${_archRetentionMonths()}" style="width:100px">
+        </div>
+        <div class="form-group" style="align-self:end">
+          <button class="btn btn-secondary btn-sm" onclick="saveArchiveRetention()">💾 Enregistrer</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <button class="btn btn-secondary btn-sm" id="btn-arch-dryrun" onclick="runArchiveDryRun()">🔍 Simuler (dry-run)</button>
+        <button class="btn btn-primary btn-sm" id="btn-arch-sweep" onclick="runArchiveSweep()">📦 Archiver maintenant</button>
+      </div>
+      <div id="arch-dryrun-output"></div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-3)">Dernier archivage : ${(APP.settings && APP.settings._lastArchiveRun) ? new Date(APP.settings._lastArchiveRun).toLocaleString('fr-FR') : 'jamais'}</div>
     </div>` : ''}
   </div>
   <div class="card" style="margin-top:16px;background:linear-gradient(135deg,rgba(61,127,255,0.06),rgba(0,229,170,0.04));border-color:rgba(61,127,255,0.2)">
