@@ -403,7 +403,9 @@ let APP = {
   backups: [],
   // ── DISPATCH ─────────────────────────────────────────────────
   dispatch: { besoins:{}, entities:[], weights:{pdv:50,zone:20,history:30}, zonePriority:{}, rules:{respectMin:true,respectMax:true}, history:[] },
-  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 180, companyAddress: 'Zone Portuaire, Quai no. 1. Treichville', companyTel: '+225 27 21 75 11 00', companyFax: '', companyEmail: 'marketing@gma.ci', categories: [] }
+  settings: { companyName: 'GMA - Les Grands Moulins d\'Abidjan', theme: 'dark', currency: 'XOF', companyLogo: GMA_DEFAULT_LOGO, backupInterval: 180, companyAddress: 'Zone Portuaire, Quai no. 1. Treichville', companyTel: '+225 27 21 75 11 00', companyFax: '', companyEmail: 'marketing@gma.ci', categories: [] },
+  // Flags one-shot des migrations (grouper ici pour sync via _SYNC_SECTIONS)
+  _migrations: {}
 };
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).substr(2,6); }
@@ -1168,36 +1170,47 @@ async function initApp() {
       }
     } catch(e) { console.warn('[PSM] localStorage load:', e); }
 
+    // === Flags migration: regrouper les anciens flags top-level dans APP._migrations ===
+    // One-shot pour users existants qui ont deja APP._resetDone_* etc. a la racine.
+    if (!APP._migrations || typeof APP._migrations !== 'object') APP._migrations = {};
+    ['_resetDone_20260406','_annuaireSigStrip_20260409','_bonValidatorBackfill_20260420',
+     '_dcmMigration_20260420','_dispatchSigMigratedAt','_sigMigrationDone'].forEach(function(k){
+      if (APP[k] !== undefined && APP._migrations[k.slice(1)] === undefined) {
+        APP._migrations[k.slice(1)] = APP[k];
+      }
+      if (APP[k] !== undefined) { try { delete APP[k]; } catch(e){} }
+    });
+
     // === ONE-TIME DATA RESET (2026-04-06) ===
-    if (!APP._resetDone_20260406) {
+    if (!APP._migrations.resetDone_20260406) {
       console.log('[PSM] One-time data reset: clearing mouvements, audit, activityLog, dispatch history');
       APP.mouvements = [];
       APP.audit = [];
       APP._activityLog = [];
       if (APP.dispatch) { APP.dispatch.history = []; }
       APP.dispatchHistory = [];
-      APP._resetDone_20260406 = true;
+      APP._migrations.resetDone_20260406 = true;
       try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
       console.log('[PSM] Data reset complete');
     }
 
     // === ONE-TIME: strip signatureKey from all annuaire entries (2026-04-09) ===
-    if (!APP._annuaireSigStrip_20260409) {
+    if (!APP._migrations.annuaireSigStrip_20260409) {
       (APP.annuaire || []).forEach(function(p) { delete p.signatureKey; delete p.signature; });
-      APP._annuaireSigStrip_20260409 = true;
+      APP._migrations.annuaireSigStrip_20260409 = true;
       try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
       console.log('[PSM] Annuaire signatures stripped');
     }
 
     // === ONE-TIME: backfill validator snapshot on old validated bons (2026-04-20) ===
-    if (!APP._bonValidatorBackfill_20260420) {
+    if (!APP._migrations.bonValidatorBackfill_20260420) {
       try {
         if (typeof _backfillBonValidators === 'function') {
           var _bfRes = _backfillBonValidators();
           console.log('[PSM] Bon validator backfill:', _bfRes);
         }
       } catch(e) { console.warn('[PSM] backfill failed:', e); }
-      APP._bonValidatorBackfill_20260420 = true;
+      APP._migrations.bonValidatorBackfill_20260420 = true;
       try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
     }
 
@@ -1287,7 +1300,7 @@ async function _finishAppInit() {
       console.log('[PSM] DCM cree dans l\'annuaire');
     }
     window._DCM_ID = _dcm.id;
-    if (!APP._dcmMigration_20260420) {
+    if (!APP._migrations.dcmMigration_20260420) {
       var _count = 0;
       (APP.bons||[]).forEach(function(b){
         var _d = String(b.demandeur||'').trim().toUpperCase();
@@ -1305,12 +1318,12 @@ async function _finishAppInit() {
           _count++;
         }
       });
-      APP._dcmMigration_20260420 = Date.now();
+      APP._migrations.dcmMigration_20260420 = Date.now();
       if (_count > 0) console.log('[PSM] Migration DCM: ' + _count + ' bon(s) lies a l\'annuaire');
     }
   })();
   // Phase 9: backfill _isDispatch flag on existing bons (one-time)
-  if (!APP._dispatchSigMigratedAt) {
+  if (!APP._migrations.dispatchSigMigratedAt) {
     var _dpBonIds = {};
     ((APP.dispatch && APP.dispatch.history) || []).forEach(function(snap) {
       if (snap && Array.isArray(snap.bonIds)) {
@@ -1321,11 +1334,11 @@ async function _finishAppInit() {
     (APP.bons || []).forEach(function(b) {
       if (_dpBonIds[b.id] && !b._isDispatch) { b._isDispatch = true; _dpFlagged++; }
     });
-    APP._dispatchSigMigratedAt = Date.now();
+    APP._migrations.dispatchSigMigratedAt = Date.now();
     if (_dpFlagged > 0) console.log('[PSM] Phase 9: ' + _dpFlagged + ' bon(s) dispatch flagg\u00e9(s) r\u00e9troactivement');
   }
   // Phase 10: migrate APP.users[].signature (base64) -> RTDB key (one-time, async, non-blocking)
-  if (!APP._sigMigrationDone) {
+  if (!APP._migrations.sigMigrationDone) {
     (async function() {
       try {
         if (typeof _uploadSignature !== 'function' || typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
@@ -1346,7 +1359,7 @@ async function _finishAppInit() {
             }
           }
         }
-        APP._sigMigrationDone = Date.now();
+        APP._migrations.sigMigrationDone = Date.now();
         if (migrated > 0) {
           console.log('[PSM] Phase 10: ' + migrated + ' user signature(s) migr\u00e9e(s) vers RTDB');
           if (typeof saveDB === 'function') saveDB();

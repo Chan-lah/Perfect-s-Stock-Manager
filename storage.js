@@ -110,7 +110,7 @@ var _cloudSaveQueue = null; // pending save promise
 var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
                       'commandesFourn','zones','secteurs','pdv','settings',
                       'dispatch','companies','audit','users',
-                      'annuaire','_annuaireTombstones'];
+                      'annuaire','_annuaireTombstones','_migrations'];
 // Note: 'backups' removed — backups stay local (filesystem only), not synced to Firebase
 
 // Fast djb2-style hash to detect changes per section
@@ -130,6 +130,15 @@ function _strHash(str) {
 var _sectionHashes = (function(){
   try { return JSON.parse(localStorage.getItem('psm_section_hashes') || '{}'); }
   catch(e) { return {}; }
+})();
+
+// Safety net: hash global de l'APP serialise pour detecter les sections
+// manquantes de _SYNC_SECTIONS (cf bug annuaire 2026-04-21). Si les sections
+// listees disent "rien change" mais que le hash global a change, c'est qu'une
+// cle top-level editable n'est pas whitelistee -> fallback en full upload.
+var _lastFullHash = (function(){
+  try { return parseInt(localStorage.getItem('psm_full_hash') || '0') || 0; }
+  catch(e) { return 0; }
 })();
 
 // Returns array of changed section names, or null if no previous snapshot (full save)
@@ -210,6 +219,14 @@ async function _doSaveToCloud() {
     // ── Granular upload: only upload changed sections ──────
     var changedSections = _getChangedSections(dataObj);
 
+    // Safety net: diff vide mais hash global different -> section manquante
+    // de _SYNC_SECTIONS. Fallback full upload pour ne rien perdre.
+    var _currentFullHash = _strHash(JSON.stringify(dataObj));
+    if (changedSections !== null && changedSections.length === 0 && _currentFullHash !== _lastFullHash) {
+      console.warn('[PSM] Full-APP hash changed but no section diff. Une cle top-level APP est absente de _SYNC_SECTIONS -> fallback FULL upload.');
+      changedSections = null;
+    }
+
     if (changedSections !== null && changedSections.length === 0) {
       // Nothing changed — skip upload entirely
       console.log('[PSM] Cloud save skipped (no changes detected)');
@@ -234,6 +251,9 @@ async function _doSaveToCloud() {
 
     // Update hashes for next diff
     _updateSectionHashes(dataObj);
+    // Persist full hash for safety-net check
+    _lastFullHash = _currentFullHash;
+    try { localStorage.setItem('psm_full_hash', String(_lastFullHash)); } catch(e) {}
 
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
