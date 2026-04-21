@@ -16,17 +16,19 @@
 
     "app_data": {
       ".read":  "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false",
-      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false"
+      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'editor')"
     },
 
     "signatures": {
       ".read":  "auth != null",
-      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false"
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && root.child('profiles').child(auth.uid).child('is_active').val() !== false"
+      }
     },
 
     "counters": {
       ".read":  "auth != null",
-      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false"
+      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'editor')"
     },
 
     "audit_log": {
@@ -63,7 +65,7 @@
         ".read":  "auth != null && (auth.uid === $uid || root.child('profiles').child(auth.uid).child('role').val() === 'admin')",
         ".write": "auth != null && auth.uid === $uid",
         "$dayKey": {
-          ".validate": "newData.hasChildren(['data','meta'])"
+          ".validate": "newData.hasChildren(['data','meta']) && newData.child('data').isString() && newData.child('data').val().length < 104857600"
         }
       }
     }
