@@ -835,6 +835,19 @@ async function saveToFile() {
   _debouncedSave();
 }
 
+// Admin gate for storage persistence prompts (non-admins don't see setup UI)
+function _canUseFilePersistence() {
+  try { var u = typeof _currentUser === 'function' ? _currentUser() : null; return !!(u && u.role === 'admin'); }
+  catch(e) { return false; }
+}
+
+// SHA-256 integrity hash (hex string) for post-save verification
+async function _sha256Hex(str) {
+  var buf = new TextEncoder().encode(str);
+  var hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+}
+
 async function _doSaveToFile() {
   if(!_dirHandle) return;
   try {
@@ -847,19 +860,48 @@ async function _doSaveToFile() {
     var refs = _stripImages(APP);
     var jsonStr = JSON.stringify(APP);
     _restoreImages(APP, refs); // Restore in-memory immediately
+    // Compute expected hash BEFORE writing
+    var expectedHash = await _sha256Hex(jsonStr);
     // Write data file
     var fh = await _dirHandle.getFileHandle(_SAVE_FILE, {create:true});
     var w = await fh.createWritable();
     await w.write(jsonStr);
     await w.close();
-    // Write images file only if dirty
+    // ── Post-save verification : relire le fichier et comparer le SHA-256 ──
+    // Détecte corruption silencieuse (disque plein mid-write, antivirus qui intercepte, etc.)
+    try {
+      var checkFile = await fh.getFile();
+      var checkText = await checkFile.text();
+      var actualHash = await _sha256Hex(checkText);
+      if (actualHash !== expectedHash) {
+        updateFileSaveIndicator(false, 'Hash mismatch post-save');
+        if (typeof notify === 'function') notify('\u26a0 Sauvegarde fichier corrompue (hash mismatch). V\u00e9rifiez l\u2019espace disque / antivirus.', 'error');
+        console.warn('[PSM] saveToFile hash mismatch: expected=' + expectedHash.slice(0,8) + ' actual=' + actualHash.slice(0,8));
+        return;
+      }
+    } catch(verifyErr) {
+      console.warn('[PSM] saveToFile verify failed:', verifyErr);
+      // Vérif impossible → warning mais on n'annule pas (write a peut-être réussi)
+    }
+    // Write images file only if dirty (avec le même check)
     if(_imagesDirty) {
       var newImgs = _extractImages(APP);
       Object.assign(_imagesCache, newImgs);
+      var imgJson = JSON.stringify(_imagesCache);
+      var expectedImgHash = await _sha256Hex(imgJson);
       var ifh = await _dirHandle.getFileHandle(_IMG_FILE, {create:true});
       var iw = await ifh.createWritable();
-      await iw.write(JSON.stringify(_imagesCache));
+      await iw.write(imgJson);
       await iw.close();
+      try {
+        var checkImgFile = await ifh.getFile();
+        var checkImgText = await checkImgFile.text();
+        var actualImgHash = await _sha256Hex(checkImgText);
+        if (actualImgHash !== expectedImgHash) {
+          console.warn('[PSM] images file hash mismatch');
+          if (typeof notify === 'function') notify('\u26a0 Sauvegarde images corrompue (hash mismatch)', 'warning');
+        }
+      } catch(imgVerifyErr) { console.warn('[PSM] images verify:', imgVerifyErr); }
       _imagesDirty = false;
     }
     updateFileSaveIndicator(true);
@@ -1004,6 +1046,7 @@ function _showReconnectBar() {
 
 function _showStorageBanner() {
   if(_IS_ANDROID) return;
+  if(!_canUseFilePersistence()) return;  // Non-admins : pas de banner
   if(document.getElementById('psm-storage-banner')) return;
   const el = document.createElement('div');
   el.id = 'psm-storage-banner';
@@ -1021,6 +1064,7 @@ function _showStorageBanner() {
 }
 
 function _showSaveSetupModal() {
+  if(!_canUseFilePersistence()) return;  // Non-admins : pas de modal
   if(document.getElementById('psm-save-setup')) return;
   const el = document.createElement('div');
   el.id = 'psm-save-setup';
@@ -1061,6 +1105,8 @@ function updateFileSaveIndicator(ok, errMsg) {
   var el = document.getElementById('file-save-indicator');
   if(!el) return;
   if(_IS_ANDROID) { el.innerHTML = ''; return; }
+  // Non-admins ne voient aucun indicateur de stockage persistant
+  if(!_canUseFilePersistence()) { el.innerHTML = ''; return; }
   if(!_dirHandle) {
     el.innerHTML = '<span onclick="_showSaveSetupModal()" title="Configurer le dossier de sauvegarde" style="color:var(--warning);font-size:10px;cursor:pointer;white-space:nowrap">⚠️ Non persistant</span>';
   } else if(ok === true) {

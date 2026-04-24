@@ -1400,8 +1400,8 @@ async function _finishAppInit() {
   // Phase 1: load signatures cache from RTDB (fire-and-forget)
   if (typeof _loadSignaturesCache === 'function') _loadSignaturesCache();
   renderSidebar();
-  if(_pendingHandle && !_autoReconnectBound) _showReconnectBar();
-  else if(!_dirHandle && !_pendingHandle) _showStorageBanner();
+  if(_pendingHandle && !_autoReconnectBound && _canUseFilePersistence && _canUseFilePersistence()) _showReconnectBar();
+  else if(!_dirHandle && !_pendingHandle && _canUseFilePersistence && _canUseFilePersistence()) _showStorageBanner();
   updateCompanyPanel();
   startClock();
   showPage(APP.settings?.lastPage || 'dashboard');
@@ -7295,7 +7295,7 @@ ${_isAdmin ? `    <div class="card">
         ${(function(){ var _cu=typeof _currentUser==='function'?_currentUser():null; return _cu&&_cu.role==='admin'?'<button class="btn btn-danger" style="margin-top:8px;background:#7f1d1d;border-color:#991b1b" onclick="purgeBackups()"><i class="fa-solid fa-fire"></i> Purger les sauvegardes</button>':''; })()}
       </div>
     </div>` : ''}
-    <div class="card">
+${_isAdmin ? `    <div class="card">
       <div class="card-header"><span class="card-title">💾 Stockage Persistant</span></div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:10px">Vos données sont sauvegardées dans le dossier <strong>PSm Saves (Do Not Delete)</strong> sur votre PC — aucune dépendance au navigateur.</div>
       <div id="file-status-settings" style="font-size:12px;margin-bottom:12px;padding:10px 12px;border-radius:var(--radius);background:var(--bg-2);border:1px solid var(--border)">${_dirHandle?`✅ Dossier : <strong>${_dirHandle.name||'PSm Saves (Do Not Delete)'}</strong> — psm_data.json`:`⚠️ <strong>Aucun dossier configuré</strong>`}</div>
@@ -7303,7 +7303,7 @@ ${_isAdmin ? `    <div class="card">
         <button class="btn btn-primary btn-sm" onclick="pickSaveDirectory()">📂 Changer le dossier de sauvegarde</button>
         <button class="btn btn-secondary btn-sm" onclick="pickSaveDirectory()">📍 Utiliser un dossier existant (clé USB, OneDrive...)</button>
       </div>
-    </div>
+    </div>` : ''}
 
     <div class="card">
       <div class="card-header"><span class="card-title">🏷️ Catégories de gadgets</span><button class="btn btn-sm btn-primary" onclick="openAddCategoryModal()">+ Nouvelle catégorie</button></div>
