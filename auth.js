@@ -60,7 +60,15 @@ async function _loadUserProfile() {
     if (allSnap.exists()) {
       var data = allSnap.val();
       var key = Object.keys(data)[0];
-      _userProfile = data[key];
+      var foundProfile = data[key];
+      // Soft-delete check : ne PAS migrer un profil désactivé (is_active:false).
+      // Sans ça, un user "supprimé" pourrait se reconnecter et le bootstrap
+      // recréerait son profil à profiles/{uid} -> login réussi malgré soft-delete.
+      if (foundProfile && foundProfile.is_active === false) {
+        console.log('[PSM] Bootstrap skipped : profile found but is_active:false');
+        return null;
+      }
+      _userProfile = foundProfile;
       // Migrate: save under uid
       await _firebaseDB.ref('profiles/' + _cloudUser.uid).set(_userProfile);
       _syncProfileToLocal(_userProfile);
@@ -396,7 +404,11 @@ async function _handleLogin(e) {
           }
         }
       } catch(ex) { console.warn('[PSM] safety check failed:', ex.message || ex); }
-      if (_shouldPush && typeof _doSaveToCloud === 'function') {
+      // Skip bg push pour les rôles sans permission d'écriture sur app_data
+      // (éviterait un FIREBASE WARNING permission_denied au login des viewers)
+      var _myRole = (_userProfile && _userProfile.role) || 'viewer';
+      var _canWriteAppData = (_myRole === 'admin' || _myRole === 'manager' || _myRole === 'commercial' || _myRole === 'custom');
+      if (_shouldPush && _canWriteAppData && typeof _doSaveToCloud === 'function') {
         _doSaveToCloud().catch(function(ex) { console.warn('[PSM] bg cloud push:', ex); });
       }
     }

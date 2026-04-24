@@ -8386,7 +8386,7 @@ async function saveUserModal(userId) {
 
 async function deleteUser(userId) {
   if(_currentUser()?.role !== 'admin') { notify('⛔ Action réservée', 'warning'); return; }
-  if(!confirm('Supprimer cet utilisateur ?')) return;
+  if(!confirm('Désactiver cet utilisateur ?\n\nLe profil Firebase restera en base (is_active:false) pour empêcher toute reconnexion. C\u2019est l\u2019équivalent d\u2019une suppression définitive côté accès — les données historiques (audit) sont préservées.')) return;
 
   // Résolution user (par id puis par email fallback)
   var user = (APP.users||[]).find(u => u.id === userId);
@@ -8395,41 +8395,35 @@ async function deleteUser(userId) {
   var userEmail = user.email;
   var userIdToRemove = user.id;
 
-  // ── ÉTAPE 1 : suppression Firebase D'ABORD (fail-fast) ──
-  // Si Firebase échoue, l'état local reste intact -> admin peut retry.
-  // Séquence : désactiver (is_active:false) -> attendre 500ms pour que C3
-  // force-logoute l'user cible -> supprimer définitivement le profil.
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) {
-    notify('⚠ Firebase indisponible — suppression annulée', 'error');
+    notify('⚠ Firebase indisponible — désactivation annulée', 'error');
     return;
   }
+
+  // ── ÉTAPE 1 : soft-delete Firebase (is_active:false permanent) ──
+  // Pas de suppression physique : Firebase Auth ne peut pas être supprimé depuis
+  // le client JS, donc supprimer juste le profil permet à l'user de se reconnecter
+  // et le bootstrap fallback recréait le profil. Soft-delete = seule solution robuste.
   try {
     var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
     if (snap.exists()) {
       var uids = Object.keys(snap.val());
-      // Phase A : désactiver tous les profils matching -> C3 force-logout
-      var deactivate = {};
-      uids.forEach(function(uid) { deactivate[uid + '/is_active'] = false; });
-      await _firebaseDB.ref('profiles').update(deactivate);
-      // Laisser 500ms pour que le listener C3 détecte et logoute
-      await new Promise(function(r) { setTimeout(r, 500); });
-      // Phase B : supprimer définitivement
-      var nuke = {};
-      uids.forEach(function(uid) { nuke[uid] = null; });
-      await _firebaseDB.ref('profiles').update(nuke);
-      console.log('[PSM] Firebase profile deleted:', userEmail, 'uids:', uids);
+      var updates = {};
+      uids.forEach(function(uid) { updates[uid + '/is_active'] = false; });
+      await _firebaseDB.ref('profiles').update(updates);
+      console.log('[PSM] Soft-deleted profile(s):', userEmail, 'uids:', uids);
     } else {
-      console.warn('[PSM] No Firebase profile for', userEmail, '— suppression locale uniquement');
+      notify('⚠ Aucun profil Firebase trouvé pour ' + userEmail + ' — vérifiez l\u2019email', 'warning');
+      // On continue quand même pour nettoyer l'état local
     }
   } catch(e) {
-    console.warn('[PSM] Firebase profile delete error:', e);
-    notify('⚠ Suppression cloud échouée : ' + (e.message || e) + '. Utilisateur NON supprimé — réessayez.', 'error');
+    console.warn('[PSM] deleteUser Firebase error:', e);
+    notify('⚠ Désactivation cloud échouée : ' + (e.message || e) + '. Utilisateur NON désactivé — réessayez.', 'error');
     return; // ABORT — état local intact
   }
 
-  // ── ÉTAPE 2 : nettoyage local (seulement si Firebase a réussi) ──
+  // ── ÉTAPE 2 : nettoyage local (retirer de APP.users + tombstone annuaire) ──
   APP.users = (APP.users||[]).filter(u => u.id !== userIdToRemove);
-  // Nettoie les entrées annuaire liées à ce user + tombstone pour bloquer la recréation auto
   var annBefore = (APP.annuaire||[]).length;
   APP.annuaire = (APP.annuaire||[]).filter(function(a){
     if (a._fromUserId === userIdToRemove) {
@@ -8441,7 +8435,7 @@ async function deleteUser(userId) {
   });
   if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
-  if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
+  if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Désactivation: ' + userEmail);
 
   // ── ÉTAPE 3 : sauvegarde + push cloud ──
   APP._ts = Date.now();
@@ -8450,7 +8444,7 @@ async function deleteUser(userId) {
   if(typeof _doSaveToCloud === 'function') {
     try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after delete:', e); }
   }
-  notify('Utilisateur supprimé ✓', 'success');
+  notify('Utilisateur désactivé ✓ — accès cloud bloqué', 'success');
   if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
   else { renderSettings(); }
 }
