@@ -1165,6 +1165,11 @@ async function initApp() {
         var parsed = JSON.parse(lsData);
         if (parsed && typeof parsed === 'object') {
           Object.assign(APP, parsed);
+          // IMPORTANT : marquer les donnees comme chargees -> empeche initGMAData
+          // de re-seeder les articles GMA (ex: 'Tee-shirt beige 60 ans') que
+          // l'utilisateur a deliberement supprimes. Sans ce flag, chaque login
+          // re-ajoutait les entrees GMA_ARTICLES manquantes.
+          if (typeof _savedDataLoaded !== 'undefined') _savedDataLoaded = true;
           console.log('[PSM] localStorage loaded (_ts=' + (APP._ts||0) + ')');
         }
       }
@@ -8894,14 +8899,52 @@ async function _confirmDeleteUser(uid) {
   // Accept either ID or email
   var user = (APP.users || []).find(function(u) { return u.id === uid; });
   if (!user) user = (APP.users || []).find(function(u) { return u.email && u.email.toLowerCase() === uid.toLowerCase(); });
-  if (!user) return;
-  if (!confirm('Supprimer "' + user.name + '" ? Cette action est irr\u00e9versible.')) return;
+  if (!user || !user.email) { notify('Utilisateur introuvable ou sans email', 'error'); return; }
+  if (!confirm('D\u00e9sactiver "' + user.name + '" ?\n\nLe profil Firebase restera en base (is_active:false) pour empecher toute reconnexion. C\u2019est l\u2019\u00e9quivalent d\u2019une suppression d\u00e9finitive cote acces.')) return;
   var userEmail = user.email;
+  var userIdToRemove = user.id;
 
-  // Remove from local
-  APP.users = APP.users.filter(function(u) { return u.id !== uid; });
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) {
+    notify('\u26a0 Firebase indisponible \u2014 d\u00e9sactivation annul\u00e9e', 'error');
+    return;
+  }
 
-  // Update UI immediately (no full page re-render)
+  // ETAPE 1 : soft-delete Firebase (is_active:false permanent)
+  // Meme logique que deleteUser() : Firebase Auth n'est pas supprimable
+  // cote client, donc soft-delete permet de bloquer les reconnexions via
+  // le check is_active au login + le bootstrap fallback refuse les profils
+  // desactives.
+  try {
+    var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
+    if (snap.exists()) {
+      var uids = Object.keys(snap.val());
+      var updates = {};
+      uids.forEach(function(k) { updates[k + '/is_active'] = false; });
+      await _firebaseDB.ref('profiles').update(updates);
+      console.log('[PSM] Soft-deleted profile(s):', userEmail, 'uids:', uids);
+    } else {
+      notify('\u26a0 Aucun profil Firebase trouv\u00e9 pour ' + userEmail + ' \u2014 v\u00e9rifiez l\u2019email', 'warning');
+    }
+  } catch(e) {
+    console.warn('[PSM] _confirmDeleteUser Firebase error:', e);
+    notify('\u26a0 D\u00e9sactivation cloud \u00e9chou\u00e9e : ' + (e.message || e) + '. Utilisateur NON d\u00e9sactiv\u00e9 \u2014 r\u00e9essayez.', 'error');
+    return; // ABORT — etat local intact
+  }
+
+  // ETAPE 2 : retrait local APP.users (+ nettoyage annuaire)
+  APP.users = APP.users.filter(function(u) { return u.id !== userIdToRemove; });
+  var annBefore = (APP.annuaire||[]).length;
+  APP.annuaire = (APP.annuaire||[]).filter(function(a){
+    if (a._fromUserId === userIdToRemove) {
+      if (!APP._annuaireTombstones || typeof APP._annuaireTombstones !== 'object' || Array.isArray(APP._annuaireTombstones)) APP._annuaireTombstones = {};
+      APP._annuaireTombstones[userIdToRemove] = true;
+      return false;
+    }
+    return true;
+  });
+  if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
+
+  // Animation UI : fade out de la card supprim\u00e9e
   var cardEl = document.querySelector('[onclick*="' + uid + '"]');
   if (cardEl) {
     var card = cardEl.closest('.card');
@@ -8912,36 +8955,20 @@ async function _confirmDeleteUser(uid) {
       setTimeout(function() { card.remove(); }, 300);
     }
   }
-  // Update count
   var countEl = document.querySelector('.card-title');
   if (countEl && countEl.textContent.includes('Comptes')) {
     countEl.textContent = '\uD83D\uDC65 Comptes (' + (APP.users||[]).length + ')';
   }
 
-  // Delete from Firebase profile
-  if (userEmail && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-    try {
-      var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
-      if (snap.exists()) {
-        var updates = {};
-        Object.keys(snap.val()).forEach(function(k) { updates[k] = null; });
-        await _firebaseDB.ref('profiles').update(updates);
-      }
-    } catch(e) {
-      console.warn('[PSM] Firebase profile delete:', e);
-      if (typeof notify === 'function') notify('⚠ Profil cloud non supprimé pour ' + userEmail + ' — réessayer (sinon le compte peut réapparaitre)', 'error');
-    }
-  }
-
-  // Save to cloud and wait
+  // ETAPE 3 : save + push cloud
   APP._ts = Date.now();
   _invalidatePageCache();
   try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   if (typeof _doSaveToCloud === 'function') {
-    try { await _doSaveToCloud(); } catch(e) {}
+    try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after soft-delete:', e); }
   }
-  if (typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
-  notify('Utilisateur supprim\u00e9', 'success');
+  if (typeof logActivity === 'function') logActivity('admin_delete_user', 'D\u00e9sactivation: ' + userEmail);
+  notify('Utilisateur d\u00e9sactiv\u00e9 \u2713 \u2014 acc\u00e8s cloud bloqu\u00e9', 'success');
 }
 
 function _showActivityLog() {

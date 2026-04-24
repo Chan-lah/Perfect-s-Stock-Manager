@@ -102,6 +102,75 @@ function _stopProfileListener() {
   _initialRole = null;
 }
 
+// ── Auto-logout apres inactivite (10 min) ─────────────────
+
+var _IDLE_TIMEOUT_MS = 10 * 60 * 1000;  // 10 minutes
+var _IDLE_WARN_MS    = 30 * 1000;        // warning 30s avant logout
+var _idleTimer = null;
+var _idleWarnTimer = null;
+var _idleEvents = ['click', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+var _idleListenerAttached = false;
+
+function _resetIdleTimer() {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  if (_idleWarnTimer) clearTimeout(_idleWarnTimer);
+  // Retire le warning s'il est affich\u00e9
+  var warn = document.getElementById('psm-idle-warning');
+  if (warn) warn.remove();
+  // Warning 30s avant timeout
+  _idleWarnTimer = setTimeout(_showIdleWarning, _IDLE_TIMEOUT_MS - _IDLE_WARN_MS);
+  // Logout effectif
+  _idleTimer = setTimeout(_handleIdleLogout, _IDLE_TIMEOUT_MS);
+}
+
+function _showIdleWarning() {
+  if (document.getElementById('psm-idle-warning')) return;
+  var el = document.createElement('div');
+  el.id = 'psm-idle-warning';
+  el.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99998;background:#1a1a2e;border:2px solid #f5a623;border-radius:12px;padding:16px 20px;box-shadow:0 8px 32px rgba(0,0,0,.5);max-width:360px;font-family:inherit';
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
+    + '<span style="font-size:22px">\u23f3</span>'
+    + '<div><div style="font-weight:700;font-size:14px;color:#fff">D\u00e9connexion imminente</div>'
+    + '<div style="font-size:12px;color:#aaa">Inactif depuis 9m30s. D\u00e9connexion dans <span id="psm-idle-count">30</span>s.</div></div>'
+    + '</div>'
+    + '<button onclick="_resetIdleTimer()" style="width:100%;padding:10px;background:#f5a623;color:#000;border:none;border-radius:8px;font-weight:700;cursor:pointer">Rester connect\u00e9</button>';
+  document.body.appendChild(el);
+  // Countdown visuel
+  var secs = 30;
+  var cd = setInterval(function() {
+    secs--;
+    var cel = document.getElementById('psm-idle-count');
+    if (cel) cel.textContent = secs;
+    if (secs <= 0 || !document.getElementById('psm-idle-warning')) clearInterval(cd);
+  }, 1000);
+}
+
+function _handleIdleLogout() {
+  if (window._psmForcingLogout) return;
+  console.log('[PSM] Auto-logout : 10 min d\u2019inactivit\u00e9');
+  if (typeof notify === 'function') notify('\ud83d\udd12 D\u00e9connexion automatique (inactivit\u00e9)', 'warning');
+  try { logoutUser(); } catch(e) {}
+}
+
+function _startIdleTimer() {
+  if (_idleListenerAttached) return;
+  _idleEvents.forEach(function(evt) { document.addEventListener(evt, _resetIdleTimer, { passive: true }); });
+  _idleListenerAttached = true;
+  _resetIdleTimer();
+}
+
+function _stopIdleTimer() {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  if (_idleWarnTimer) { clearTimeout(_idleWarnTimer); _idleWarnTimer = null; }
+  if (_idleListenerAttached) {
+    _idleEvents.forEach(function(evt) { document.removeEventListener(evt, _resetIdleTimer); });
+    _idleListenerAttached = false;
+  }
+  var warn = document.getElementById('psm-idle-warning');
+  if (warn) warn.remove();
+}
+
 function _forceLogout(reason) {
   if (window._psmForcingLogout) return;
   window._psmForcingLogout = true;
@@ -436,6 +505,9 @@ async function _handleLogin(e) {
     // 5c-bis. Profile listener — force-logout on profile delete/disable/role change (C3)
     _startProfileListener();
 
+    // 5c-ter. Auto-logout apres 10 min d'inactivite
+    _startIdleTimer();
+
     // 5d. Purge old cloud snapshots (keep 7 days)
     if (typeof _purgeOldCloudSnapshots === 'function') {
       try { _purgeOldCloudSnapshots(); } catch(e) {}
@@ -647,6 +719,7 @@ function canEdit(pageId) { return hasPermission(pageId, 'edit'); }
 
 function logoutUser() {
   _stopProfileListener();
+  _stopIdleTimer();
   if (typeof stopRealtimeSync === 'function') stopRealtimeSync();
   logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
