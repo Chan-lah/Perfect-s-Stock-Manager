@@ -8385,15 +8385,51 @@ async function saveUserModal(userId) {
 }
 
 async function deleteUser(userId) {
-  if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
+  if(_currentUser()?.role !== 'admin') { notify('⛔ Action réservée', 'warning'); return; }
   if(!confirm('Supprimer cet utilisateur ?')) return;
+
+  // Résolution user (par id puis par email fallback)
   var user = (APP.users||[]).find(u => u.id === userId);
   if (!user) user = (APP.users||[]).find(u => u.email && u.email.toLowerCase() === userId.toLowerCase());
-  var userEmail = user ? user.email : null;
-  var userIdToRemove = user ? user.id : userId;
+  if (!user || !user.email) { notify('Utilisateur introuvable ou sans email', 'error'); return; }
+  var userEmail = user.email;
+  var userIdToRemove = user.id;
+
+  // ── ÉTAPE 1 : suppression Firebase D'ABORD (fail-fast) ──
+  // Si Firebase échoue, l'état local reste intact -> admin peut retry.
+  // Séquence : désactiver (is_active:false) -> attendre 500ms pour que C3
+  // force-logoute l'user cible -> supprimer définitivement le profil.
+  if (typeof _firebaseDB === 'undefined' || !_firebaseDB) {
+    notify('⚠ Firebase indisponible — suppression annulée', 'error');
+    return;
+  }
+  try {
+    var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
+    if (snap.exists()) {
+      var uids = Object.keys(snap.val());
+      // Phase A : désactiver tous les profils matching -> C3 force-logout
+      var deactivate = {};
+      uids.forEach(function(uid) { deactivate[uid + '/is_active'] = false; });
+      await _firebaseDB.ref('profiles').update(deactivate);
+      // Laisser 500ms pour que le listener C3 détecte et logoute
+      await new Promise(function(r) { setTimeout(r, 500); });
+      // Phase B : supprimer définitivement
+      var nuke = {};
+      uids.forEach(function(uid) { nuke[uid] = null; });
+      await _firebaseDB.ref('profiles').update(nuke);
+      console.log('[PSM] Firebase profile deleted:', userEmail, 'uids:', uids);
+    } else {
+      console.warn('[PSM] No Firebase profile for', userEmail, '— suppression locale uniquement');
+    }
+  } catch(e) {
+    console.warn('[PSM] Firebase profile delete error:', e);
+    notify('⚠ Suppression cloud échouée : ' + (e.message || e) + '. Utilisateur NON supprimé — réessayez.', 'error');
+    return; // ABORT — état local intact
+  }
+
+  // ── ÉTAPE 2 : nettoyage local (seulement si Firebase a réussi) ──
   APP.users = (APP.users||[]).filter(u => u.id !== userIdToRemove);
-  // Nettoie les entrees annuaire liees a ce user (et tombstone pour bloquer la recreation auto)
-  // _annuaireTombstones est un object { userId: true } (cf deleteAnnuaire + _syncUsersToAnnuaire)
+  // Nettoie les entrées annuaire liées à ce user + tombstone pour bloquer la recréation auto
   var annBefore = (APP.annuaire||[]).length;
   APP.annuaire = (APP.annuaire||[]).filter(function(a){
     if (a._fromUserId === userIdToRemove) {
@@ -8405,32 +8441,16 @@ async function deleteUser(userId) {
   });
   if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
+  if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
 
-  // Delete profile from Firebase
-  if(userEmail && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-    try {
-      var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(userEmail).once('value');
-      if(snap.exists()) {
-        var updates = {};
-        Object.keys(snap.val()).forEach(function(uid) { updates[uid] = null; });
-        await _firebaseDB.ref('profiles').update(updates);
-        console.log('[PSM] Firebase profile deleted:', userEmail);
-      }
-    } catch(e) {
-      console.warn('[PSM] Firebase profile delete error:', e);
-      if (typeof notify === 'function') notify('⚠ Profil cloud non supprimé pour ' + userEmail + ' — réessayer (sinon le compte peut réapparaitre)', 'error');
-    }
-    if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Suppression: ' + userEmail);
-  }
-
-  // Save locally + force immediate cloud save and WAIT for it
+  // ── ÉTAPE 3 : sauvegarde + push cloud ──
   APP._ts = Date.now();
   _invalidatePageCache();
   try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   if(typeof _doSaveToCloud === 'function') {
     try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after delete:', e); }
   }
-  notify('Utilisateur supprim\u00e9', 'success');
+  notify('Utilisateur supprimé ✓', 'success');
   if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
   else { renderSettings(); }
 }
