@@ -16,7 +16,7 @@
 
     "app_data": {
       ".read":  "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false",
-      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'editor')"
+      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'manager' || root.child('profiles').child(auth.uid).child('role').val() === 'commercial' || root.child('profiles').child(auth.uid).child('role').val() === 'custom')"
     },
 
     "signatures": {
@@ -28,7 +28,7 @@
 
     "counters": {
       ".read":  "auth != null",
-      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'editor')"
+      ".write": "auth != null && root.child('profiles').child(auth.uid).child('is_active').val() !== false && (root.child('profiles').child(auth.uid).child('role').val() === 'admin' || root.child('profiles').child(auth.uid).child('role').val() === 'manager' || root.child('profiles').child(auth.uid).child('role').val() === 'commercial' || root.child('profiles').child(auth.uid).child('role').val() === 'custom')"
     },
 
     "audit_log": {

@@ -102,67 +102,15 @@ function _updateSyncStatus(state) {
 var _cloudSaving = false;
 var _cloudSaveQueue = null; // pending save promise
 
-// ── Granular section tracking ────────────────────────────
-// Sections that are synced to Firebase (images excluded — too large)
-// IMPORTANT: toute nouvelle section editable DOIT etre listee ici, sinon
-// les modifs de cette section seule produisent un diff vide -> save cloud
-// skip -> rollback au prochain reload (cf bug annuaire corrige 2026-04-21)
-var _SYNC_SECTIONS = ['articles','bons','mouvements','commerciaux','fournisseurs',
-                      'commandesFourn','zones','secteurs','pdv','settings',
-                      'dispatch','companies','audit','users',
-                      'annuaire','_annuaireTombstones','_migrations',
-                      'dispatchHistory','recentlyViewed'];
-// Note: 'backups' removed — backups stay local (filesystem only), not synced to Firebase
-
-// Fast djb2-style hash to detect changes per section
-function _strHash(str) {
-  var h = 5381;
-  for (var i = 0; i < str.length; i++) {
-    h = ((h << 5) + h) + str.charCodeAt(i);
-    h = h & h;
-  }
-  return h;
-}
-
-// Hashes from last successful cloud save { sectionName: number }
-// Persisted to localStorage so the granular diff survives page reloads.
-// Without this, every reload triggers a full upload (risk of overwriting
-// sections that other browsers changed in the meantime).
-var _sectionHashes = (function(){
-  try { return JSON.parse(localStorage.getItem('psm_section_hashes') || '{}'); }
-  catch(e) { return {}; }
-})();
-
-// Safety net: hash global de l'APP serialise pour detecter les sections
-// manquantes de _SYNC_SECTIONS (cf bug annuaire 2026-04-21). Si les sections
-// listees disent "rien change" mais que le hash global a change, c'est qu'une
-// cle top-level editable n'est pas whitelistee -> fallback en full upload.
-var _lastFullHash = (function(){
-  try { return parseInt(localStorage.getItem('psm_full_hash') || '0') || 0; }
-  catch(e) { return 0; }
-})();
-
-// Returns array of changed section names, or null if no previous snapshot (full save)
-function _getChangedSections(dataObj) {
-  if (!Object.keys(_sectionHashes).length) return null; // first save ever → full
-  var changed = [];
-  _SYNC_SECTIONS.forEach(function(s) {
-    try {
-      var h = _strHash(JSON.stringify(dataObj[s] !== undefined ? dataObj[s] : null));
-      if (h !== _sectionHashes[s]) changed.push(s);
-    } catch(e) { changed.push(s); }
-  });
-  return changed;
-}
-
-// Update hashes after successful save (and persist to localStorage)
-function _updateSectionHashes(dataObj) {
-  _SYNC_SECTIONS.forEach(function(s) {
-    try { _sectionHashes[s] = _strHash(JSON.stringify(dataObj[s] !== undefined ? dataObj[s] : null)); }
-    catch(e) { _sectionHashes[s] = 0; }
-  });
-  try { localStorage.setItem('psm_section_hashes', JSON.stringify(_sectionHashes)); } catch(e) {}
-}
+// ── Cleanup obsolete localStorage keys (granular diff removed 2026-04-24) ──
+// Ancien système de diff par hash de sections retiré : source répétée de bugs
+// de sync (rollback au reload quand le diff renvoyait "rien changé" à tort).
+// Les clés ci-dessous ne servent plus — on les purge au boot pour éviter la
+// pollution localStorage.
+try {
+  localStorage.removeItem('psm_section_hashes');
+  localStorage.removeItem('psm_full_hash');
+} catch(e) {}
 
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
@@ -177,7 +125,7 @@ async function _doSaveToCloud() {
     // Track local save timestamp to prevent realtime echo
     _lastLocalSaveTs = APP._ts || Date.now();
 
-    // Strip images for compact JSON
+    // Strip images for compact JSON (Firebase RTDB has 16MB/node limit)
     var refs = (typeof _stripImages === 'function') ? _stripImages(APP) : null;
     // Exclude local-only keys from cloud payload (backups = ~6MB, stays local)
     var _backupsSaved = APP.backups;
@@ -201,14 +149,12 @@ async function _doSaveToCloud() {
       delete dataObj.settings._dynamicBgIntensity;
     }
     // Strip role/permissions from users (comes from Firebase profiles)
-    // Keep only id, email, photo, signature for shared access
     if (dataObj.users) {
       dataObj.users = dataObj.users.map(function(u) {
         return { id: u.id, email: u.email, name: u.name, photo: u.photo, signature: u.signature };
       });
     }
 
-    // Images stay in localStorage only (Firebase Realtime DB has 16MB write limit)
     // Save images to localStorage cache for local restore
     try {
       var imgs = (typeof _extractImages === 'function') ? _extractImages(APP) : {};
@@ -217,44 +163,15 @@ async function _doSaveToCloud() {
       }
     } catch(e) { console.warn('[PSM] images cache:', e); }
 
-    // ── Granular upload: only upload changed sections ──────
-    var changedSections = _getChangedSections(dataObj);
-
-    // Safety net: diff vide mais hash global different -> section manquante
-    // de _SYNC_SECTIONS. Fallback full upload pour ne rien perdre.
-    var _currentFullHash = _strHash(JSON.stringify(dataObj));
-    if (changedSections !== null && changedSections.length === 0 && _currentFullHash !== _lastFullHash) {
-      console.warn('[PSM] Full-APP hash changed but no section diff. Une cle top-level APP est absente de _SYNC_SECTIONS -> fallback FULL upload.');
-      changedSections = null;
-    }
-
-    if (changedSections !== null && changedSections.length === 0) {
-      // Nothing changed — skip upload entirely
-      console.log('[PSM] Cloud save skipped (no changes detected)');
-    } else if (changedSections === null || changedSections.length > 6) {
-      // First save or many sections changed → full upload (safe fallback)
-      await _firebaseDB.ref('app_data').set({
-        data: dataObj,
-        updated_at: new Date().toISOString()
-      });
-      console.log('[PSM] Cloud save FULL (_ts=' + _lastLocalSaveTs + ')');
-    } else {
-      // Partial upload: only changed sections via multi-location update
-      var updatePayload = {};
-      changedSections.forEach(function(s) {
-        updatePayload['data/' + s] = dataObj[s] !== undefined ? dataObj[s] : null;
-      });
-      updatePayload['data/_ts'] = dataObj._ts;
-      updatePayload['updated_at'] = new Date().toISOString();
-      await _firebaseDB.ref('app_data').update(updatePayload);
-      console.log('[PSM] Cloud save PARTIAL sections=[' + changedSections.join(',') + '] (_ts=' + _lastLocalSaveTs + ')');
-    }
-
-    // Update hashes for next diff
-    _updateSectionHashes(dataObj);
-    // Persist full hash for safety-net check
-    _lastFullHash = _currentFullHash;
-    try { localStorage.setItem('psm_full_hash', String(_lastFullHash)); } catch(e) {}
+    // ── Full upload : toujours .set() du node complet ──
+    // Plus de diff par hash — source trop fréquente de bugs de sync.
+    // Pour 10 users et ~500KB par save, le coût bande passante est négligeable
+    // vs la fiabilité gagnée (chaque save est garanti de partir).
+    await _firebaseDB.ref('app_data').set({
+      data: dataObj,
+      updated_at: new Date().toISOString()
+    });
+    console.log('[PSM] Cloud save FULL (_ts=' + _lastLocalSaveTs + ')');
 
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
