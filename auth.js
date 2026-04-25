@@ -480,6 +480,12 @@ async function _handleLogin(e) {
     // 5c-ter. Auto-logout apres 10 min d'inactivite
     _startIdleTimer();
 
+    // 5c-quater. Archivage automatique si dernier run > 30 jours
+    // Déclenché au login pour ne pas dépendre qu'un admin visite la page Archives.
+    if (typeof maybeAutoArchive === 'function') {
+      setTimeout(function() { maybeAutoArchive().catch(function(){}); }, 3000);
+    }
+
     // 5d. Purge old cloud snapshots (keep 7 days)
     if (typeof _purgeOldCloudSnapshots === 'function') {
       try { _purgeOldCloudSnapshots(); } catch(e) {}

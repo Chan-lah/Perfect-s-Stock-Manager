@@ -11,8 +11,13 @@
   },
   "scripts": {
     "check": "node --check app.js && node --check auth.js && node --check storage.js && node --check firebase-config.js",
+    "build": "npx terser app.js -o app.min.js --compress --mangle && echo 'app.min.js pret'",
+    "build:all": "npx terser app.js -o app.min.js --compress --mangle && npx terser auth.js -o auth.min.js --compress --mangle && npx terser storage.js -o storage.min.js --compress --mangle",
     "version:patch": "npm version patch -m 'Release v%s'",
     "version:minor": "npm version minor -m 'Release v%s'",
     "version:major": "npm version major -m 'Release v%s'"
+  },
+  "devDependencies": {
+    "terser": "^5.36.0"
   }
 }

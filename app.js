@@ -607,6 +607,97 @@ var _notifSentAlerts = new Set();
 // ── Storage pruning: remove old historical data ──────────────
 // ============================================================
 // ARCHIVE SYSTEM — Cold storage with rolling window
+
+// ── Export CSV global (bons + mouvements sur plage de dates) ──────────────
+function _exportCSV(filename, headers, rows) {
+  var bom = '\uFEFF'; // BOM UTF-8 pour Excel
+  var lines = [headers.join(';')].concat(rows.map(function(r) {
+    return r.map(function(c) {
+      var s = String(c === null || c === undefined ? '' : c);
+      return s.includes(';') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(';');
+  }));
+  var blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+}
+
+function openExportCSVModal() {
+  var today = new Date().toISOString().split('T')[0];
+  var y5ago = new Date(Date.now() - 5*365*86400000).toISOString().split('T')[0];
+  openModal('export-csv', 'Export CSV global', `
+    <div class="form-group"><label>Type de données</label>
+      <select id="csv-type">
+        <option value="bons">Bons de sortie</option>
+        <option value="mouvements">Mouvements de stock</option>
+      </select></div>
+    <div class="form-row">
+      <div class="form-group"><label>Date début</label><input type="date" id="csv-from" value="${y5ago}"></div>
+      <div class="form-group"><label>Date fin</label><input type="date" id="csv-to" value="${today}"></div>
+    </div>
+    <div style="font-size:12px;color:var(--text-3);margin-top:4px">
+      ℹ Les données archivées ne sont pas incluses dans cet export. Utilisez "Exporter archives" dans le module Archives.
+    </div>
+  `, function() { _doExportCSV(); });
+}
+
+function _doExportCSV() {
+  var type  = (document.getElementById('csv-type') || {}).value || 'bons';
+  var from  = new Date((document.getElementById('csv-from') || {}).value || 0).getTime();
+  var to    = new Date((document.getElementById('csv-to')   || {}).value || '2099-12-31').getTime() + 86400000;
+  var today = new Date().toISOString().split('T')[0];
+
+  if (type === 'bons') {
+    var rows = (APP.bons || [])
+      .filter(function(b) { var ts = b.createdAt || 0; return ts >= from && ts <= to; })
+      .sort(function(a,b) { return (b.createdAt||0) - (a.createdAt||0); })
+      .map(function(b) {
+        return [
+          b.numero || '',
+          new Date(b.createdAt||0).toLocaleDateString('fr-FR'),
+          b.status || '',
+          b.recipiendaire || '',
+          b.demandeur || '',
+          b.commercialName || '',
+          b.objet || '',
+          (b.lignes||[]).map(function(l){ return (l.qty||0)+'×'+(l.name||l.code||''); }).join(' | '),
+          b._retroactif ? 'OUI' : 'NON'
+        ];
+      });
+    _exportCSV(
+      'PSM_bons_' + today + '.csv',
+      ['N° Bon','Date','Statut','Destinataire','Demandeur','Commercial','Objet','Articles','Rétroactif'],
+      rows
+    );
+    notify(rows.length + ' bons exportés ✓', 'success');
+  } else {
+    var rows2 = (APP.mouvements || [])
+      .filter(function(m) { var ts = m.ts || 0; return ts >= from && ts <= to; })
+      .sort(function(a,b) { return (b.ts||0) - (a.ts||0); })
+      .map(function(m) {
+        return [
+          new Date(m.ts||0).toLocaleDateString('fr-FR'),
+          new Date(m.ts||0).toLocaleTimeString('fr-FR'),
+          m.type || '',
+          m.articleName || '',
+          m.qty || 0,
+          m.stockBefore || '',
+          m.stockAfter || '',
+          m.note || ''
+        ];
+      });
+    _exportCSV(
+      'PSM_mouvements_' + today + '.csv',
+      ['Date','Heure','Type','Article','Quantité','Stock avant','Stock après','Note'],
+      rows2
+    );
+    notify(rows2.length + ' mouvements exportés ✓', 'success');
+  }
+  closeModal();
+}
+
 // Hot window: APP.settings.archiveRetentionMonths (default 12)
 // Archives in Firebase: app_data/archives/{bons|mouvements|audit}/{year}
 // ============================================================
@@ -616,7 +707,8 @@ if (typeof APP !== 'undefined' && !APP._archivesCache) {
 
 function _archRetentionMonths() {
   var m = parseInt(APP.settings && APP.settings.archiveRetentionMonths);
-  if (!m || m < 1) m = 12;
+  // Plancher minimum de 24 mois non modifiable (conformité légale / audit GMA)
+  if (!m || m < 24) m = 24;
   return m;
 }
 function _archCutoffTs() {
@@ -746,7 +838,7 @@ async function loadArchiveYear(type, year) {
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return [];
   try {
     var snap = await _firebaseDB.ref('app_data/archives/' + type + '/' + year).once('value');
-    var items = _archArrayFromSnap(snap.val());
+    var items = _archArrayFromSnap(snap.val()).filter(function(i){ return !i._deleted; });
     APP._archivesCache[type] = APP._archivesCache[type] || {};
     APP._archivesCache[type][year] = items;
     return items;
@@ -762,12 +854,20 @@ async function deleteArchiveEntry(type, year, id) {
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return false;
   var ref = _firebaseDB.ref('app_data/archives/' + type + '/' + year);
   var snap = await ref.once('value');
-  var items = _archArrayFromSnap(snap.val()).filter(function(i){ return i.id !== id; });
-  await ref.set(items);
+  var items = _archArrayFromSnap(snap.val());
+  var _cu2 = typeof _currentUser==='function' ? _currentUser() : null;
+  // Soft-delete : marquer is_deleted plutôt que supprimer physiquement
+  // Garantit la traçabilité légale et évite les suppressions accidentelles irréversibles.
+  // Un admin peut faire une purge définitive via 'Purger les archives' dans Paramètres.
+  var updated = items.map(function(i){
+    if (i.id === id) return Object.assign({}, i, { _deleted: true, _deletedAt: Date.now(), _deletedBy: (_cu2 && _cu2.email) || 'admin' });
+    return i;
+  });
+  await ref.set(updated);
   if (APP._archivesCache[type] && APP._archivesCache[type][year]) {
-    APP._archivesCache[type][year] = APP._archivesCache[type][year].filter(function(i){ return i.id !== id; });
+    APP._archivesCache[type][year] = updated;
   }
-  if (typeof auditLog === 'function') auditLog('DELETE', 'archive_' + type, id, { year: year }, null);
+  if (typeof auditLog === 'function') auditLog('SOFT_DELETE', 'archive_' + type, id, { year: year }, { _deletedBy: (_cu2 && _cu2.email)||'admin' });
   return true;
 }
 
@@ -1183,6 +1283,15 @@ async function initApp() {
       }
     } catch(e) { console.warn('[PSM] localStorage load:', e); }
 
+    // C4 : Restaurer lastPage depuis la clé séparée si psm_pro_db était absent
+    // (psm_lastpage est sauvé à chaque navigation, survit si psm_pro_db est vidé)
+    try {
+      var _savedLastPage = localStorage.getItem('psm_lastpage');
+      if (_savedLastPage && APP.settings && !APP.settings.lastPage) {
+        APP.settings.lastPage = _savedLastPage;
+      }
+    } catch(e) {}
+
     // === Flags migration: regrouper les anciens flags top-level dans APP._migrations ===
     // One-shot pour users existants qui ont deja APP._resetDone_* etc. a la racine.
     if (!APP._migrations || typeof APP._migrations !== 'object') APP._migrations = {};
@@ -1195,7 +1304,10 @@ async function initApp() {
     });
 
     // === ONE-TIME DATA RESET (2026-04-06) ===
-    if (!APP._migrations.resetDone_20260406) {
+    // Guard : ne pas fire sur un APP vide (localStorage effacé) — si _savedDataLoaded est false,
+    // l'APP est vide et la migration est sans effet. Elle tournera après le prochain login
+    // une fois que Firebase aura rechargé les données (les flags _migrations seront dans le cloud).
+    if (!APP._migrations.resetDone_20260406 && _savedDataLoaded) {
       console.log('[PSM] One-time data reset: clearing mouvements, audit, activityLog, dispatch history');
       APP.mouvements = [];
       APP.audit = [];
@@ -1203,7 +1315,7 @@ async function initApp() {
       if (APP.dispatch) { APP.dispatch.history = []; }
       APP.dispatchHistory = [];
       APP._migrations.resetDone_20260406 = true;
-      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+      // Pas de localStorage.setItem ici — saveDB() via login flow synce vers Firebase
       console.log('[PSM] Data reset complete');
     }
 
@@ -1211,7 +1323,7 @@ async function initApp() {
     if (!APP._migrations.annuaireSigStrip_20260409) {
       (APP.annuaire || []).forEach(function(p) { delete p.signatureKey; delete p.signature; });
       APP._migrations.annuaireSigStrip_20260409 = true;
-      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+      // localStorage sync géré par saveDB() au prochain login
       console.log('[PSM] Annuaire signatures stripped');
     }
 
@@ -1224,7 +1336,7 @@ async function initApp() {
         }
       } catch(e) { console.warn('[PSM] backfill failed:', e); }
       APP._migrations.bonValidatorBackfill_20260420 = true;
-      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+      // localStorage sync géré par saveDB() au prochain login
     }
 
     // 2. Sign out any previous session — force fresh login every time
@@ -1439,7 +1551,7 @@ function toggleSidebar() {
   var collapsed = sb.classList.toggle('sb-collapsed');
   APP.settings._sidebarCollapsed = collapsed;
   clearTimeout(toggleSidebar._t);
-  toggleSidebar._t = setTimeout(function(){ try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e){} }, 500);
+  toggleSidebar._t = setTimeout(function(){ if(typeof saveDB === 'function') saveDB(); }, 500);
 }
 
 function renderSidebar() {
@@ -3301,7 +3413,8 @@ function renderBons() {
       <button class="btn btn-secondary btn-sm" onclick="renderBonsHistory()">📚 Historique</button>
       <button class="btn btn-secondary btn-sm" onclick="openVerifyCodeModal()">🔐 Vérifier</button>
       <button class="btn btn-secondary btn-sm" onclick="renderStockPredictions()">📊 Réappro</button>
-      <button class="btn btn-secondary btn-sm" onclick="exportBonsJSON()">📥 Export</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportBonsJSON()">📥 Export JSON</button>
+      <button class="btn btn-secondary btn-sm" onclick="openExportCSVModal()">📊 Export CSV</button>
       <button class="btn btn-primary" onclick="openBonModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouveau bon</button>
     </div>
   </div>
