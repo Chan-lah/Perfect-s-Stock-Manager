@@ -152,7 +152,7 @@
 <!--
   Sentry (optionnel) — décommenter et remplacer YOUR_DSN_HERE pour activer le monitoring d'erreurs.
   La fonction logError() dans app.js détecte automatiquement Sentry s'il est chargé.
-<script src="https://browser.sentry-cdn.com/7.119.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
+<script src="https://browser.sentry-cdn.com/7.119.0/bundle.tracing.min.js" crossorigin="anonymous" defer></script>
 <script>
   if (typeof Sentry !== 'undefined') {
     Sentry.init({

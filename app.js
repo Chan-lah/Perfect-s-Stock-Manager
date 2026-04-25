@@ -1540,7 +1540,10 @@ function showPage(id) {
     return;
   }
   currentPage = id;
-  if(APP.settings) { APP.settings.lastPage = id; try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {} }
+  if(APP.settings) {
+    APP.settings.lastPage = id;
+    try { localStorage.setItem('psm_lastpage', id); } catch(e) {}
+  }
   document.querySelectorAll('.sb-item').forEach(i => i.classList.toggle('active', i.dataset.page === id));
   document.querySelectorAll('.mbn-item').forEach(i => i.classList.toggle('active', i.dataset.page === id));
   const titles = {
@@ -5095,7 +5098,7 @@ function _renderPDVTable() {
       const actif = p.actif!==false;
       return `<tr style="${actif?'':'opacity:.5'}${_pdvSelectMode&&_pdvSelected.has(p.id)?';background:rgba(99,102,241,.08)':''}">
         ${_pdvSelectMode?`<td><input type="checkbox" ${_pdvSelected.has(p.id)?'checked':''} onchange="togglePdvSelect('${p.id}')" style="width:16px;height:16px;cursor:pointer"></td>`:''}
-        <td style="font-weight:600"><div class="pdv-name-wrap">${p.nom||'—'}<div class="pdv-tooltip">${buildPDVTooltip(p)}</div></div></td>
+        <td style="font-weight:600"><div class="pdv-name-wrap">${_h(p.nom||'—')}<div class="pdv-tooltip">${buildPDVTooltip(p)}</div></div></td>
         <td>${p.type==='boulangerie'?'<span class="badge badge-teal">🏭 Boulangerie</span>':'<span class="badge badge-yellow">🚛 Distributeur</span>'}</td>
         <td>${z?`<span style="background:${z.color}22;color:${z.color};border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600">${z.label}</span>`:'<span class="badge badge-gray">—</span>'}</td>
         <td>${s?`<span style="background:${s.color||'#888'}22;color:${s.color||'#888'};border-radius:99px;padding:2px 8px;font-size:11px">${s.label}</span>`:'—'}</td>
@@ -5987,7 +5990,7 @@ function renderOrderCard(c) {
     + '<div class="order-card-header">'
     + '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap">'
     + '<span class="order-num" style="font-weight:700">' + c.numero + '</span>'
-    + (c.fournisseurNom ? '<span style="font-size:11px;color:var(--accent2);font-weight:600">\ud83c\udfed ' + c.fournisseurNom + '</span>' : '')
+    + (c.fournisseurNom ? '<span style="font-size:11px;color:var(--accent2);font-weight:600">\ud83c\udfed ' + _h(c.fournisseurNom) + '</span>' : '')
     + '<span class="order-status-badge ' + getCmdStatusClass(c.status) + '">' + getCmdStatusLabel(c.status) + '</span>'
     + (late ? '<span class="badge" style="background:var(--danger);color:#fff;font-size:10px">\u26a0 ' + latedays + 'j de retard</span>' : '')
     + (c.dateLivraisonPrevue ? '<span style="font-size:11px;color:var(--text-2)">\ud83d\udcc5 ' + fmtDate(c.dateLivraisonPrevue) + '</span>' : '')
@@ -6014,7 +6017,7 @@ function renderOrderCard(c) {
     + '<thead><tr><th style="width:48px"></th><th>Article</th><th style="width:75px;text-align:center">Command\u00e9</th><th style="width:60px;text-align:center">Re\u00e7u</th><th style="width:65px;text-align:center">Restant</th><th style="width:85px;text-align:right">Montant</th><th style="width:90px;text-align:center">Progression</th><th style="width:40px;text-align:center">\u2713</th></tr></thead>'
     + '<tbody>' + lignesHtml + '</tbody>'
     + '</table>'
-    + (c.note ? '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">\ud83d\udcdd ' + c.note + '</div>' : '')
+    + (c.note ? '<div style="font-size:11px;color:var(--text-2);margin-top:8px;background:var(--bg-3);padding:6px 10px;border-radius:6px">\ud83d\udcdd ' + _h(c.note) + '</div>' : '')
     + '</div>';
 }
 
@@ -6491,12 +6494,7 @@ function _addNewCmdLine() {
   prixEl.value = '0';
 }
 
-// Legacy compat
-function attachOrderInlineEditors() {}
-function openFragLivModal() {}
-function saveFragLiv() {}
-function _ORIGINAL_openFragLivModal() {}
-function addFragRow() {}
+// Legacy compat stubs removed (fonctions vides inutilisées)
 
 
 // ============================================================
@@ -6842,8 +6840,8 @@ function printAuditTrail() {
   saveDB();
   const html = _buildAuditPrintHTML();
   const w = window.open('','_blank','width=900,height=700');
-  w.document.write(html);
-  w.document.close();
+  if (!w) { notify('Popups bloqués — autorisez-les pour imprimer', 'warning'); return; }
+  w.document.write(html); w.document.close();
   w.onload = () => { w.focus(); w.print(); };
   notify('Impression audit lancée','success');
 }
@@ -6853,151 +6851,15 @@ function downloadAuditPDF() {
   saveDB();
   const html = _buildAuditPrintHTML();
   const w = window.open('','_blank','width=900,height=700');
-  w.document.write(html);
-  w.document.close();
+  if (!w) { notify('Popups bloqués — autorisez-les pour télécharger', 'warning'); return; }
+  w.document.write(html); w.document.close();
   w.onload = () => {
     w.focus(); w.print();
     notify('Utilisez "Enregistrer en PDF" dans la boîte de dialogue d\'impression','info');
   };
 }
 
-// ============================================================
-// COMPANIES
-// ============================================================
-function renderCompanies() {
-  document.getElementById('content').innerHTML=`
-  <div class="flex-between mb-16">
-    <div><div class="page-title">Entreprises</div><div class="page-sub">Gérez les entreprises émettrices de bons de sortie</div></div>
-    <button class="btn btn-primary" onclick="openCompanyModal()">+ Ajouter entreprise</button>
-  </div>
-  <div class="grid-2" style="gap:16px">
-    ${(APP.companies||[]).map(co=>renderCompanyCard(co)).join('')}
-    ${(APP.companies||[]).length===0?'<div class="empty-state"><p>Aucune entreprise configurée. Ajoutez votre première entreprise pour pouvoir émettre des bons.</p></div>':''}
-  </div>`;
-}
-
-function renderCompanyCard(co) {
-  const bonsCount=APP.bons.filter(b=>b.companyId===co.id).length;
-  return `<div class="card" style="border-left:4px solid ${co.colorPrimary||'var(--accent)'}">
-    <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:16px">
-      <div style="width:72px;height:72px;border-radius:10px;background:white;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
-        ${co.logo?`<img src="${co.logo}" style="width:100%;height:100%;object-fit:contain">`:`<span style="font-size:24px;font-weight:900;color:${co.colorPrimary||'#333'}">${co.shortName||co.name.charAt(0)}</span>`}
-      </div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:16px;font-weight:700;margin-bottom:2px">${co.name}</div>
-        ${co.shortName?`<div style="font-size:11px;color:var(--text-2);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px">${co.shortName}</div>`:''}
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <span style="width:18px;height:18px;border-radius:4px;background:${co.colorPrimary||'#333'};display:inline-block;border:1px solid rgba(0,0,0,0.1)" title="Couleur principale"></span>
-          <span style="width:18px;height:18px;border-radius:4px;background:${co.colorSecondary||'#666'};display:inline-block;border:1px solid rgba(0,0,0,0.1)" title="Couleur secondaire"></span>
-          <span style="width:18px;height:18px;border-radius:4px;background:${co.colorAccent||'#999'};display:inline-block;border:1px solid rgba(0,0,0,0.1)" title="Couleur accent"></span>
-        </div>
-        <div style="font-size:11px;color:var(--text-2)">${co.address||'—'}</div>
-      </div>
-    </div>
-    <div class="stat-row"><span class="stat-label">Tél</span><span class="stat-val">${co.tel||'—'}</span></div>
-    <div class="stat-row"><span class="stat-label">Email</span><span class="stat-val" style="font-size:12px">${co.email||'—'}</span></div>
-    <div class="stat-row"><span class="stat-label">Bons émis</span><span class="stat-val" style="color:var(--accent)">${bonsCount}</span></div>
-    <div style="display:flex;gap:8px;margin-top:14px">
-      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="openCompanyModal('${co.id}')">✏️ Modifier</button>
-      <button class="btn btn-secondary btn-sm" onclick="previewCompanyBon('${co.id}')">👁 Aperçu</button>
-      ${(APP.companies||[]).length>1?`<button class="btn btn-danger btn-sm" onclick="deleteCompany('${co.id}')">🗑</button>`:''}
-    </div>
-  </div>`;
-}
-
-function openCompanyModal(id) {
-  const co=id?(APP.companies||[]).find(c=>c.id===id):null;
-  openModal('modal-company',co?'Modifier entreprise':'Nouvelle entreprise',`
-    <div class="form-row">
-      <div class="form-group"><label>Nom complet *</label><input id="co-name" value="${co?.name||''}"></div>
-      <div class="form-group"><label>Abréviation</label><input id="co-short" value="${co?.shortName||''}" maxlength="8"></div>
-    </div>
-    <div class="form-group"><label>Adresse</label><input id="co-addr" value="${co?.address||''}"></div>
-    <div class="form-row">
-      <div class="form-group"><label>Téléphone</label><input id="co-tel" value="${co?.tel||''}"></div>
-      <div class="form-group"><label>Email</label><input type="email" id="co-email" value="${co?.email||''}"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>Fax</label><input id="co-fax" value="${co?.fax||''}"></div>
-      <div class="form-group"><label>Site web</label><input id="co-website" value="${co?.website||''}"></div>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
-      <div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px">🎨 Couleurs du bon de sortie</div>
-      <div class="form-row-3">
-        <div class="form-group"><label>Couleur principale</label><div style="display:flex;gap:8px;align-items:center"><input type="color" id="co-color1" value="${co?.colorPrimary||'#111111'}" style="width:48px;height:36px;padding:2px;border-radius:6px;cursor:pointer" oninput="syncColor('co-color1','co-color1-hex')"><input id="co-color1-hex" value="${co?.colorPrimary||'#111111'}" style="flex:1;font-family:monospace;font-size:12px" oninput="syncColor('co-color1','co-color1-hex',true)"></div></div>
-        <div class="form-group"><label>Couleur secondaire</label><div style="display:flex;gap:8px;align-items:center"><input type="color" id="co-color2" value="${co?.colorSecondary||'#333333'}" style="width:48px;height:36px;padding:2px;border-radius:6px;cursor:pointer" oninput="syncColor('co-color2','co-color2-hex')"><input id="co-color2-hex" value="${co?.colorSecondary||'#333333'}" style="flex:1;font-family:monospace;font-size:12px" oninput="syncColor('co-color2','co-color2-hex',true)"></div></div>
-        <div class="form-group"><label>Couleur accent</label><div style="display:flex;gap:8px;align-items:center"><input type="color" id="co-color3" value="${co?.colorAccent||'#999999'}" style="width:48px;height:36px;padding:2px;border-radius:6px;cursor:pointer" oninput="syncColor('co-color3','co-color3-hex')"><input id="co-color3-hex" value="${co?.colorAccent||'#999999'}" style="flex:1;font-family:monospace;font-size:12px" oninput="syncColor('co-color3','co-color3-hex',true)"></div></div>
-      </div>
-      <div id="color-preview" style="height:36px;border-radius:8px;margin-top:8px;background:linear-gradient(90deg,${co?.colorPrimary||'#111'},${co?.colorSecondary||'#333'},${co?.colorAccent||'#999'})"></div>
-    </div>
-    <div class="form-group">
-      <label>Logo</label>
-      <div style="display:flex;gap:12px;align-items:center">
-        <div class="field-img" onclick="document.getElementById('co-logo-file').click()" id="co-logo-preview" style="width:80px;height:80px;border-radius:10px;background:white">
-          ${co?.logo?`<img src="${co.logo}">`:'<span style="font-size:28px">🏢</span>'}
-        </div>
-        <input type="file" id="co-logo-file" accept="image/*" style="display:none" onchange="loadImgPreview('co-logo-file','co-logo-preview','co-logo-data');updateColorPreview()">
-        <input type="hidden" id="co-logo-data" value="">
-        <div style="font-size:12px;color:var(--text-2)">PNG transparent recommandé<br>Le logo apparaîtra sur les bons</div>
-      </div>
-    </div>`,
-  ()=>saveCompany(id),'modal-lg');
-  setTimeout(()=>{
-    const ld=document.getElementById('co-logo-data');
-    if(ld&&co?.logo) ld.value=co.logo;
-    ['1','2','3'].forEach(n=>{
-      const picker=document.getElementById('co-color'+n);
-      if(picker) picker.addEventListener('input',()=>{const hex=document.getElementById('co-color'+n+'-hex');if(hex)hex.value=picker.value;updateColorPreview();});
-    });
-    updateColorPreview();
-  },50);
-}
-
-function syncColor(pickerId, hexId, fromHex) {
-  const src=document.getElementById(fromHex?hexId:pickerId);
-  const dst=document.getElementById(fromHex?pickerId:hexId);
-  if(!src||!dst) return;
-  if(fromHex){if(/^#[0-9A-Fa-f]{6}$/.test(src.value)) dst.value=src.value;}
-  else dst.value=src.value;
-  updateColorPreview();
-}
-
-function updateColorPreview() {
-  const c1=document.getElementById('co-color1')?.value||'#111';
-  const c2=document.getElementById('co-color2')?.value||'#333';
-  const c3=document.getElementById('co-color3')?.value||'#999';
-  const prev=document.getElementById('color-preview');
-  if(prev) prev.style.background=`linear-gradient(90deg,${c1},${c2},${c3})`;
-}
-
-function saveCompany(existingId) {
-  const name=document.getElementById('co-name').value.trim();
-  if(!name){notify('Nom obligatoire','error');return;}
-  const logo=document.getElementById('co-logo-data').value;
-  const data={name,shortName:document.getElementById('co-short').value.trim(),address:document.getElementById('co-addr').value,tel:document.getElementById('co-tel').value,fax:document.getElementById('co-fax').value,email:document.getElementById('co-email').value,website:document.getElementById('co-website').value,colorPrimary:document.getElementById('co-color1').value,colorSecondary:document.getElementById('co-color2').value,colorAccent:document.getElementById('co-color3').value,colorLight:hexToLight(document.getElementById('co-color1').value)};
-  if(logo) data.logo=logo;
-  if(existingId){
-    const co=(APP.companies||[]).find(c=>c.id===existingId); if(!logo&&co.logo) data.logo=co.logo;
-    Object.assign(co,data); auditLog('UPDATE','company',co.id,null,{name:co.name}); notify('Entreprise mise à jour ✓','success');
-  } else {
-    const nc={id:generateId(),...data,logo:logo||'',createdAt:Date.now()};
-    (APP.companies||[]).push(nc); auditLog('CREATE','company',nc.id,null,{name:nc.name}); notify('Entreprise créée ✓','success');
-  }
-  saveDB();closeModal();renderCompanies();updateCompanyPanel();
-}
-
-function deleteCompany(id) {
-  if((APP.companies||[]).length<=1){notify('Impossible de supprimer la dernière entreprise','error');return;}
-  if(!confirm('Supprimer cette entreprise ?')) return;
-  APP.companies=(APP.companies||[]).filter(c=>c.id!==id); saveDB(); renderCompanies();
-  notify('Entreprise supprimée','warning');
-}
-
-function previewCompanyBon(coId) {
-  const co=null;
-  const dummyBon={id:'preview',numero:'BS-'+new Date().getFullYear()+'-XXXX',companyId:coId,recipiendaire:'Prénom Nom',commercialId:null,objet:'Aperçu bon de sortie',date:new Date().toISOString().split('T')[0],lignes:[{code:'ART-001',name:'Article exemple',qty:50,obs:''},{code:'ART-002',name:'Deuxième article',qty:20,obs:'Grande taille'}],sigDemandeur:'',sigMKT:'',createdAt:Date.now()};
-  openModal('modal-co-preview','Aperçu bon — '+co.name,`<div style="max-height:75vh;overflow:auto">${generateBonHTML(dummyBon)}</div>`,null,'modal-xl');
-}
+// Module Entreprises retiré (vestige non présent dans sidebar/PAGES)
 
 // ============================================================
 // ÉDITEUR DE BON (temps réel)
@@ -7549,6 +7411,7 @@ function printComReport() {
     return '<tr><td style="font-weight:600">'+_h(c.prenom)+' '+_h(c.nom)+'</td><td>'+(zone?zone.label:'\u2014')+'</td><td style="text-align:center">'+pdv+'</td><td style="text-align:center">'+bonsCount+'</td><td style="text-align:center;font-weight:700;color:#cc4400">'+totalQty+'</td><td style="font-size:10px;color:#666">'+(artDetail||'\u2014')+'</td></tr>';
   }).join('');
   const win = window.open('','_blank','width=1000,height=750');
+  if (!win) { notify('Popups bloqu\u00e9s \u2014 autorisez-les pour imprimer', 'warning'); return; }
   win.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>R\u00e9capitulatif par commercial</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:24px 32px;color:#111;background:#fff;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th{background:#1a3a8b;color:white;padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:7px 10px;border-bottom:1px solid #eee;font-size:11px}tr:nth-child(even) td{background:#f9f9f9}.header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:16px}@media print{@page{margin:10mm;size:A4 landscape}}</style></head><body><div class="header"><div>'+(logo?'<img src="'+logo+'" style="max-height:80px;max-width:180px;object-fit:contain;display:block;margin-bottom:6px">':'')+'<div style="font-size:11px;color:#444">'+(addr||'')+'</div>'+(tel?'<div style="font-size:11px">T\u00e9l: '+tel+'</div>':'')+'</div><div style="text-align:right"><div style="font-size:18px;font-weight:900;border:2px solid #111;padding:8px 16px;display:inline-block">R\u00c9CAPITULATIF PAR COMMERCIAL</div><div style="font-size:11px;color:#555;margin-top:4px">Imprim\u00e9 le '+new Date().toLocaleDateString('fr-FR')+'</div></div></div><table><thead><tr><th>Commercial</th><th>Zone</th><th style="text-align:center">PDV</th><th style="text-align:center">Bons</th><th style="text-align:center">Total sorti</th><th>Top gadgets</th></tr></thead><tbody>'+comRows+'</tbody></table><div style="margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px">Document g\u00e9n\u00e9r\u00e9 automatiquement \u2014 Perfect\'s Stock Manager</div><script>window.onload=()=>{setTimeout(()=>window.print(),400)}<\/script></body></html>');
   win.document.close();
 }
@@ -7992,12 +7855,16 @@ function runSmartSearch(q) {
   if(fuzzyMatch('analytique',q)||fuzzyMatch('analyse',q)) results.push({type:'page',icon:'🧠',color:'#9b59b6',title:'Analytique',sub:'Prédictions, top gadgets, agents actifs',action:()=>{closeSmartSearch();showPage('analytics');}});
   if(!results.length){container.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px">Aucun résultat pour "<strong>${q}</strong>"</div>`;return;}
   container.innerHTML=results.slice(0,8).map((r,i)=>`
-    <div class="search-result-item" id="sr-${i}" onclick="r${i}()" data-idx="${i}">
+    <div class="search-result-item" id="sr-${i}" onclick="_searchDispatch(${i})" data-idx="${i}">
       <div class="search-result-icon" style="background:${r.color}22;color:${r.color}">${r.icon}</div>
       <div><div class="search-result-title">${highlight(r.title,q)}</div><div class="search-result-sub">${r.sub}</div></div>
       <div style="margin-left:auto;font-size:11px;color:var(--text-3);background:var(--bg-3);padding:2px 6px;border-radius:4px">${r.type}</div>
     </div>`).join('');
-  results.slice(0,8).forEach((r,i)=>{window['r'+i]=r.action;});
+  window._searchActions = {};
+  results.slice(0,8).forEach((r,i)=>{ window._searchActions[i]=r.action; });
+}
+function _searchDispatch(i) {
+  if (window._searchActions && typeof window._searchActions[i] === 'function') window._searchActions[i]();
 }
 function highlight(text,q) {
   if(!q) return text;

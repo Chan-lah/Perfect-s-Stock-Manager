@@ -40,9 +40,7 @@ async function _signOut() {
   _userProfile = null;
 }
 
-// Backward compat aliases
-var _supabaseUser = null;
-function _checkSupabaseSession() { return _checkSession(); }
+// Supabase backward compat removed (migration terminée 2026-04-15)
 
 // ── Profile loading (Firebase Realtime Database) ──────────
 
@@ -283,7 +281,6 @@ function showLoginScreen() {
   }, 100);
 }
 
-function showSupabaseLogin() { showLoginScreen(); }
 
 // ── Handle Login ───────────────────────────────────────────
 
@@ -306,7 +303,6 @@ async function _handleLogin(e) {
     }
     await _signIn(email, password);
     _onlineMode = true;
-    _supabaseUser = _cloudUser; // backward compat
 
     // F8: Set online presence
     if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
@@ -445,34 +441,10 @@ async function _handleLogin(e) {
       // Local is newer or equal -- but be cautious: only auto-push if local content
       // is at least as rich as cloud. Otherwise a stale browser could wipe a fresh cloud.
       var _shouldPush = true;
-      try {
-        if (_cloudTs > 0 && typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-          var _cloudSnap = await _firebaseDB.ref('app_data/data').once('value');
-          var _cd = _cloudSnap.val() || {};
-          var _localBons = (APP.bons || []).length;
-          var _cloudBons = (_cd.bons || []).length;
-          var _localArt = (APP.articles || []).length;
-          var _cloudArt = (_cd.articles || []).length;
-          var _localMvt = (APP.mouvements || []).length;
-          var _cloudMvt = (_cd.mouvements || []).length;
-          // If cloud has MORE in any critical section, local is suspicious -> fetch cloud instead
-          if (_cloudBons > _localBons || _cloudArt > _localArt || _cloudMvt > _localMvt) {
-            console.warn('[PSM] Local seems incomplete vs cloud (bons L=' + _localBons + '/C=' + _cloudBons +
-                         ', art L=' + _localArt + '/C=' + _cloudArt +
-                         ', mvt L=' + _localMvt + '/C=' + _cloudMvt + '). Loading cloud instead.');
-            if (typeof _fixFirebaseArrays === 'function') _cd = _fixFirebaseArrays(_cd);
-            var _ub = APP.users ? APP.users.slice() : [];
-            Object.assign(APP, _cd);
-            if (!('users' in _cd)) APP.users = _ub;
-            _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
-            try {
-              var _ci = localStorage.getItem('psm_images_cache');
-              if (_ci && typeof _restoreImages === 'function') _restoreImages(APP, JSON.parse(_ci));
-            } catch(e) {}
-            _shouldPush = false;
-          }
-        }
-      } catch(ex) { console.warn('[PSM] safety check failed:', ex.message || ex); }
+      // Safety-check supprimé (Perf A3) : évitait une 3e lecture Firebase complète au login.
+      // La branche cloud-newer ci-dessus charge déjà les données cloud si nécessaire.
+      // En mode full-upload (_doSaveToCloud toujours .set()), local >= cloud ne peut
+      // pas cacher une régression — si cloud est vraiment plus riche, _cloudTs > _localTs.
       // Skip bg push pour les rôles sans permission d'écriture sur app_data
       // (éviterait un FIREBASE WARNING permission_denied au login des viewers)
       var _myRole = (_userProfile && _userProfile.role) || 'viewer';
@@ -723,21 +695,22 @@ function logoutUser() {
   if (typeof stopRealtimeSync === 'function') stopRealtimeSync();
   logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');
+  // Sauvegarder uid AVANT de nullifier _cloudUser (nécessaire pour F8/F9)
+  var _logoutUid = _cloudUser ? _cloudUser.uid : null;
   _cloudUser = null;
-  _supabaseUser = null;
   _userProfile = null;
   // F8: Clear presence on logout
-  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _logoutUid) {
     try {
-      _firebaseDB.ref('profiles/' + _cloudUser.uid + '/online').set(false);
-      _firebaseDB.ref('profiles/' + _cloudUser.uid + '/lastSeen').set(firebase.database.ServerValue.TIMESTAMP);
+      _firebaseDB.ref('profiles/' + _logoutUid + '/online').set(false);
+      _firebaseDB.ref('profiles/' + _logoutUid + '/lastSeen').set(firebase.database.ServerValue.TIMESTAMP);
     } catch(e) {}
   }
   // F9: Record logout in session journal
-  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser && window._psmSessionId) {
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _logoutUid && window._psmSessionId) {
     try {
       var _dur = window._psmLoginAt ? Date.now() - window._psmLoginAt : 0;
-      _firebaseDB.ref('sessions/' + _cloudUser.uid + '/' + window._psmSessionId).update({
+      _firebaseDB.ref('sessions/' + _logoutUid + '/' + window._psmSessionId).update({
         logoutAt: firebase.database.ServerValue.TIMESTAMP,
         duration: _dur,
         status: 'clean'
@@ -805,6 +778,12 @@ function showUserSwitchMenu(el) {
 // ── Login function for app.js compat ───────────────────────
 
 function loginAs(userId) {
+  // Garde : loginAs() nécessite une session Firebase active pour éviter l'usurpation via console
+  if (!_cloudUser) {
+    console.warn('[PSM] loginAs() bloqué : aucune session Firebase active');
+    if (typeof notify === 'function') notify('Connexion Firebase requise pour changer de compte', 'warning');
+    return;
+  }
   sessionStorage.setItem('psm_user', userId);
   if (typeof renderSidebar === 'function') renderSidebar();
   if (typeof showPage === 'function') showPage('dashboard');

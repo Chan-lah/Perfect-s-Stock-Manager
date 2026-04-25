@@ -233,15 +233,19 @@ async function _loadFromCloud() {
 // ── Real-time sync listener ──────────────────────────────
 var _realtimeListenerActive = false;
 var _lastLocalSaveTs = 0;
+// _firstSnapshot module-level : permet de ne pas sauter la première vraie MAJ
+// après une reconnexion (vs une variable locale qui se réinitialise à chaque
+// appel de startRealtimeSync, faisant rater les updates à la reconnexion).
+var _realtimefirstSkipDone = false;
 
 function startRealtimeSync() {
   if (!_firebaseDB || _realtimeListenerActive) return;
   _realtimeListenerActive = true;
-  var _firstSnapshot = true;
+  var _firstSnapshot = !_realtimefirstSkipDone;
 
   _firebaseDB.ref('app_data/data').on('value', function(snap) {
     // Skip the initial snapshot (we already loaded data)
-    if (_firstSnapshot) { _firstSnapshot = false; return; }
+    if (_firstSnapshot) { _firstSnapshot = false; _realtimefirstSkipDone = true; return; }
     if (!snap.exists()) return;
     // Skip if we're currently saving (prevents race conditions)
     if (_cloudSaving) return;
@@ -494,13 +498,15 @@ function _updateBackupIndicator() {
   else if (ago < 1440) el.textContent = 'Backup : il y a ' + Math.round(ago / 60) + 'h';
   else el.textContent = 'Backup : il y a ' + Math.round(ago / 1440) + 'j';
 }
-// Refresh indicator every 30s
-setInterval(_updateBackupIndicator, 30000);
+// Refresh indicator started after login (see startBackupScheduler)
 
 function startBackupScheduler() {
   if(_backupTimer) clearInterval(_backupTimer);
   const min = parseInt(APP.settings.backupInterval)||180;
   if(min > 0) _backupTimer = setInterval(() => autoBackup(true), min * 60000);
+  // Démarrer les indicateurs UI ici (après login) plutôt qu'au chargement du module
+  setInterval(_updateBackupIndicator, 30000);
+  setInterval(_updateSaveTimeAgo, 30000);
 }
 async function autoBackup(silent) {
   if(!APP.backups) APP.backups = [];
@@ -1129,7 +1135,7 @@ function _updateSaveTimeAgo() {
   else ago = 'il y a ' + Math.floor(diff/3600) + 'h';
   el.innerHTML = '<span title="Derni\u00e8re sauvegarde" style="color:var(--text-3);font-size:10px;white-space:nowrap;cursor:default">💾 ' + ago + '</span>';
 }
-setInterval(_updateSaveTimeAgo, 30000);
+// setInterval moved to startBackupScheduler() to avoid running before login
 
 window.addEventListener('beforeunload', function(e) {
   if(!_dirHandle) {
