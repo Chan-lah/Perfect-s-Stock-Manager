@@ -3153,6 +3153,11 @@ function deleteArticle(id) {
   const idx=APP.articles.findIndex(a=>a.id===id); if(idx<0) return;
   auditLog('DELETE','article',id,APP.articles[idx],null);
   APP.articles.splice(idx,1);
+  // H4 : nettoyer les références dispatch pour éviter les orphelins
+  if (APP.dispatch) {
+    if (APP.dispatch.eligibility) delete APP.dispatch.eligibility[id];
+    if (APP.dispatch.fixedAlloc)  delete APP.dispatch.fixedAlloc[id];
+  }
   saveDB(); filterArticles(); updateAlertBadge();
   notify('Gadget supprimé','success');
 }
@@ -3890,6 +3895,12 @@ function deleteBon(id) {
   }
   auditLog('DELETE','bon',bon.id,bon,null);
   APP.bons=APP.bons.filter(b=>b.id!==id);
+  // H4b : retirer l'ID du bon dans tous les snapshots dispatch.history
+  if (APP.dispatch && APP.dispatch.history) {
+    APP.dispatch.history.forEach(function(snap) {
+      if (snap.bonIds) snap.bonIds = snap.bonIds.filter(function(bid){ return bid !== id; });
+    });
+  }
   saveDB();renderBons();updateAlertBadge();renderSidebar();
   notify('Bon '+bon.numero+' supprimé' + (_wasDeducted ? ' (stock restauré)' : ''),'warning');
 }
@@ -5364,7 +5375,8 @@ function importPDVCSV() {
       for(let i=1;i<lines.length;i++){
         const cols = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''));
         if(!cols[0]) continue;
-        const nom=cols[0], type=cols[1]==='distributeur'?'distributeur':'boulangerie', adresse=cols[4]||'', contact=cols[5]||'';
+        // Colonnes CSV : Nom, Type, Zone, Secteur, Commercial, Adresse, Contact
+        const nom=cols[0], type=cols[1]==='distributeur'?'distributeur':'boulangerie', adresse=cols[5]||'', contact=cols[6]||'';
         const zone = (APP.zones||[]).find(z=>z.label.toLowerCase()===((cols[2]||'').toLowerCase()));
         const sect = (APP.secteurs||[]).find(s=>s.label.toLowerCase()===((cols[3]||'').toLowerCase()));
         const com = APP.commerciaux.find(c=>(_h(c.prenom)+' '+_h(c.nom)).toLowerCase()===((cols[4]||'').toLowerCase()));

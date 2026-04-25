@@ -471,11 +471,18 @@ kbd{background:var(--bg-3);border:1px solid var(--border);border-radius:4px;padd
   #disp-tab-repartition .btn{font-size:11px;padding:4px 6px}
 
   /* Better table scroll on mobile */
+  /* Wrap tables in scrollable containers */
   .table-wrap,div[style*="overflow-x:auto"]{
     -webkit-overflow-scrolling:touch;
     scrollbar-width:thin;
+    overflow-x:auto;
+    max-width:100%;
   }
-  table.table{min-width:500px}
+  /* ANDROID FIX : min-width:500px sur mobile forçait les tableaux à déborder.
+     Les tableaux sont dans .table-wrap qui gère le scroll horizontal. */
+  .table-wrap table,.table-wrap table.table{min-width:0;width:max-content;max-width:none}
+  /* Tables sans wrapper : width 100% pour ne pas dépasser */
+  table:not(.table-wrap table){max-width:100%;word-break:break-word}
 
   /* Dashboard grid */
   .dash-widget{margin-bottom:8px}
@@ -517,10 +524,11 @@ kbd{background:var(--bg-3);border:1px solid var(--border);border-radius:4px;padd
   .disp-tab-btn{font-size:10px;padding:4px 6px}
 }
 
-/* Touch-friendly targets */
+/* Touch-friendly targets — Android / coarse pointer */
 @media(pointer:coarse){
-  .btn{min-height:36px}
-  .btn-sm{min-height:30px}
+  /* ANDROID FIX : boutons plus hauts pour les doigts */
+  .btn{min-height:42px}
+  .btn-sm{min-height:34px}
   .sb-item{min-height:40px}
   input[type="checkbox"],input[type="radio"]{width:18px;height:18px}
   select{min-height:36px}
@@ -543,12 +551,34 @@ kbd{background:var(--bg-3);border:1px solid var(--border);border-radius:4px;padd
   .page-header .btn{min-height:38px}
   /* Scrollable containers need flick-scroll to reveal buttons at bottom edge */
   .modal,.table-wrap{-webkit-overflow-scrolling:touch}
-  /* Prevent body horizontal overflow that hides right-edge buttons */
-  html,body{overflow-x:hidden;max-width:100vw}
+  /* ANDROID FIX : overflow-x:hidden sur html/body bloquait les éléments fixed
+     et le scroll sur certains Android. Remplacé par clip + contain sur #app. */
+  html{overflow-x:clip}
+  body{overflow-x:clip;overscroll-behavior-x:none}
+  #app{overflow-x:hidden;max-width:100vw;contain:layout}
 }
 
 /* Better table responsiveness */
 .table-responsive-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
+
+/* ANDROID FIX : colonne d'actions toujours visible (sticky à droite dans les tableaux) */
+@media(max-width:600px){
+  /* Dernière colonne des tableaux (généralement les boutons d'action) */
+  .table-wrap table td:last-child,
+  .table-wrap table th:last-child{
+    position:sticky;
+    right:0;
+    background:var(--bg-card,#1a1f2e);
+    z-index:2;
+    box-shadow:-2px 0 4px rgba(0,0,0,.3);
+  }
+  /* Prevent modal overflow on small screens */
+  .modal-body{overflow-x:hidden;overflow-y:auto;max-height:70vh;-webkit-overflow-scrolling:touch}
+  /* Boutons dans les tables : assez grands pour les doigts */
+  .table-wrap .btn-sm{min-height:32px!important;min-width:32px!important;padding:4px 8px!important}
+  /* Formulaires dans modals scrollables */
+  .modal{overflow-y:auto;-webkit-overflow-scrolling:touch}
+}
 
 @media print{#app,#notify-container{display:none!important}}
 

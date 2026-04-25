@@ -889,10 +889,11 @@ async function _doSaveToFile() {
       console.warn('[PSM] saveToFile verify failed:', verifyErr);
       // Vérif impossible → warning mais on n'annule pas (write a peut-être réussi)
     }
-    // Write images file only if dirty (avec le même check)
-    if(_imagesDirty) {
-      var newImgs = _extractImages(APP);
-      Object.assign(_imagesCache, newImgs);
+    // Bug 5 fix : toujours écrire le fichier images
+    // (_imagesDirty n'était jamais mis à true → nouvelles photos/logos jamais sauvegardées)
+    var newImgs = _extractImages(APP);
+    Object.assign(_imagesCache, newImgs);
+    if (Object.keys(_imagesCache).length > 0) {
       var imgJson = JSON.stringify(_imagesCache);
       var expectedImgHash = await _sha256Hex(imgJson);
       var ifh = await _dirHandle.getFileHandle(_IMG_FILE, {create:true});
@@ -903,13 +904,11 @@ async function _doSaveToFile() {
         var checkImgFile = await ifh.getFile();
         var checkImgText = await checkImgFile.text();
         var actualImgHash = await _sha256Hex(checkImgText);
-        if (actualImgHash !== expectedImgHash) {
+        if (actualImgHash !== expectedImgHash)
           console.warn('[PSM] images file hash mismatch');
-          if (typeof notify === 'function') notify('\u26a0 Sauvegarde images corrompue (hash mismatch)', 'warning');
-        }
       } catch(imgVerifyErr) { console.warn('[PSM] images verify:', imgVerifyErr); }
-      _imagesDirty = false;
     }
+    _imagesDirty = false;
     updateFileSaveIndicator(true);
   } catch(e) {
     console.warn('[PSM] saveToFile:', e);
