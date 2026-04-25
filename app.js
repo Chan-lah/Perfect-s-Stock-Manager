@@ -1677,8 +1677,21 @@ function showPage(id) {
     calendar:renderCalendar,
     administration:function(){ document.getElementById('content').innerHTML = renderAdminPage(); _watchPresence(); }
   };
-  document.getElementById('content').innerHTML = '';
-  if(renders[id]) renders[id]();
+  // Perf 3 — cache de rendu : évite de recalculer le HTML si les données
+  // n'ont pas changé depuis le dernier render (APP._ts identique)
+  var _NOCACHE_PAGES = ['administration','dispatch','dashboard'];
+  var _cached = (typeof _pageCache !== 'undefined') && _pageCache[id];
+  if (_cached && _cached.ts === APP._ts && !_NOCACHE_PAGES.includes(id)) {
+    document.getElementById('content').innerHTML = _cached.html;
+  } else {
+    document.getElementById('content').innerHTML = '';
+    if(renders[id]) renders[id]();
+    // Stocker le rendu en cache pour la prochaine navigation
+    if (!_NOCACHE_PAGES.includes(id) && typeof _pageCache !== 'undefined') {
+      var _rendered = document.getElementById('content').innerHTML;
+      if (_rendered) _pageCache[id] = {html: _rendered, ts: APP._ts};
+    }
+  }
   if(id==='settings' && typeof _loadCloudSnapshotsUI==='function') setTimeout(_loadCloudSnapshotsUI, 100);
   if(id==='administration' && typeof _initAdminPage==='function') _initAdminPage();
 }
@@ -7682,8 +7695,15 @@ function importJSON(input) {
 function restoreSpecificBackup(id) {
   const bk=APP.backups.find(b=>b.id===id);
   if(!bk||!confirm('Restaurer ce backup ? Les données actuelles seront remplacées.')) return;
-  try{const restored=JSON.parse(bk.data);Object.assign(APP,restored);saveDB();notify('Backup restauré ✓','success');initApp();}
-  catch(e){notify('Erreur restauration','error');}
+  try{
+    if (!bk.data) { notify('Données de backup absentes (session rechargée) — utilisez un snapshot cloud', 'warning'); return; }
+    var _prevTs = APP._ts || 0;
+    const restored=JSON.parse(bk.data);
+    Object.assign(APP,restored);
+    if (typeof auditLog === 'function') auditLog('RESTORE_BACKUP','system',bk.id,{ts:_prevTs},{bkTs:bk.ts,restoredBy:(_currentUser()&&_currentUser().email)||'admin'});
+    saveDB();notify('Backup restauré ✓','success');initApp();
+  }
+  catch(e){notify('Erreur restauration : '+(e.message||e),'error');}
 }
 
 function resetAll() {

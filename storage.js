@@ -369,8 +369,15 @@ var _cloudSaveDebounceTimer = null; // debounce timer for cloud saves
 function saveDB() {
   APP._ts = Date.now();
   _invalidatePageCache();
-  // ALWAYS save to localStorage as backup (instant, reliable)
-  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
+  // ALWAYS save to localStorage (instant, reliable)
+  // Sécu 4 : strip backup data → économise ~2.5MB dans localStorage
+  // Les données complètes restent en mémoire (APP.backups) et dans PSm Saves.
+  try {
+    var _bkOrig = APP.backups;
+    if (APP.backups) APP.backups = APP.backups.map(function(b){ return {id:b.id,ts:b.ts,size:b.size,hash:b.hash,label:b.label}; });
+    localStorage.setItem('psm_pro_db', JSON.stringify(APP));
+    APP.backups = _bkOrig;
+  } catch(e) { try { APP.backups = _bkOrig; } catch(_){} }
   // Also save to file if available
   if (_dirHandle) { try { saveToFile(); } catch(e) {} }
   // Cloud sync: debounced 250ms (groups rapid successive changes into one upload)
@@ -659,8 +666,11 @@ async function _restoreCloudSnapshot(dayKey) {
     // Préserver les backups locaux et activity log actuels
     parsed.backups = APP.backups;
     parsed._activityLog = APP._activityLog;
+    var _prevTs = APP._ts || 0;
     Object.assign(APP, parsed);
     APP._ts = Date.now();
+    // Sécu 5 : tracer la restauration dans l'audit
+    if (typeof auditLog === 'function') auditLog('RESTORE_SNAPSHOT', 'system', dayKey, {ts: _prevTs}, {dayKey: dayKey, restoredBy: (_cloudUser && _cloudUser.email) || 'admin'});
     saveDB();
     notify('Snapshot ' + dayKey + ' restaure avec succes', 'success');
     if (typeof initApp === 'function') initApp();
