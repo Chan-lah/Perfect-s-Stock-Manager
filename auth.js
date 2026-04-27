@@ -406,7 +406,13 @@ async function _handleLogin(e) {
       }
     } catch(ex) {
       console.warn('[PSM] cloud ts read:', ex.message || ex);
+      // Fix : lecture _ts échouée + pas de localStorage -> forcer fetch cloud
+      _cloudTs = 1;
     }
+
+    // Guard critique : les deux à 0 = lecture cloud échouée + Sprint G sans localStorage.
+    // Sans ce guard, login pousse données locales vides -> écrase le cloud.
+    if (_cloudTs === 0 && _localTs === 0) { _cloudTs = 1; }
 
     if (_cloudTs > _localTs) {
       // Cloud is newer: fetch full data (with 8s timeout)
@@ -420,6 +426,25 @@ async function _handleLogin(e) {
       } catch(ex) {
         console.warn('[PSM] cloud full read:', ex.message || ex);
         _cloudData = null; // fallback to local on timeout
+      }
+    }
+
+    // Récupération d'urgence : si le cloud semble vide/corrompu (0 bons, 0 mouvements)
+    // ET que PSm Saves est disponible, charger depuis le fichier local.
+    // Cause : ERR_NETWORK_CHANGED + Sprint G (pas de localStorage) → timestamps à 0
+    // → login pousse données vides → cloud corrompu.
+    if (_cloudData && (_cloudData.bons||[]).length === 0 && (_cloudData.mouvements||[]).length === 0) {
+      if (typeof _dirHandle !== 'undefined' && _dirHandle && typeof _loadFromDir === 'function') {
+        console.warn('[PSM] Cloud vide/corrompu — tentative de récupération depuis PSm Saves');
+        try {
+          await _loadFromDir();
+          _cloudData = null; // fichier fait autorité
+          // Repousser vers le cloud après 2s (laisser l'app se stabiliser)
+          setTimeout(function() { if (typeof saveDB === 'function') saveDB(); }, 2000);
+          if (typeof notify === 'function') notify('Données récupérées depuis PSm Saves — synchronisation cloud en cours...', 'success');
+        } catch(e) { console.warn('[PSM] Récupération PSm Saves échouée:', e); }
+      } else {
+        console.warn('[PSM] Cloud vide ET PSm Saves non disponible — données potentiellement perdues.');
       }
     }
 

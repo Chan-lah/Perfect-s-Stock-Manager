@@ -4066,7 +4066,7 @@ function generateBonHTML(bon, overrides) {
         <td style="vertical-align:top;text-align:right">
           <div style="font-size:11px;color:#111;margin-bottom:12px">Abidjan, le <strong>${bon.date||new Date(bon.createdAt||Date.now()).toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</strong></div>
           <div style="font-size:20px;font-weight:900;color:#111;text-align:center;border:2px solid #111;padding:10px 18px;display:inline-block;letter-spacing:0.01em;line-height:1.3">${bonTitle}</div>
-          ${bon._retroactif?'<div style="background:#fff3cd;border:2px dashed #ff9800;color:#b45309;padding:8px 14px;margin-top:10px;font-size:12px;font-weight:900;letter-spacing:0.08em;text-align:center;display:inline-block">⚠ BON RÉTROACTIF — SANS IMPACT SUR LE STOCK</div>':''}
+          <!-- Bandeau retro retire du PDF - badge RETRO dans la liste suffit -->
           <div style="text-align:center;margin-top:8px;font-size:14px;font-weight:700;color:#111">
             Valable ${bon.validite||'1 mois'}
             <span style="font-size:22px;font-weight:900;color:${cPrimary};margin-left:8px;letter-spacing:0.05em">N° ${bon.numero}</span>
