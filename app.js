@@ -7497,6 +7497,76 @@ function editZone(id){openZoneModal(id);}
 // ============================================================
 // SETTINGS
 // ============================================================
+
+// ── Reconstruction du stock depuis l'historique des mouvements ───────────────
+// Admin uniquement. Corrige les stocks d'articles dont la valeur est incorrecte
+// en utilisant le stockAfter du dernier mouvement connu pour chaque article.
+function reconstructStocksFromMovements(dryRun) {
+  if (_currentUser()?.role !== 'admin') { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
+  var results = [];
+  (APP.articles || []).forEach(function(art) {
+    var lastMvt = (APP.mouvements || [])
+      .filter(function(m) { return m.articleId === art.id && m.stockAfter !== undefined; })
+      .sort(function(a, b) { return b.ts - a.ts; })[0];
+    if (lastMvt) {
+      results.push({ id: art.id, name: art.name, stockActuel: art.stock, stockReconstruit: lastMvt.stockAfter, ts: lastMvt.ts });
+      if (!dryRun) art.stock = lastMvt.stockAfter;
+    } else {
+      results.push({ id: art.id, name: art.name, stockActuel: art.stock, stockReconstruit: null, ts: null });
+    }
+  });
+  if (!dryRun) {
+    saveDB();
+    if (typeof renderArticles === 'function') renderArticles();
+  }
+  return results;
+}
+
+function openStockRepairModal() {
+  if (_currentUser()?.role !== 'admin') { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
+  var preview = reconstructStocksFromMovements(true); // dry run
+  var changed = preview.filter(function(r) { return r.stockReconstruit !== null && r.stockReconstruit !== r.stockActuel; });
+  var unchanged = preview.filter(function(r) { return r.stockReconstruit !== null && r.stockReconstruit === r.stockActuel; });
+  var noHistory = preview.filter(function(r) { return r.stockReconstruit === null; });
+
+  var rows = changed.map(function(r) {
+    return '<tr>'
+      + '<td style="padding:4px 8px">' + r.name + '</td>'
+      + '<td style="padding:4px 8px;text-align:center;color:var(--warning)">' + r.stockActuel + '</td>'
+      + '<td style="padding:4px 8px;text-align:center;color:var(--success)">' + r.stockReconstruit + '</td>'
+      + '<td style="padding:4px 8px;font-size:10px;color:var(--text-3)">' + (r.ts ? new Date(r.ts).toLocaleDateString('fr-FR') : '—') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var body = '<div style="font-size:13px">'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">'
+    + '<div style="background:var(--warning)15;border:1px solid var(--warning)44;border-radius:var(--radius);padding:10px;text-align:center">'
+    + '<div style="font-size:22px;font-weight:800;color:var(--warning)">' + changed.length + '</div>'
+    + '<div style="color:var(--text-2);font-size:11px">À corriger</div></div>'
+    + '<div style="background:var(--success)15;border:1px solid var(--success)44;border-radius:var(--radius);padding:10px;text-align:center">'
+    + '<div style="font-size:22px;font-weight:800;color:var(--success)">' + unchanged.length + '</div>'
+    + '<div style="color:var(--text-2);font-size:11px">Déjà corrects</div></div>'
+    + '<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;text-align:center">'
+    + '<div style="font-size:22px;font-weight:800;color:var(--text-2)">' + noHistory.length + '</div>'
+    + '<div style="color:var(--text-2);font-size:11px">Sans historique</div></div>'
+    + '</div>'
+    + (changed.length ? '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">'
+      + '<tr style="opacity:.6"><th style="text-align:left;padding:4px 8px">Article</th><th style="padding:4px 8px">Actuel</th><th style="padding:4px 8px">Reconstitué</th><th style="padding:4px 8px">Dernier mvt</th></tr>'
+      + rows
+      + '</table>' : '<p style="color:var(--success);margin:0 0 10px">✅ Tous les stocks sont déjà corrects.</p>')
+    + (noHistory.length ? '<p style="font-size:11px;color:var(--text-3);margin:0">'
+      + '⚠ ' + noHistory.length + ' article(s) sans mouvement — stock non modifié : '
+      + noHistory.map(function(r){ return r.name; }).join(', ') + '</p>' : '')
+    + '</div>';
+
+  openModal('stock-repair', '🔧 Reconstituer les stocks', body, function() {
+    if (!changed.length) { notify('Aucune correction nécessaire', 'info'); closeModal(); return; }
+    reconstructStocksFromMovements(false);
+    notify(changed.length + ' stock(s) corrigé(s) depuis l\'historique des mouvements ✓', 'success');
+    if (currentPage === 'articles') filterArticles();
+  });
+}
+
 function renderSettings() {
   const s=APP.settings;
   const _cu = typeof _currentUser==='function' ? _currentUser() : null;
