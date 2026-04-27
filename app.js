@@ -3428,6 +3428,7 @@ function renderBons() {
       <button class="btn btn-secondary btn-sm" onclick="renderBonsHistory()">📚 Historique</button>
       <button class="btn btn-secondary btn-sm" onclick="openVerifyCodeModal()">🔐 Vérifier</button>
       <button class="btn btn-secondary btn-sm" onclick="renderStockPredictions()">📊 Réappro</button>
+      <button class="btn btn-secondary btn-sm" onclick="openImportBonsModal()">📤 Import</button>
       <button class="btn btn-secondary btn-sm" onclick="exportBonsJSON()">📥 Export JSON</button>
       <button class="btn btn-secondary btn-sm" onclick="openExportCSVModal()">📊 Export CSV</button>
       <button class="btn btn-primary" onclick="openBonModal()"><svg width="13" height="13" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nouveau bon</button>
@@ -4181,6 +4182,314 @@ async function printBon(id, paperSize) {
   auditLog('PRINT','bon',bon.id,null,{numero:bon.numero});
   saveDB();
 }
+
+// ============================================================
+// IMPORT BONS (CSV / JSON)
+// ============================================================
+
+function openImportBonsModal() {
+  var body = '<div style="display:flex;flex-direction:column;gap:14px">'
+    + '<div style="border:2px dashed var(--border);border-radius:var(--radius);padding:20px;text-align:center;background:var(--bg-2);cursor:pointer" onclick="document.getElementById(\'import-bons-file\').click()">'
+    + '<div style="font-size:28px;margin-bottom:6px">📂</div>'
+    + '<div style="color:var(--text-2);font-size:13px;margin-bottom:10px">Cliquez ou glissez un fichier .json ou .csv</div>'
+    + '<input type="file" id="import-bons-file" accept=".json,.csv" style="display:none">'
+    + '<span style="font-size:12px;color:var(--text-3);border:1px solid var(--border);padding:4px 12px;border-radius:var(--radius)">Choisir un fichier</span>'
+    + '</div>'
+    + '<div id="import-bons-preview"></div>'
+    + '<details style="border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;background:var(--bg-2)">'
+    + '<summary style="cursor:pointer;font-size:12px;color:var(--text-2)">ℹ Aide — formats acceptés</summary>'
+    + '<ul style="margin:8px 0 0;padding-left:16px;font-size:11px;color:var(--text-2);line-height:1.8">'
+    + '<li><strong>JSON</strong> : fichier issu de l\'Export JSON PSM</li>'
+    + '<li><strong>CSV</strong> : fichier Export CSV PSM (colonnes : N° Bon, Date, Statut, Destinataire, Demandeur, Commercial, Objet, Articles, Rétroactif)</li>'
+    + '<li>Les <strong>doublons</strong> (même N° de bon) sont automatiquement ignorés</li>'
+    + '<li>Bons <strong>Validés</strong> → mouvement sortie de stock · Bons <strong>Annulés</strong> (après validation) → mouvement entrée</li>'
+    + '</ul>'
+    + '</details>'
+    + '</div>';
+
+  openModal('import-bons', '📤 Importer des bons', body, function(){ _confirmImportBons(); });
+
+  requestAnimationFrame(function() {
+    var inp = document.getElementById('import-bons-file');
+    if (!inp) return;
+    inp.addEventListener('change', _previewImportBons);
+
+    // Drag & drop sur la zone dashed
+    var zone = inp.parentElement;
+    if (zone) {
+      zone.addEventListener('dragover', function(e){ e.preventDefault(); zone.style.borderColor='var(--accent)'; });
+      zone.addEventListener('dragleave', function(){ zone.style.borderColor='var(--border)'; });
+      zone.addEventListener('drop', function(e){
+        e.preventDefault(); zone.style.borderColor='var(--border)';
+        try {
+          var dt = new DataTransfer();
+          dt.items.add(e.dataTransfer.files[0]);
+          inp.files = dt.files;
+          inp.dispatchEvent(new Event('change'));
+        } catch(_){ notify('Glisser-déposer non supporté — utilisez le bouton', 'warning'); }
+      });
+    }
+  });
+}
+
+function _parseBonsCSV(text) {
+  var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+  if (lines.length < 2) return [];
+  var sep = (lines[0].match(/;/g)||[]).length >= (lines[0].match(/,/g)||[]).length ? ';' : ',';
+  var headers = lines[0].split(sep).map(function(h){ return h.trim().toLowerCase().replace(/[^a-z0-9]/g,''); });
+  var idx = {
+    numero:       headers.findIndex(function(h){ return h.includes('bon') || h==='nbon'; }),
+    date:         headers.findIndex(function(h){ return h==='date'; }),
+    statut:       headers.findIndex(function(h){ return h==='statut'; }),
+    destinataire: headers.findIndex(function(h){ return h.includes('destin'); }),
+    demandeur:    headers.findIndex(function(h){ return h.includes('demand'); }),
+    commercial:   headers.findIndex(function(h){ return h.includes('commerc'); }),
+    objet:        headers.findIndex(function(h){ return h==='objet'; }),
+    articles:     headers.findIndex(function(h){ return h.includes('article'); }),
+    retroactif:   headers.findIndex(function(h){ return h.includes('troact'); })
+  };
+
+  return lines.slice(1).map(function(raw){
+    // Parse CSV ligne avec support guillemets
+    var cols=[], cur='', inQ=false;
+    for (var c=0;c<raw.length;c++){
+      var ch=raw[c];
+      if(ch==='"'){ inQ=!inQ; continue; }
+      if(ch===sep&&!inQ){ cols.push(cur.trim()); cur=''; continue; }
+      cur+=ch;
+    }
+    cols.push(cur.trim());
+    var get=function(f){ return idx[f]>=0?(cols[idx[f]]||'').trim():''; };
+
+    var lignes=[];
+    (get('articles')||'').split('|').forEach(function(part){
+      var m=part.trim().match(/^(\d+(?:[.,]\d+)?)\s*[x×*]\s*(.+)$/i)||part.trim().match(/^(\d+)\s+(.+)$/);
+      if(!m) return;
+      var qty=parseFloat(m[1].replace(',','.'));
+      var name=m[2].trim();
+      var art=APP.articles.find(function(a){ return a.name===name; })
+           ||APP.articles.find(function(a){ return a.name.toLowerCase()===name.toLowerCase(); })
+           ||APP.articles.find(function(a){ return a.code&&a.code.toLowerCase()===name.toLowerCase(); });
+      lignes.push({ articleId:art?art.id:null, articleName:name, qty:qty, code:art?art.code:'', _resolved:!!art });
+    });
+
+    var retroRaw=get('retroactif').toLowerCase();
+    return {
+      numero:get('numero'), date:get('date'),
+      status:(get('statut').toLowerCase()||'brouillon'),
+      recipiendaire:get('destinataire'), demandeur:get('demandeur'),
+      _commercialRaw:get('commercial'), objet:get('objet'),
+      lignes:lignes, _retroactif:retroRaw==='oui'||retroRaw==='true'||retroRaw==='1',
+      _fromCSV:true
+    };
+  }).filter(function(b){ return b.numero; });
+}
+
+function _validateImportBons(bons) {
+  var valid=[], duplicates=[], errors=[];
+  var existing={};
+  (APP.bons||[]).forEach(function(b){ if(b.numero) existing[b.numero]=true; });
+  var seenNow={};
+  var stockAgg={};
+
+  bons.forEach(function(bon){
+    var errs=[];
+    if(!bon.numero){ errs.push('N° de bon manquant'); }
+    else if(existing[bon.numero]){ duplicates.push({bon:bon,reason:'Déjà en base ('+bon.numero+')'}); return; }
+    else if(seenNow[bon.numero]){ duplicates.push({bon:bon,reason:'Doublon dans le fichier ('+bon.numero+')'}); return; }
+    else { seenNow[bon.numero]=true; }
+
+    // Résoudre articles
+    var lignesOk=(bon.lignes||[]).filter(function(l){ return l._resolved&&l.qty>0; });
+    // Pour JSON qui a déjà articleId, chercher l'article directement
+    if(!lignesOk.length && bon.lignes && bon.lignes.length){
+      lignesOk=bon.lignes.filter(function(l){
+        if(l.articleId){ var a=APP.articles.find(function(x){ return x.id===l.articleId; }); if(a) return true; }
+        return false;
+      });
+    }
+    if(!lignesOk.length){ errs.push('Aucun article reconnu : '+((bon.lignes||[]).map(function(l){ return l.articleName||l.name||'?'; }).join(', '))); }
+
+    // Résoudre commercial
+    var comId=bon.commercialId||null, comName=bon.commercialName||'';
+    if(!comId && bon._commercialRaw){
+      var raw=bon._commercialRaw.trim().toLowerCase();
+      var com=APP.commerciaux.find(function(c){
+        var f=(c.prenom+' '+c.nom).toLowerCase();
+        return f===raw||c.nom.toLowerCase()===raw;
+      });
+      if(com){ comId=com.id; comName=com.prenom+' '+com.nom; }
+      else { comName=bon._commercialRaw; }
+    }
+
+    // Agréger stock pour bons validés non-rétroactifs
+    if(bon.status==='validé'&&!bon._retroactif&&!errs.length){
+      lignesOk.forEach(function(l){
+        stockAgg[l.articleId]=(stockAgg[l.articleId]||0)+l.qty;
+      });
+    }
+
+    if(errs.length){ errors.push({bon:bon,reasons:errs}); return; }
+
+    var bonFinal={
+      id:generateId(), numero:bon.numero, date:bon.date||'',
+      status:bon.status, recipiendaire:bon.recipiendaire||'',
+      demandeur:bon.demandeur||bon._demandeurName||'',
+      commercialId:comId, commercialName:comName,
+      objet:bon.objet||'', lignes:lignesOk.map(function(l){
+        return { articleId:l.articleId, articleName:l.articleName||(APP.articles.find(function(a){ return a.id===l.articleId; })||{}).name||'', qty:l.qty, code:l.code||'' };
+      }),
+      _retroactif:bon._retroactif||false, sigDemandeur:bon.sigDemandeur||'', sigMKT:bon.sigMKT||'',
+      createdAt:bon.createdAt||Date.now(), validite:bon.validite||'', _version:bon._version||1,
+      _importedAt:Date.now()
+    };
+    // Conserver champs spécifiques JSON
+    ['_validatedAt','_cancelledAt','companyId','_demandeurType','_recipType',
+     '_demandeurAnnuaireId','_recipiendaireAnnuaireId','createdBy','numero'].forEach(function(f){
+      if(bon[f]!==undefined) bonFinal[f]=bon[f];
+    });
+    if(bon.status==='annulé'&&bon._validatedAt) bonFinal._wasValidated=true;
+
+    valid.push(bonFinal);
+  });
+
+  // Vérif stock agrégé
+  var problematic={};
+  Object.keys(stockAgg).forEach(function(artId){
+    var art=APP.articles.find(function(a){ return a.id===artId; });
+    if(art&&stockAgg[artId]>art.stock){
+      problematic[artId]='Stock insuffisant pour '+art.name+' (dispo='+art.stock+', total importé='+stockAgg[artId]+')';
+    }
+  });
+  if(Object.keys(problematic).length){
+    var surviving=[];
+    valid.forEach(function(bon){
+      if(bon.status==='validé'&&!bon._retroactif){
+        var hasProb=bon.lignes.some(function(l){ return problematic[l.articleId]; });
+        if(hasProb){ errors.push({bon:bon,reasons:[problematic[bon.lignes.find(function(l){ return problematic[l.articleId]; }).articleId]]}); return; }
+      }
+      surviving.push(bon);
+    });
+    valid=surviving;
+  }
+
+  return {valid:valid, duplicates:duplicates, errors:errors};
+}
+
+async function _previewImportBons() {
+  var inp=document.getElementById('import-bons-file');
+  var prev=document.getElementById('import-bons-preview');
+  if(!inp||!inp.files||!inp.files[0]||!prev) return;
+  var file=inp.files[0];
+  var ext=file.name.split('.').pop().toLowerCase();
+  prev.innerHTML='<div style="color:var(--text-2);font-size:12px;padding:8px">⏳ Analyse en cours...</div>';
+
+  try {
+    var text=await file.text();
+    var partial=[];
+    if(ext==='json'){
+      var p=JSON.parse(text);
+      partial=Array.isArray(p)?p:(p&&Array.isArray(p.bons)?p.bons:[]);
+    } else if(ext==='csv'){
+      partial=_parseBonsCSV(text);
+    } else {
+      prev.innerHTML='<div style="color:var(--danger);font-size:12px">Format non supporté (JSON ou CSV requis)</div>'; return;
+    }
+
+    if(!partial.length){ prev.innerHTML='<div style="color:var(--warning);font-size:12px">⚠ Aucun bon trouvé</div>'; window._bonsToImport=null; return; }
+
+    var res=_validateImportBons(partial);
+    window._bonsToImport=res.valid.length?res.valid:null;
+
+    var mvtCount=res.valid.filter(function(b){ return b.status==='validé'&&!b._retroactif; }).length
+               + res.valid.filter(function(b){ return b.status==='annulé'&&b._wasValidated; }).length;
+
+    var html='<div style="background:var(--bg-2);border-radius:var(--radius);padding:12px;font-size:12px">'
+      +'<div style="font-weight:700;margin-bottom:10px">📊 Résumé — '+file.name+'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">'
+      +'<div style="background:var(--success)15;border:1px solid var(--success)44;border-radius:var(--radius);padding:8px;text-align:center">'
+      +'<div style="font-size:22px;font-weight:800;color:var(--success)">'+res.valid.length+'</div><div style="color:var(--success)">Importables</div></div>'
+      +'<div style="background:var(--warning)15;border:1px solid var(--warning)44;border-radius:var(--radius);padding:8px;text-align:center">'
+      +'<div style="font-size:22px;font-weight:800;color:var(--warning)">'+res.duplicates.length+'</div><div style="color:var(--warning)">Doublons</div></div>'
+      +'<div style="background:var(--danger)15;border:1px solid var(--danger)44;border-radius:var(--radius);padding:8px;text-align:center">'
+      +'<div style="font-size:22px;font-weight:800;color:var(--danger)">'+res.errors.length+'</div><div style="color:var(--danger)">Erreurs</div></div>'
+      +'</div>';
+
+    if(mvtCount>0) html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:8px">📦 '+mvtCount+' mouvement(s) de stock seront créés</div>';
+
+    if(res.valid.length){
+      html+='<details><summary style="cursor:pointer;color:var(--success);margin-bottom:4px">Bons importables ('+res.valid.length+')</summary>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px">'
+        +'<tr style="opacity:.6"><th style="text-align:left;padding:2px 6px">N° Bon</th><th>Statut</th><th>Destinataire</th><th>Articles</th></tr>';
+      res.valid.forEach(function(b){
+        html+='<tr><td style="padding:2px 6px">'+b.numero+'</td><td style="padding:2px 6px">'+b.status+'</td>'
+          +'<td style="padding:2px 6px">'+(b.recipiendaire||'—')+'</td>'
+          +'<td style="padding:2px 6px">'+b.lignes.map(function(l){ return l.qty+'×'+l.articleName; }).join(', ')+'</td></tr>';
+      });
+      html+='</table></details>';
+    }
+    if(res.duplicates.length){
+      html+='<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--warning)">Doublons ignorés ('+res.duplicates.length+')</summary><ul style="margin:4px 0;padding-left:16px">';
+      res.duplicates.forEach(function(d){ html+='<li>'+d.bon.numero+' — '+d.reason+'</li>'; });
+      html+='</ul></details>';
+    }
+    if(res.errors.length){
+      html+='<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--danger)">Erreurs ('+res.errors.length+')</summary><ul style="margin:4px 0;padding-left:16px">';
+      res.errors.forEach(function(e){ html+='<li><strong>'+(e.bon.numero||'?')+'</strong> — '+e.reasons.join(' · ')+'</li>'; });
+      html+='</ul></details>';
+    }
+    html+='</div>';
+    prev.innerHTML=html;
+  } catch(e){
+    prev.innerHTML='<div style="color:var(--danger);font-size:12px">❌ Erreur lecture : '+(e.message||e)+'</div>';
+    window._bonsToImport=null;
+  }
+}
+
+async function _confirmImportBons() {
+  var toImport=window._bonsToImport;
+  if(!toImport||!toImport.length){ notify('Aucun bon à importer','warning'); return; }
+  var nImport=0, nMvt=0;
+
+  toImport.forEach(function(bon){
+    APP.bons.push(bon);
+    nImport++;
+    // Bon validé non-rétroactif → sortie stock
+    if(bon.status==='validé'&&!bon._retroactif){
+      (bon.lignes||[]).forEach(function(l){
+        var art=APP.articles.find(function(a){ return a.id===l.articleId; });
+        if(!art) return;
+        var sb=art.stock; art.stock=Math.max(0,art.stock-l.qty);
+        APP.mouvements.unshift({id:generateId(),type:'sortie',ts:Date.now(),
+          articleId:art.id,articleName:art.name,qty:l.qty,
+          commercialId:bon.commercialId||null,
+          note:'Import Bon '+(bon.numero||bon.id),
+          stockBefore:sb,stockAfter:art.stock});
+        nMvt++;
+      });
+    }
+    // Bon annulé après validation → entrée stock (restauration)
+    if(bon.status==='annulé'&&bon._wasValidated){
+      (bon.lignes||[]).forEach(function(l){
+        var art=APP.articles.find(function(a){ return a.id===l.articleId; });
+        if(!art) return;
+        var sb=art.stock; art.stock+=l.qty;
+        APP.mouvements.unshift({id:generateId(),type:'entree',ts:Date.now(),
+          articleId:art.id,articleName:art.name,qty:l.qty,
+          commercialId:bon.commercialId||null,
+          note:'Import annulation Bon '+(bon.numero||bon.id),
+          stockBefore:sb,stockAfter:art.stock});
+        nMvt++;
+      });
+    }
+    auditLog('IMPORT','bon',bon.id,null,{numero:bon.numero,status:bon.status});
+  });
+
+  window._bonsToImport=null;
+  saveDB(); closeModal(); renderBons(); updateAlertBadge(); renderSidebar();
+  notify(nImport+' bon(s) importé(s)'+(nMvt?' · '+nMvt+' mouvement(s) de stock créé(s)':'')+'  ✓','success');
+}
+
 function exportBonsJSON() {
   downloadFile(JSON.stringify({bons:APP.bons,exportedAt:Date.now()},null,2),'bons-export-'+Date.now()+'.json','application/json');
   notify('Export JSON téléchargé','success');
