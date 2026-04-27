@@ -2207,7 +2207,17 @@ function checkStockAlerts() {
 // ============================================================
 // IMAGE LOADER
 // ============================================================
+var _PREVIEW_LIMITS_MB = { 'set-logo-file':2, 'com-photo-file':2, 'um-photo-file':2 };
+
 function loadImgPreview(inputId, previewId, dataId) {
+  var _inp = document.getElementById(inputId);
+  if(_inp && _inp.files && _inp.files[0]) {
+    var _lim = (_PREVIEW_LIMITS_MB[inputId] || 5) * 1024 * 1024;
+    if(_inp.files[0].size > _lim) {
+      notify('Image trop lourde (' + (_inp.files[0].size/1024/1024).toFixed(1) + ' MB) — limite ' + (_lim/1024/1024) + ' MB', 'error');
+      _inp.value=''; return;
+    }
+  }
   const file = document.getElementById(inputId)?.files[0];
   if(!file) return;
   if(file.size > 500*1024) { notify('Image trop grande (max 500KB)','warning'); return; }
@@ -4883,6 +4893,15 @@ async function saveCommercial(existingId) {
     secteurId: document.getElementById('com-secteur-id').value||'',
     signatureKey: finalSigKey,
   };
+  // H2b : upload photo commercial si nouvelle image
+  if (_comPhotoRaw && _comPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
+    try {
+      var _cOld = existingId ? (APP.commerciaux.find(x=>x.id===existingId)||{}).photo : null;
+      if (_cOld && _cOld.startsWith('https://')) await _deleteImg(_cOld);
+      photo = await _uploadImg(_comPhotoRaw, 'psm/commerciaux/' + (existingId||generateId()) + '/photo.jpg', 'commercial');
+    } catch(e) { if (e && e.message === 'IMAGE_TOO_LARGE') return; photo = _comPhotoRaw; }
+  }
+
   if(existingId) {
     const c = APP.commerciaux.find(x=>x.id===existingId);
     const old = {...c};
@@ -7287,6 +7306,7 @@ ${_isAdmin ? `    <div class="card">
       <div class="stat-row"><span class="stat-label">Entrées audit</span><span class="stat-val">${APP.audit.length}</span></div>
       <div class="stat-row"><span class="stat-label">Backups auto</span><span class="stat-val">${APP.backups.length}/5</span></div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+        <button class="btn btn-secondary" onclick="migrateImagesToStorage()" title="Migrer photos vers Firebase Storage">☁️ Migrer images vers cloud</button>
         <button class="btn btn-secondary" onclick="exportAllJSON()">⬇ Export global JSON</button>
         <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆ Import JSON</button>
         <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(this)">
@@ -7606,7 +7626,7 @@ function _restrictSettingsForNonAdmin() {
   }
 }
 
-function saveSettings() {
+async function saveSettings() {
   var _cu = typeof _currentUser === 'function' ? _currentUser() : null;
   var _isAdmin = _cu && _cu.role === 'admin';
 
@@ -7617,7 +7637,16 @@ function saveSettings() {
   const _faxEl=document.getElementById('set-fax'); APP.settings.companyFax=_faxEl?_faxEl.value:(APP.settings.companyFax||'');
   const _emailEl=document.getElementById('set-email'); APP.settings.companyEmail=_emailEl?_emailEl.value:(APP.settings.companyEmail||'');
   const _addrEl=document.getElementById('set-address'); APP.settings.companyAddress=_addrEl?_addrEl.value:(APP.settings.companyAddress||'');
-  const logo=document.getElementById('set-logo-data').value; if(logo) { APP.settings.companyLogo=logo; _imagesDirty=true; }
+  var _logoRaw = document.getElementById('set-logo-data').value;
+  if (_logoRaw) {
+    if (_logoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
+      try {
+        if (APP.settings.companyLogo && APP.settings.companyLogo.startsWith('https://')) await _deleteImg(APP.settings.companyLogo);
+        APP.settings.companyLogo = await _uploadImg(_logoRaw, 'psm/settings/logo.jpg', 'logo');
+      } catch(e) { if (e && e.message === 'IMAGE_TOO_LARGE') return; APP.settings.companyLogo = _logoRaw; }
+    } else { APP.settings.companyLogo = _logoRaw; }
+    _imagesDirty = true;
+  }
   } // end admin-only shared settings
 
   // Personal settings (all users)
@@ -8280,6 +8309,11 @@ function _umClearSig() {
 
 async function saveUserModal(userId) {
   if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
+  // H5 : plafond 10 utilisateurs
+  if (!userId && (APP.users||[]).length >= 10) {
+    notify('\u26d4 Limite atteinte : PSM est plafonn\u00e9 \u00e0 10 comptes. Supprimez un compte avant d\'en cr\u00e9er un nouveau.', 'error');
+    return;
+  }
   const prenom = document.getElementById('um-prenom')?.value?.trim() || '';
   const nom   = document.getElementById('um-nom')?.value?.trim() || '';
   const name  = (prenom + ' ' + nom).trim();
@@ -8327,6 +8361,15 @@ async function saveUserModal(userId) {
     notify('Erreur signature: ' + (e.message || e), 'error');
     return;
   }
+  // H3b : upload photo utilisateur si nouvelle image
+  if (_umPhotoRaw && _umPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
+    try {
+      var _uOld = userId ? ((APP.users||[]).find(x=>x.id===userId)||{}).photo : null;
+      if (_uOld && _uOld.startsWith('https://')) await _deleteImg(_uOld);
+      photo = await _uploadImg(_umPhotoRaw, 'psm/users/' + (userId||generateId()) + '/photo.jpg', 'user');
+    } catch(e) { if (e && e.message === 'IMAGE_TOO_LARGE') return; photo = _umPhotoRaw; }
+  }
+
   if(!prenom || !nom) { notify('Le pr\u00e9nom et le nom sont obligatoires', 'warning'); return; }
   if(!email) { notify('L\'email est obligatoire', 'warning'); return; }
 
