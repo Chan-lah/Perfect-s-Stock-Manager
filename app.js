@@ -1267,21 +1267,8 @@ async function initApp() {
     if (typeof _splashSetProgress === 'function') _splashSetProgress(20, 'V\u00e9rification du serveur\u2026');
 
     // 1. Load localStorage data first (instant backup)
-    try {
-      var lsData = localStorage.getItem('psm_pro_db');
-      if (lsData) {
-        var parsed = JSON.parse(lsData);
-        if (parsed && typeof parsed === 'object') {
-          Object.assign(APP, parsed);
-          // IMPORTANT : marquer les donnees comme chargees -> empeche initGMAData
-          // de re-seeder les articles GMA (ex: 'Tee-shirt beige 60 ans') que
-          // l'utilisateur a deliberement supprimes. Sans ce flag, chaque login
-          // re-ajoutait les entrees GMA_ARTICLES manquantes.
-          if (typeof _savedDataLoaded !== 'undefined') _savedDataLoaded = true;
-          console.log('[PSM] localStorage loaded (_ts=' + (APP._ts||0) + ')');
-        }
-      }
-    } catch(e) { console.warn('[PSM] localStorage load:', e); }
+    // GA1: plus de lecture localStorage — cloud est la source de vérité absolue.
+    // Les données arrivent via Firebase après login. psm_pro_db purgé dans loadDB().
 
     // C4 : Restaurer lastPage depuis la clé séparée si psm_pro_db était absent
     // (psm_lastpage est sauvé à chaque navigation, survit si psm_pro_db est vidé)
@@ -1714,7 +1701,7 @@ const THEME_META = {
 function applyTheme(t) {
   if (!t || !THEME_META[t]) t = 'light';
   document.documentElement.dataset.theme = t;
-  try { localStorage.setItem('psm_theme', t); } catch(e) {}
+  // GA5: thème stocké dans Firebase user prefs (_saveUserPrefs) — plus besoin de localStorage
   if (typeof APP !== 'undefined' && APP && APP.settings) APP.settings.theme = t;
   document.body.style.removeProperty('--bg-image');
   // Flash transition overlay
@@ -8034,8 +8021,9 @@ document.addEventListener('keydown',e=>{
       _doSaveToFile().then(function(){notify('✔ Sauvegardé localement','success')})
                      .catch(function(err){notify('Erreur: '+err.message,'error')});
     } else {
-      try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(ex){}
-      notify('✔ Données sauvegardées','success');
+      // GA2: cloud seulement — forcer une sauvegarde cloud immédiate
+      if(typeof saveDB === 'function') saveDB();
+      notify('✔ Sauvegardé dans le cloud','success');
     }
     return false;
   }
@@ -8462,10 +8450,9 @@ async function deleteUser(userId) {
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
   if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Désactivation: ' + userEmail);
 
-  // ── ÉTAPE 3 : sauvegarde + push cloud ──
+  // ── ÉTAPE 3 : sauvegarde cloud uniquement ──
   APP._ts = Date.now();
   _invalidatePageCache();
-  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   if(typeof _doSaveToCloud === 'function') {
     try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after delete:', e); }
   }
@@ -8980,10 +8967,9 @@ async function _confirmDeleteUser(uid) {
     countEl.textContent = '\uD83D\uDC65 Comptes (' + (APP.users||[]).length + ')';
   }
 
-  // ETAPE 3 : save + push cloud
+  // ETAPE 3 : cloud uniquement
   APP._ts = Date.now();
   _invalidatePageCache();
-  try { localStorage.setItem('psm_pro_db', JSON.stringify(APP)); } catch(e) {}
   if (typeof _doSaveToCloud === 'function') {
     try { await _doSaveToCloud(); } catch(e) { console.warn('[PSM] cloud save after soft-delete:', e); }
   }

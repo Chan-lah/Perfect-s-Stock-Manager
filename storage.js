@@ -994,11 +994,11 @@ async function _reconnectStorage() {
     if(perm === 'granted') {
       _dirHandle = _pendingHandle;
       _pendingHandle = null;
-      await _loadFromDir();
+      // G7: ne pas charger depuis le fichier — cloud est la source de vérité
       document.getElementById('psm-reconnect-bar')?.remove();
       document.body.style.paddingTop = '';
       updateFileSaveIndicator(true);
-      notify('Sauvegarde locale reconnectée','success');
+      notify('Sauvegarde admin reconnectée ✓','success');
       if(currentPage === 'settings') renderSettings();
     }
   } catch(e) {

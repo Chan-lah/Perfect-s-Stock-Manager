@@ -386,7 +386,8 @@ async function _handleLogin(e) {
     sessionStorage.setItem('psm_user', localUser.id);
 
     // 5. Load cloud data, compare with localStorage, pick the newest
-    var _savedTheme = localStorage.getItem('psm_theme') || (APP.settings && APP.settings.theme) || 'dark';
+    // GA6: thème vient de Firebase user prefs (chargé plus bas) ou du défaut APP.settings
+    var _savedTheme = (APP.settings && APP.settings.theme) || 'dark';
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
@@ -493,6 +494,9 @@ async function _handleLogin(e) {
 
     // 6. Log activity
     logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
+
+    // GA7: purger l'éventuel cache psm_pro_db encore présent (migration vers cloud-only)
+    try { localStorage.removeItem('psm_pro_db'); localStorage.removeItem('psm_theme'); } catch(e) {}
 
     // 7b. Apply user-specific preferences (theme, background) — already loaded in _userProfile
     try {
