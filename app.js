@@ -7717,7 +7717,19 @@ function restoreSpecificBackup(id) {
     const restored=JSON.parse(bk.data);
     Object.assign(APP,restored);
     if (typeof auditLog === 'function') auditLog('RESTORE_BACKUP','system',bk.id,{ts:_prevTs},{bkTs:bk.ts,restoredBy:(_currentUser()&&_currentUser().email)||'admin'});
-    saveDB();notify('Backup restauré ✓','success');initApp();
+    // Fix bug regression Sprint G : saveDB() est debounced 250ms.
+    // Si initApp() est appelé immédiatement après, le signOut coupe la connexion
+    // avant que le cloud save ne s'exécute → cloud jamais mis à jour.
+    // Solution : forcer le cloud save MAINTENANT avant de relancer l'app.
+    APP._ts = Date.now();
+    if (typeof _doSaveToCloud === 'function') {
+      _doSaveToCloud().finally(function() {
+        notify('Backup restauré ✓ — relancement...', 'success');
+        setTimeout(function() { if (typeof initApp === 'function') initApp(); }, 500);
+      });
+    } else {
+      notify('Backup restauré ✓', 'success'); initApp();
+    }
   }
   catch(e){notify('Erreur restauration : '+(e.message||e),'error');}
 }

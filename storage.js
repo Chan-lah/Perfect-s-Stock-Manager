@@ -671,9 +671,11 @@ async function _restoreCloudSnapshot(dayKey) {
     APP._ts = Date.now();
     // Sécu 5 : tracer la restauration dans l'audit
     if (typeof auditLog === 'function') auditLog('RESTORE_SNAPSHOT', 'system', dayKey, {ts: _prevTs}, {dayKey: dayKey, restoredBy: (_cloudUser && _cloudUser.email) || 'admin'});
-    saveDB();
+    // Fix bug regression Sprint G : même problème que restoreSpecificBackup
+    APP._ts = Date.now();
+    await _doSaveToCloud(); // forcer le save cloud AVANT de relancer l'app
     notify('Snapshot ' + dayKey + ' restaure avec succes', 'success');
-    if (typeof initApp === 'function') initApp();
+    setTimeout(function() { if (typeof initApp === 'function') initApp(); }, 300);
     return true;
   } catch(e) {
     console.warn('[PSM] Restore snapshot failed:', e);
