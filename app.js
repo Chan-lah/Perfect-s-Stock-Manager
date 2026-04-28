@@ -9372,18 +9372,15 @@ async function _confirmDeleteUser(uid) {
     return; // ABORT — etat local intact
   }
 
-  // ETAPE 2 : retrait local APP.users (+ nettoyage annuaire)
+  // ETAPE 2 : retrait local APP.users (annuaire conservé — registre permanent)
   APP.users = APP.users.filter(function(u) { return u.id !== userIdToRemove; });
-  var annBefore = (APP.annuaire||[]).length;
-  APP.annuaire = (APP.annuaire||[]).filter(function(a){
+  (APP.annuaire||[]).forEach(function(a){
     if (a._fromUserId === userIdToRemove) {
-      if (!APP._annuaireTombstones || typeof APP._annuaireTombstones !== 'object' || Array.isArray(APP._annuaireTombstones)) APP._annuaireTombstones = {};
-      APP._annuaireTombstones[userIdToRemove] = true;
-      return false;
+      a._formerUser = true; a._formerAt = Date.now();
+      a._version = (a._version||1) + 1;
     }
-    return true;
   });
-  if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
+  // Pas de tombstone — l'entrée reste dans l'annuaire
 
   // Animation UI : fade out de la card supprim\u00e9e
   var cardEl = document.querySelector('[onclick*="' + uid + '"]');

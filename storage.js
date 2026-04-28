@@ -43,7 +43,17 @@ function _onOnlineStatusChange() {
     _updateSyncStatus('offline');
     if (typeof notify === 'function') notify('Connexion perdue \u2014 sauvegarde locale active', 'warning');
   } else {
-    _updateSyncStatus('synced');
+    // Retour en ligne : relancer le save cloud si un \u00e9chec pr\u00e9c\u00e9dent
+    _updateSyncStatus('syncing');
+    if (typeof _doSaveToCloud === 'function' && typeof _cloudUser !== 'undefined' && _cloudUser) {
+      setTimeout(function() {
+        _doSaveToCloud()
+          .then(function() { _updateSyncStatus('synced'); })
+          .catch(function() { _updateSyncStatus('error'); });
+      }, 1000);
+    } else {
+      _updateSyncStatus('synced');
+    }
   }
 }
 
@@ -523,7 +533,12 @@ async function autoBackup(silent) {
     var refs = typeof _stripImages === 'function' ? _stripImages(APP) : null;
     bkData = JSON.stringify(APP);
     if(refs) _restoreImages(APP, refs);
-  } catch(e) { bkData = JSON.stringify({error:'backup too large'}); }
+  } catch(e) { bkData = null; } // backup impossible — trop volumineux
+  if (!bkData) {
+    console.warn('[PSM] autoBackup: données trop volumineuses pour le backup');
+    if(!silent) notify('⚠ Backup impossible — données trop volumineuses', 'error');
+    return;
+  }
   var hash = await _computeHash(bkData);
 
   // Mobile: skip local retention (localStorage quota), only cloud snapshot
@@ -542,11 +557,16 @@ async function autoBackup(silent) {
   _lastBackupTs = bk.ts;
   _updateBackupIndicator();
   saveDB();
-  // Sauvegarder aussi en fichier si disponible
-  if(_dirHandle) _saveBackupToFile(bk);
-  // Cloud snapshot (Niveau 2)
-  _saveCloudSnapshot(bkData, hash);
-  if(!silent) notify('Backup créé (' + APP.backups.length + '/5) \u2713','success');
+  // PSm Saves : backup versionné + mise à jour psm_data.json
+  if(_dirHandle) { _saveBackupToFile(bk); saveToFile(); }
+  // Cloud snapshot (Niveau 2) — await pour détecter les échecs silencieux
+  try {
+    await _saveCloudSnapshot(bkData, hash);
+    if(!silent) notify('Backup créé (' + APP.backups.length + '/5) \u2713','success');
+  } catch(e) {
+    console.error('[PSM] Cloud snapshot échoué:', e);
+    notify('\u26a0 Backup local créé mais snapshot cloud échoué \u2014 réessayez', 'warning');
+  }
 }
 
 async function _saveBackupToFile(bk) {
@@ -1047,6 +1067,7 @@ async function pickSaveDirectory() {
 
 function _showReconnectBar() {
   if(_IS_ANDROID) return;
+  if(typeof _canUseFilePersistence === 'function' && !_canUseFilePersistence()) return;  // Non-admins
   if(document.getElementById('psm-reconnect-bar')) return;
   const el = document.createElement('div');
   el.id = 'psm-reconnect-bar';

@@ -335,13 +335,8 @@ async function _handleLogin(e) {
       } catch(e) {}
     }
 
-    // 2a. Kick off cloud ts read in parallel with profile load (saves ~150-300ms)
-    var _tsPromise = null;
-    if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
-      _tsPromise = _firebaseDB.ref('app_data/data/_ts').once('value').catch(function(ex) {
-        console.warn('[PSM] cloud ts read (parallel):', ex.message || ex); return null;
-      });
-    }
+    // _tsPromise supprimé (code mort) : l'architecture cloud-first fait un fetch complet,
+    // plus besoin de lire le _ts séparément.
 
     // 2. Load profile (role, permissions)
     await _loadUserProfile();
@@ -411,11 +406,12 @@ async function _handleLogin(e) {
       console.warn('[PSM] cloud fetch:', ex.message || ex);
     }
 
-    // Déterminer si le cloud a des données réelles
+    // Déterminer si le cloud a des données structurelles (pas une heuristique métier)
+    // Un cloud "avec données" = snapshot non-null avec au moins une clé APP connue.
+    // NE PAS utiliser stock>0 ou bons.length>0 : faux négatif sur base neuve ou stocks épuisés.
     var _cloudHasData = _cloudData && (
-      (_cloudData.bons||[]).length > 0 ||
-      (_cloudData.mouvements||[]).length > 0 ||
-      (_cloudData.articles||[]).some(function(a){ return a.stock > 0; })
+      Array.isArray(_cloudData.articles) || Array.isArray(_cloudData.bons) ||
+      Array.isArray(_cloudData.mouvements) || (_cloudData.settings && _cloudData.settings.companyName)
     );
 
     if (_cloudHasData) {
