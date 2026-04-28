@@ -391,94 +391,79 @@ async function _handleLogin(e) {
     var _savedUsers = APP.users ? APP.users.slice() : [];
     var _localTs = APP._ts || 0;
 
-    // Sync strategy:
-    // 1. Read ONLY the timestamp from cloud (tiny read, avoids downloading huge corrupt data)
-    // 2. If cloud is newer: fetch full data (safe once clean data has been pushed)
-    // 3. If local is newer or equal: push local clean data to cloud first, then sync runs on clean data
-    var _cloudTs = 0;
+    // ═══════════════════════════════════════════════════════════════════════
+    // ARCHITECTURE CLOUD-FIRST : Login = FETCH uniquement. Jamais de PUSH.
+    // Le cloud est la source de vérité absolue.
+    // Seuls saveDB() (action utilisateur) et la restauration admin peuvent
+    // écrire vers le cloud. Le login ne pousse jamais — peu importe les timestamps.
+    // ═══════════════════════════════════════════════════════════════════════
     var _cloudData = null;
 
+    // Toujours lire les données complètes depuis le cloud (8s timeout)
     try {
-      if (_tsPromise) {
-        // Reuse the parallel read kicked off at step 2a
-        var _tsSnap = await _tsPromise;
-        _cloudTs = (_tsSnap && _tsSnap.exists()) ? (_tsSnap.val() || 0) : 0;
-      }
+      var _snapP = _firebaseDB.ref('app_data/data').once('value');
+      var _toP = new Promise(function(_, rej) {
+        setTimeout(function() { rej(new Error('timeout')); }, 8000);
+      });
+      var _fullSnap = await Promise.race([_snapP, _toP]);
+      if (_fullSnap && _fullSnap.exists()) _cloudData = _fullSnap.val();
     } catch(ex) {
-      console.warn('[PSM] cloud ts read:', ex.message || ex);
-      // Fix : lecture _ts échouée + pas de localStorage -> forcer fetch cloud
-      _cloudTs = 1;
+      console.warn('[PSM] cloud fetch:', ex.message || ex);
     }
 
-    // Guard critique : les deux à 0 = lecture cloud échouée + Sprint G sans localStorage.
-    // Sans ce guard, login pousse données locales vides -> écrase le cloud.
-    if (_cloudTs === 0 && _localTs === 0) { _cloudTs = 1; }
+    // Déterminer si le cloud a des données réelles
+    var _cloudHasData = _cloudData && (
+      (_cloudData.bons||[]).length > 0 ||
+      (_cloudData.mouvements||[]).length > 0 ||
+      (_cloudData.articles||[]).some(function(a){ return a.stock > 0; })
+    );
 
-    if (_cloudTs > _localTs) {
-      // Cloud is newer: fetch full data (with 8s timeout)
-      try {
-        var _snapP = _firebaseDB.ref('app_data/data').once('value');
-        var _toP = new Promise(function(_, rej) {
-          setTimeout(function() { rej(new Error('timeout')); }, 8000);
-        });
-        var _fullSnap = await Promise.race([_snapP, _toP]);
-        if (_fullSnap.exists()) _cloudData = _fullSnap.val();
-      } catch(ex) {
-        console.warn('[PSM] cloud full read:', ex.message || ex);
-        _cloudData = null; // fallback to local on timeout
-      }
-    }
-
-    // Récupération d'urgence : si le cloud semble vide/corrompu (0 bons, 0 mouvements)
-    // ET que PSm Saves est disponible, charger depuis le fichier local.
-    // Cause : ERR_NETWORK_CHANGED + Sprint G (pas de localStorage) → timestamps à 0
-    // → login pousse données vides → cloud corrompu.
-    if (_cloudData && (_cloudData.bons||[]).length === 0 && (_cloudData.mouvements||[]).length === 0) {
-      if (typeof _dirHandle !== 'undefined' && _dirHandle && typeof _loadFromDir === 'function') {
-        console.warn('[PSM] Cloud vide/corrompu — tentative de récupération depuis PSm Saves');
-        try {
-          await _loadFromDir();
-          _cloudData = null; // fichier fait autorité
-          // Repousser vers le cloud après 2s (laisser l'app se stabiliser)
-          setTimeout(function() { if (typeof saveDB === 'function') saveDB(); }, 2000);
-          if (typeof notify === 'function') notify('Données récupérées depuis PSm Saves — synchronisation cloud en cours...', 'success');
-        } catch(e) { console.warn('[PSM] Récupération PSm Saves échouée:', e); }
-      } else {
-        console.warn('[PSM] Cloud vide ET PSm Saves non disponible — données potentiellement perdues.');
-      }
-    }
-
-    if (_cloudData && _cloudTs > _localTs) {
-      // Cloud is newer -- merge into APP
+    if (_cloudHasData) {
+      // ── Cas normal : cloud a des données → les charger ──────────────────
       if (typeof _fixFirebaseArrays === 'function') _cloudData = _fixFirebaseArrays(_cloudData);
       var _usersBackup = APP.users ? APP.users.slice() : [];
       Object.assign(APP, _cloudData);
-      // Cloud wins for users too (propagates admin deletions across devices).
-      // Fallback only if cloud has never persisted a users array.
       if (!('users' in _cloudData)) APP.users = _usersBackup;
-      _savedDataLoaded = true; // la sauvegarde cloud fait autorite -> empeche initGMAData de re-seeder
+      _savedDataLoaded = true;
       try {
         var cachedImgs = localStorage.getItem('psm_images_cache');
         if (cachedImgs && typeof _restoreImages === 'function') {
           _restoreImages(APP, JSON.parse(cachedImgs));
         }
       } catch(e) {}
+      console.log('[PSM] Cloud data loaded:', (APP.bons||[]).length, 'bons,', (APP.mouvements||[]).length, 'mvts');
     } else {
-      // Local is newer or equal -- but be cautious: only auto-push if local content
-      // is at least as rich as cloud. Otherwise a stale browser could wipe a fresh cloud.
-      var _shouldPush = true;
-      // Safety-check supprimé (Perf A3) : évitait une 3e lecture Firebase complète au login.
-      // La branche cloud-newer ci-dessus charge déjà les données cloud si nécessaire.
-      // En mode full-upload (_doSaveToCloud toujours .set()), local >= cloud ne peut
-      // pas cacher une régression — si cloud est vraiment plus riche, _cloudTs > _localTs.
-      // Skip bg push pour les rôles sans permission d'écriture sur app_data
-      // (éviterait un FIREBASE WARNING permission_denied au login des viewers)
-      var _myRole = (_userProfile && _userProfile.role) || 'viewer';
-      var _canWriteAppData = (_myRole === 'admin' || _myRole === 'manager' || _myRole === 'commercial' || _myRole === 'custom');
-      if (_shouldPush && _canWriteAppData && typeof _doSaveToCloud === 'function') {
-        _doSaveToCloud().catch(function(ex) { console.warn('[PSM] bg cloud push:', ex); });
+      // ── Cas récupération : cloud vide/corrompu → PSm Saves (admin) ──────
+      console.warn('[PSM] Cloud vide ou corrompu. Tentative PSm Saves...');
+      if (typeof _dirHandle !== 'undefined' && _dirHandle && typeof _loadFromDir === 'function') {
+        try {
+          await _loadFromDir();
+          var _fileHasData = (APP.bons||[]).length > 0 || (APP.mouvements||[]).length > 0;
+          if (_fileHasData) {
+            console.log('[PSM] Restauré depuis PSm Saves:', (APP.bons||[]).length, 'bons');
+            if (typeof notify === 'function') notify(
+              '🔄 Données restaurées depuis PSm Saves — synchronisation en cours...', 'success'
+            );
+            // Pousser le fichier vers le cloud pour rétablir la source de vérité
+            APP._ts = Date.now();
+            setTimeout(function() {
+              if (typeof _doSaveToCloud === 'function') {
+                _doSaveToCloud().then(function() {
+                  console.log('[PSM] PSm Saves -> cloud sync terminé');
+                }).catch(function(e) { console.warn('[PSM] Sync PSm Saves -> cloud:', e); });
+              }
+            }, 1500);
+          } else {
+            console.warn('[PSM] PSm Saves aussi vide. Aucune donnée disponible.');
+          }
+        } catch(e) {
+          console.warn('[PSM] PSm Saves récupération:', e);
+        }
+      } else {
+        console.warn('[PSM] Cloud vide + PSm Saves non configuré. Admin: configurez PSm Saves dans Paramètres.');
       }
     }
+    // ── Fin du bloc login : aucun push automatique ───────────────────────
 
     // Restore local-only settings (users are now cloud-authoritative — see cloud merge above)
     if (!APP.settings) APP.settings = {};
