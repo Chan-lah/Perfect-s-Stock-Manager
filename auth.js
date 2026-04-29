@@ -409,10 +409,16 @@ async function _handleLogin(e) {
     // Déterminer si le cloud a des données structurelles (pas une heuristique métier)
     // Un cloud "avec données" = snapshot non-null avec au moins une clé APP connue.
     // NE PAS utiliser stock>0 ou bons.length>0 : faux négatif sur base neuve ou stocks épuisés.
-    var _cloudHasData = _cloudData && (
+    // Cloud "has data" = has articles AND at least bons OR mouvements.
+    // Articles-only (0 bons, 0 mouvements) = cloud corrupted/incomplete → fallback PSm Saves.
+    var _cloudStructural = _cloudData && (
       Array.isArray(_cloudData.articles) || Array.isArray(_cloudData.bons) ||
-      Array.isArray(_cloudData.mouvements) || (_cloudData.settings && _cloudData.settings.companyName)
+      (_cloudData.settings && _cloudData.settings.companyName)
     );
+    var _cloudHasTxData = _cloudData && (
+      (_cloudData.bons||[]).length > 0 || (_cloudData.mouvements||[]).length > 0
+    );
+    var _cloudHasData = _cloudStructural && _cloudHasTxData;
 
     if (_cloudHasData) {
       // ── Cas normal : cloud a des données → les charger ──────────────────
