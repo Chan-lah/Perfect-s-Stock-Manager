@@ -8719,7 +8719,7 @@ async function saveUserModal(userId) {
   // Resolve actual user.id for matricule check (userId may be an email)
   var _resolvedUser = userId ? ((APP.users||[]).find(x=>x.id===userId) || (APP.users||[]).find(x=>x.email&&x.email.toLowerCase()===userId.toLowerCase())) : null;
   var _resolvedId = _resolvedUser ? _resolvedUser.id : null;
-  if (matricule && !_isMatriculeUnique(matricule, _resolvedId)) {
+  if (matricule && !_isMatriculeUnique(matricule, _resolvedId, email)) {
     notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
   }
   // Phase 10: resolve final signatureKey (upload new / delete old / leave alone)
@@ -8805,6 +8805,18 @@ async function saveUserModal(userId) {
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
         try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule, finalSigKey); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
+      // Propager les modifs Admin → Annuaire (Admin = source de vérité, override _manualEdit)
+      var _annEntry = (APP.annuaire||[]).find(function(a){
+        return a._fromUserId === _resolvedId ||
+          (a.email && a.email.trim().toLowerCase() === email.trim().toLowerCase());
+      });
+      if (_annEntry) {
+        _annEntry.prenom = prenom; _annEntry.nom = nom;
+        _annEntry.email = email; _annEntry.matricule = matricule;
+        if (!_annEntry._fromUserId && _resolvedId) _annEntry._fromUserId = _resolvedId;
+        delete _annEntry._manualEdit; // Admin override annuaire
+        _annEntry._version = (_annEntry._version||1) + 1;
+      }
     } else {
       // ── CREATE new user ──
       // 1. Create Supabase Auth account + profile
@@ -8815,7 +8827,32 @@ async function saveUserModal(userId) {
       // 2. Create local entry
       var existing = APP.users.find(function(x) { return x.email === email; });
       if(!existing) {
-        APP.users.push({ id: generateId(), prenom: prenom, nom: nom, name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
+        var _newUserId = generateId();
+        APP.users.push({ id: _newUserId, prenom: prenom, nom: nom, name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
+        // Synchroniser immédiatement avec l'annuaire
+        // Chercher d'abord par email pour éviter doublons
+        var _existingAnn = (APP.annuaire||[]).find(function(a){
+          return a.email && a.email.trim().toLowerCase() === email.trim().toLowerCase();
+        });
+        if (_existingAnn) {
+          // Lier l'entrée existante au nouveau compte
+          _existingAnn._fromUserId = _newUserId;
+          _existingAnn.prenom = prenom; _existingAnn.nom = nom;
+          _existingAnn.matricule = matricule;
+          delete _existingAnn._manualEdit;
+          _existingAnn._version = (_existingAnn._version||1) + 1;
+        } else {
+          // Créer nouvelle entrée annuaire
+          if (!APP.annuaire) APP.annuaire = [];
+          APP.annuaire.push({
+            id: 'an_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+            _fromUserId: _newUserId,
+            prenom: prenom, nom: nom, email: email, matricule: matricule,
+            poste: role === 'admin' ? 'Administrateur' : 'Utilisateur',
+            departement: '', telephone: '', tag: 'GMA_USER',
+            createdAt: Date.now(), _version: 1
+          });
+        }
       }
     }
 
@@ -8955,18 +8992,16 @@ function _canEditCommercialSignature() {
   return !!(u.permissions && u.permissions._special && u.permissions._special.commercialSignature);
 }
 // Cross-scope matricule uniqueness (user + commercial + annuaire share one namespace)
-function _isMatriculeUnique(matricule, ignoreId) {
+function _isMatriculeUnique(matricule, ignoreId, ignoreEmail) {
   if (!matricule) return true;
   matricule = String(matricule).trim().toLowerCase();
   if (!matricule) return true;
-  var _ignLower = ignoreId ? String(ignoreId).toLowerCase() : '';
+  var _ignEmailLower = ignoreEmail ? String(ignoreEmail).trim().toLowerCase() : '';
   var collide = function(arr) {
     return (arr || []).some(function(x) {
-      if (ignoreId) {
-        if (x.id === ignoreId) return false;
-        if (x.email && x.email.toLowerCase() === _ignLower) return false;
-        if (x._fromUserId && x._fromUserId === ignoreId) return false;
-      }
+      // Exclure par id, par email du user, ou par lien annuaire
+      if (ignoreId && (x.id === ignoreId || x._fromUserId === ignoreId)) return false;
+      if (_ignEmailLower && x.email && x.email.trim().toLowerCase() === _ignEmailLower) return false;
       return (x.matricule || '').toString().toLowerCase() === matricule;
     });
   };
@@ -11096,7 +11131,8 @@ function _syncUsersToAnnuaire() {
       }
     } else {
       // Also check by email to avoid duplicates with manually created entries
-      var byEmail = uu.email ? APP.annuaire.find(function(a) { return a.email && a.email.toLowerCase() === uu.email.toLowerCase(); }) : null;
+      var _uEmailN = uu.email ? uu.email.trim().toLowerCase() : '';
+      var byEmail = _uEmailN ? APP.annuaire.find(function(a) { return a.email && a.email.trim().toLowerCase() === _uEmailN; }) : null;
       if (byEmail) {
         // Link existing entry
         byEmail._fromUserId = uu.id;
