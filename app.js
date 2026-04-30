@@ -8711,7 +8711,8 @@ async function saveUserModal(userId) {
   const email = document.getElementById('um-email')?.value?.trim();
   const pass  = document.getElementById('um-pass')?.value?.trim() || null;
   const role  = document.getElementById('um-role')?.value || 'viewer';
-  const photo = document.getElementById('um-photo-data')?.value || null;
+  var _umPhotoRaw = document.getElementById('um-photo-data')?.value || null;
+  var photo = _umPhotoRaw; // var (pas const) pour permettre la réassignation après upload Storage
   const newSigDataUrl = document.getElementById('um-sig-data')?.value || '';
   const existingSigKey = document.getElementById('um-sig-existing-key')?.value || '';
   const sigCleared = (document.getElementById('um-sig-cleared')?.value === '1');
