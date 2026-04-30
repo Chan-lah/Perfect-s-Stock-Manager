@@ -8719,9 +8719,7 @@ async function saveUserModal(userId) {
   // Resolve actual user.id for matricule check (userId may be an email)
   var _resolvedUser = userId ? ((APP.users||[]).find(x=>x.id===userId) || (APP.users||[]).find(x=>x.email&&x.email.toLowerCase()===userId.toLowerCase())) : null;
   var _resolvedId = _resolvedUser ? _resolvedUser.id : null;
-  if (matricule && !_isMatriculeUnique(matricule, _resolvedId, email)) {
-    notify('Matricule d\u00e9j\u00e0 utilis\u00e9 (user/commercial/annuaire)', 'error'); return;
-  }
+  // Vérification unicité matricule désactivée — plusieurs personnes peuvent partager un matricule
   // Phase 10: resolve final signatureKey (upload new / delete old / leave alone)
   let finalSigKey = existingSigKey;
   let finalSigDataUrl = '';  // for Firebase profile mirror
@@ -10840,7 +10838,11 @@ function _snapshotValidator(bon) {
       // Fallback: base64 from profile or local user
       if (!resolvedSig) resolvedSig = u.signature || (localUser && localUser.signature) || '';
       bon._validatedBySignature = resolvedSig;
-      bon._validatedByMatricule = (localUser && localUser.matricule) || u.matricule || '';
+      // Chercher le matricule dans toutes les sources disponibles
+      // (APP.users.matricule est strip du cloud, utiliser _userProfile en fallback)
+      bon._validatedByMatricule = (localUser && localUser.matricule) ||
+        u.matricule ||
+        (typeof _userProfile !== 'undefined' && _userProfile && _userProfile.matricule) || '';
     }
   } catch(e) {}
 }

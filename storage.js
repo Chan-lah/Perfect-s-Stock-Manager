@@ -200,10 +200,17 @@ async function _doSaveToCloud() {
       delete dataObj.settings._dynamicBg;
       delete dataObj.settings._dynamicBgIntensity;
     }
-    // Strip role/permissions from users (comes from Firebase profiles)
+    // Garder les champs essentiels des users dans le cloud (rôle, matricule, prenom/nom)
+    // Le rôle vient de Firebase profiles — pas secret. Le matricule est nécessaire pour les bons.
     if (dataObj.users) {
       dataObj.users = dataObj.users.map(function(u) {
-        return { id: u.id, email: u.email, name: u.name, photo: u.photo, signature: u.signature };
+        return {
+          id: u.id, email: u.email, name: u.name,
+          prenom: u.prenom || '', nom: u.nom || '',
+          role: u.role || 'viewer',
+          matricule: u.matricule || '',
+          photo: u.photo, signature: u.signature
+        };
       });
     }
 

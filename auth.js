@@ -351,7 +351,11 @@ async function _handleLogin(e) {
     // _tsPromise supprimé (code mort) : l'architecture cloud-first fait un fetch complet,
     // plus besoin de lire le _ts séparément.
 
-    // 2. Load profile (role, permissions)
+    // 2. Load profile (role, permissions) — démarrer fetch data EN PARALLÈLE pour gagner ~200-500ms
+    var _dataFetchPromise = null;
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB) {
+      _dataFetchPromise = _firebaseDB.ref('app_data/data').once('value').catch(function() { return null; });
+    }
     await _loadUserProfile();
 
     // 2b. Check if user is active
@@ -407,14 +411,16 @@ async function _handleLogin(e) {
     // ═══════════════════════════════════════════════════════════════════════
     var _cloudData = null;
 
-    // Toujours lire les données complètes depuis le cloud (8s timeout)
+    // Utiliser la requête lancée en parallèle (évite le re-fetch séquentiel)
     try {
-      var _snapP = _firebaseDB.ref('app_data/data').once('value');
       var _toP = new Promise(function(_, rej) {
         setTimeout(function() { rej(new Error('timeout')); }, 8000);
       });
-      var _fullSnap = await Promise.race([_snapP, _toP]);
-      if (_fullSnap && _fullSnap.exists()) _cloudData = _fullSnap.val();
+      var _fetchSrc = _dataFetchPromise || (_firebaseDB ? _firebaseDB.ref('app_data/data').once('value') : null);
+      if (_fetchSrc) {
+        var _fullSnap = await Promise.race([_fetchSrc, _toP]);
+        if (_fullSnap && _fullSnap.exists()) _cloudData = _fullSnap.val();
+      }
     } catch(ex) {
       console.warn('[PSM] cloud fetch:', ex.message || ex);
     }
