@@ -46,11 +46,26 @@ async function _signOut() {
 
 async function _loadUserProfile() {
   if (!_firebaseDB || !_cloudUser) return null;
+  // Utiliser le cache sessionStorage si disponible (évite Firebase read sur refresh)
+  try {
+    var _cached = sessionStorage.getItem('psm_profile_cache');
+    if (_cached) {
+      var _cp = JSON.parse(_cached);
+      if (_cp && _cp.email === _cloudUser.email) {
+        _userProfile = _cp;
+        _syncProfileToLocal(_userProfile);
+        console.log('[PSM] Profile from sessionStorage cache (fast path)');
+        return _userProfile;
+      }
+    }
+  } catch(e) {}
   try {
     var snap = await _firebaseDB.ref('profiles/' + _cloudUser.uid).once('value');
     if (snap.exists()) {
       _userProfile = snap.val();
       _syncProfileToLocal(_userProfile);
+      // Cache profile pour skip Firebase read sur refresh même session
+      try { sessionStorage.setItem('psm_profile_cache', JSON.stringify(_userProfile)); } catch(e) {}
       return _userProfile;
     }
     // If no profile exists yet, check by email (admin bootstrap)
@@ -506,31 +521,19 @@ async function _handleLogin(e) {
       console.log('[PSM] APP.users:', APP.users.map(function(u) { return u.email + '/' + u.name; }));
     }
 
-    // 5c. Always start real-time sync after login for instant cross-device updates
-    if (typeof startRealtimeSync === 'function') startRealtimeSync();
-
-    // 5c-bis. Profile listener — force-logout on profile delete/disable/role change (C3)
-    _startProfileListener();
-
-    // 5c-ter. Auto-logout apres 10 min d'inactivite
-    _startIdleTimer();
-
-    // 5c-quater. Archivage automatique si dernier run > 30 jours
-    // Déclenché au login pour ne pas dépendre qu'un admin visite la page Archives.
-    if (typeof maybeAutoArchive === 'function') {
-      setTimeout(function() { maybeAutoArchive().catch(function(){}); }, 3000);
-    }
-
-    // 5d. Purge old cloud snapshots (keep 7 days)
-    if (typeof _purgeOldCloudSnapshots === 'function') {
-      try { _purgeOldCloudSnapshots(); } catch(e) {}
-    }
-
-    // 6. Log activity
-    logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
-
-    // GA7: purger l'éventuel cache psm_pro_db encore présent (migration vers cloud-only)
-    try { localStorage.removeItem('psm_pro_db'); localStorage.removeItem('psm_theme'); } catch(e) {}
+    // 5c. Ops post-login démarrées APRES _finishAppInit pour ne pas bloquer le render
+    // Déférées via setTimeout(0) → UI rendue d'abord, background ensuite
+    setTimeout(function() {
+      if (typeof startRealtimeSync === 'function') startRealtimeSync();
+      _startProfileListener();
+      _startIdleTimer();
+    }, 0);
+    setTimeout(function() {
+      if (typeof maybeAutoArchive === 'function') maybeAutoArchive().catch(function(){});
+      if (typeof _purgeOldCloudSnapshots === 'function') { try { _purgeOldCloudSnapshots(); } catch(e) {} }
+      logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
+      try { localStorage.removeItem('psm_pro_db'); localStorage.removeItem('psm_theme'); } catch(e) {}
+    }, 500);
 
     // 7b. Apply user-specific preferences (theme, background) — already loaded in _userProfile
     try {
@@ -736,6 +739,7 @@ function canEdit(pageId) { return hasPermission(pageId, 'edit'); }
 function logoutUser() {
   _stopProfileListener();
   _stopIdleTimer();
+  try { sessionStorage.removeItem('psm_profile_cache'); } catch(e) {}
   if (typeof stopRealtimeSync === 'function') stopRealtimeSync();
   logActivity('logout', 'D\u00e9connexion');
   sessionStorage.removeItem('psm_user');

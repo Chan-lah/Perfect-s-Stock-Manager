@@ -1482,7 +1482,9 @@ async function _finishAppInit() {
     })();
   }
   initGMAData();
-  _pruneHistoricalData();
+  // Defer heavy sync ops to after first paint (non-blocking)
+  setTimeout(function() { _pruneHistoricalData(); }, 200);
+  setTimeout(function() { if(typeof _syncUsersToAnnuaire==='function') _syncUsersToAnnuaire(); }, 400);
   (APP.commerciaux||[]).forEach(c => dInitCommercialDispatchFields(c));
   (APP.articles||[]).forEach(a => { if(a.dispatchAllocMax === undefined) a.dispatchAllocMax = a.stock > 0 ? a.stock : 0; });
   if(!APP.dispatchHistory) APP.dispatchHistory = [];
@@ -2880,7 +2882,7 @@ function drawChartMvt() {
   days.forEach(function(day) {
     var ds = day.getTime();
     var de = ds + 86400000;
-    labels.push(day.getDate() + '/' + (day.getMonth()+1));
+    labels.push(String(day.getDate()).padStart(2,'0') + '/' + String(day.getMonth()+1).padStart(2,'0'));
     entrees.push(APP.mouvements.filter(function(m){return m.type==='entree'&&m.ts>=ds&&m.ts<de}).reduce(function(x,m){return x+m.qty},0));
     sorties.push(APP.mouvements.filter(function(m){return m.type==='sortie'&&m.ts>=ds&&m.ts<de}).reduce(function(x,m){return x+m.qty},0));
   });
@@ -2942,7 +2944,7 @@ function drawChartMvt() {
     }
   });
   // Highlight today
-  var todayStr = now.getDate()+'/'+(now.getMonth()+1);
+  var todayStr = String(now.getDate()).padStart(2,'0')+'/'+ String(now.getMonth()+1).padStart(2,'0');
   var todayIdx = labels.indexOf(todayStr);
   if(todayIdx >= 0) {
     var tx = padL + (todayIdx/(N-1||1))*chartW;
