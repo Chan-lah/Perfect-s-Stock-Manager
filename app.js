@@ -5058,8 +5058,9 @@ function openCommercialModal(id) {
         <div class="field-img" onclick="document.getElementById('com-photo-file').click()" id="com-photo-preview" style="width:56px;height:56px;border-radius:50%">
           ${c?.photo?`<img src="${c.photo}">`:'👤'}
         </div>
-        <input type="file" id="com-photo-file" accept="image/*" style="display:none" onchange="loadImgPreview('com-photo-file','com-photo-preview','com-photo-data')">
+        <input type="file" id="com-photo-file" accept="image/*" style="display:none" onchange="loadImgPreview('com-photo-file','com-photo-preview','com-photo-data');document.getElementById('com-photo-new').value='1'">
         <input type="hidden" id="com-photo-data" value="${c?.photo||''}">
+        <input type="hidden" id="com-photo-new" value="0">
         <span style="font-size:12px;color:var(--text-2)">Cliquez pour changer</span>
       </div>
     </div>
@@ -5159,7 +5160,8 @@ async function saveCommercial(existingId) {
   if (matricule && !_isMatriculeUnique(matricule, existingId || null)) {
     notify('Matricule déjà utilisé (user/commercial/annuaire)','error'); return;
   }
-  const photo = document.getElementById('com-photo-data').value;
+  var _comPhotoRaw = document.getElementById('com-photo-data').value;
+  var photo = _comPhotoRaw; // var (pas const) pour permettre réassignation après upload Storage
   // Phase 7: signature handling (only if user has perm)
   const canEditSig = (document.getElementById('com-sig-can-edit')?.value === '1');
   const newSigDataUrl = canEditSig ? (document.getElementById('com-sig-data')?.value || '') : '';
@@ -5202,8 +5204,9 @@ async function saveCommercial(existingId) {
     secteurId: document.getElementById('com-secteur-id').value||'',
     signatureKey: finalSigKey,
   };
-  // H2b : upload photo commercial si nouvelle image
-  if (_comPhotoRaw && _comPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
+  // H2b : upload uniquement si NOUVELLE photo sélectionnée (évite CORS sur photo existante base64)
+  var _comPhotoIsNew = (document.getElementById('com-photo-new')?.value === '1');
+  if (_comPhotoIsNew && _comPhotoRaw && _comPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
     try {
       var _cOld = existingId ? (APP.commerciaux.find(x=>x.id===existingId)||{}).photo : null;
       if (_cOld && _cOld.startsWith('https://')) await _deleteImg(_cOld);
