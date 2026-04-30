@@ -11395,5 +11395,84 @@ async function deleteAnnuaire(id) {
   notify('Personne supprim\u00e9e', 'warning');
 }
 
+// ── Sortable tables — global event delegation ─────────────────────────────
+// Fonctionne sur tous les tableaux dans .table-wrap sans modifier les renders.
+// La dernière colonne (Actions) est automatiquement exclue du tri.
+(function() {
+  var SKIP_LABELS = ['actions', 'action', '⚙', '⋮'];
+  function _skipTh(th) {
+    var txt = (th.textContent || '').trim().toLowerCase();
+    return SKIP_LABELS.some(function(s){ return txt.includes(s); }) || th.classList.contains('no-sort');
+  }
+  function _parseSortDate(str) {
+    var m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m) {
+      var y = parseInt(m[3]);
+      return new Date(y < 100 ? 2000 + y : y, parseInt(m[2]) - 1, parseInt(m[1]));
+    }
+    return null;
+  }
+  function _sortByTh(th) {
+    if (_skipTh(th)) return;
+    var table = th.closest('table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    var thIndex = Array.from(th.parentNode.children).indexOf(th);
+    var dir = th.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+    // Reset all headers in this table
+    table.querySelectorAll('th').forEach(function(t) {
+      t.dataset.sortDir = '';
+      t.classList.remove('sort-asc', 'sort-desc');
+    });
+    th.dataset.sortDir = dir;
+    th.classList.add('sort-' + dir);
+    var rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort(function(a, b) {
+      var aC = a.children[thIndex];
+      var bC = b.children[thIndex];
+      if (!aC || !bC) return 0;
+      var aT = (aC.textContent || '').trim();
+      var bT = (bC.textContent || '').trim();
+      // Numeric
+      var aN = parseFloat(aT.replace(/[^\d.,\-]/g, '').replace(',', '.'));
+      var bN = parseFloat(bT.replace(/[^\d.,\-]/g, '').replace(',', '.'));
+      if (!isNaN(aN) && !isNaN(bN)) return dir === 'asc' ? aN - bN : bN - aN;
+      // Date FR
+      var aD = _parseSortDate(aT), bD = _parseSortDate(bT);
+      if (aD && bD) return dir === 'asc' ? aD - bD : bD - aD;
+      // String
+      return dir === 'asc' ? aT.localeCompare(bT, 'fr', {sensitivity:'base'}) : bT.localeCompare(aT, 'fr', {sensitivity:'base'});
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+  }
+  // Mark last th of each table-wrap table as no-sort on DOM changes
+  function _markActionCols() {
+    document.querySelectorAll('.table-wrap table').forEach(function(tbl) {
+      var heads = tbl.querySelectorAll('thead th');
+      if (!heads.length) return;
+      var last = heads[heads.length - 1];
+      if (_skipTh(last)) last.classList.add('no-sort');
+    });
+  }
+  // Event delegation — one listener for the whole document
+  document.addEventListener('click', function(e) {
+    var th = e.target.closest('.table-wrap th');
+    if (th) _sortByTh(th);
+  }, true);
+  // Mark action columns after each page render
+  var _origShowPage = window.showPage;
+  if (typeof _origShowPage === 'function') {
+    window.showPage = function(id) {
+      _origShowPage(id);
+      setTimeout(_markActionCols, 120);
+    };
+  }
+  // Initial pass
+  if (document.readyState === 'complete') _markActionCols();
+  else document.addEventListener('DOMContentLoaded', _markActionCols);
+})();
+
+
 
 initApp();
