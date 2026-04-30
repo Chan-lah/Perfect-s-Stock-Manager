@@ -8796,6 +8796,15 @@ async function saveUserModal(userId) {
       // ── EDIT existing user ── (find by ID or email)
       var u = APP.users.find(x => x.id === userId);
       if (!u) u = APP.users.find(x => x.email && x.email.toLowerCase() === userId.toLowerCase());
+      // Mot de passe en édition : Firebase Auth ne permet pas de changer le mdp
+      // d'un autre utilisateur côté client. Si l'admin a rempli le champ,
+      // envoyer un email de réinitialisation de mot de passe.
+      if (pass && pass.length >= 6 && typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
+        try {
+          await _firebaseAuth.sendPasswordResetEmail(email);
+          notify('📧 Lien de réinitialisation envoyé à ' + email + ' (le mdp ne peut pas être changé directement côté client)', 'info');
+        } catch(e) { console.warn('[PSM] Password reset email:', e); }
+      }
       if(u) {
         u.prenom = prenom; u.nom = nom; u.name = name;
         u.email = email; u.role = role; u.permissions = permissions;
@@ -8864,6 +8873,8 @@ async function saveUserModal(userId) {
     saveDB();
     closeModal();
     notify('\u2705 Utilisateur enregistr\u00e9', 'success');
+    // Mettre à jour le badge topbar (cas où admin modifie son propre compte)
+    if (typeof updateUserBadge === 'function') updateUserBadge();
     if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
     else { renderSettings(); }
   } catch(err) {
