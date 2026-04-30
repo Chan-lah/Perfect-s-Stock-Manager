@@ -8555,6 +8555,7 @@ function openUserModal(userId) {
         <button class="btn btn-secondary btn-sm" onclick="document.getElementById('um-photo-input').click()">Choisir photo</button>
         <input type="file" id="um-photo-input" accept="image/*" style="display:none" onchange="previewUserPhoto(this)">
         <input type="hidden" id="um-photo-data" value="${u?.photo||''}">
+        <input type="hidden" id="um-photo-new" value="0">
       </div>
     </div>
     ${(()=>{
@@ -8631,6 +8632,9 @@ function previewUserPhoto(input) {
   const r = new FileReader();
   r.onload = e => {
     document.getElementById('um-photo-data').value = e.target.result;
+    // Marquer qu'une NOUVELLE photo a été sélectionnée (flag pour saveUserModal)
+    var flag = document.getElementById('um-photo-new');
+    if(flag) flag.value = '1';
     const prev = document.getElementById('um-photo-preview');
     if(prev) prev.innerHTML = `<img src="${e.target.result}" style="width:48px;height:48px;object-fit:cover;border-radius:50%">`;
   };
@@ -8751,8 +8755,10 @@ async function saveUserModal(userId) {
     notify('Erreur signature: ' + (e.message || e), 'error');
     return;
   }
-  // H3b : upload photo utilisateur si nouvelle image
-  if (_umPhotoRaw && _umPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
+  // H3b : upload photo uniquement si l'utilisateur a SÉLECTIONNÉ une nouvelle image
+  // (évite de re-uploader la photo existante base64 à chaque édition → CORS Firebase Storage)
+  var _umPhotoIsNew = (document.getElementById('um-photo-new')?.value === '1');
+  if (_umPhotoIsNew && _umPhotoRaw && _umPhotoRaw.startsWith('data:') && typeof _uploadImg === 'function') {
     try {
       var _uOld = userId ? ((APP.users||[]).find(x=>x.id===userId)||{}).photo : null;
       if (_uOld && _uOld.startsWith('https://')) await _deleteImg(_uOld);
