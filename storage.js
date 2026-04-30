@@ -112,18 +112,60 @@ function _updateSyncStatus(state) {
 var _cloudSaving = false;
 var _cloudSaveQueue = null; // pending save promise
 
-// ── Cleanup obsolete localStorage keys (granular diff removed 2026-04-24) ──
-// Ancien système de diff par hash de sections retiré : source répétée de bugs
-// de sync (rollback au reload quand le diff renvoyait "rien changé" à tort).
-// Les clés ci-dessous ne servent plus — on les purge au boot pour éviter la
-// pollution localStorage.
+// ── Cleanup obsolete localStorage keys ───────────────────────────────────
 try {
   localStorage.removeItem('psm_section_hashes');
   localStorage.removeItem('psm_full_hash');
 } catch(e) {}
 
+// ── Data Integrity : Sig + Block + Version ─────────────────────────────
+
+// Calcule la signature des données (snapshot des compteurs clés)
+function _computeSig() {
+  return {
+    bons:       (APP.bons||[]).length,
+    mouvements: (APP.mouvements||[]).length,
+    articles:   (APP.articles||[]).length,
+    ts:         APP._ts || 0
+  };
+}
+
+// Vérifie qu'une signature est cohérente avec un objet de données
+// Retourne true si OK, false si corruption détectée
+function _sigConsistent(sig, data) {
+  if (!sig) return true; // pas de sig = première installation
+  var bons = (data.bons||[]).length;
+  var mvts = (data.mouvements||[]).length;
+  // Si sig dit N > 0 mais données = 0 → corruption
+  if (sig.bons > 0 && bons === 0) {
+    console.error('[PSM] Sig incohérente: sig.bons=' + sig.bons + ' mais APP.bons=' + bons);
+    return false;
+  }
+  if (sig.mouvements > 5 && mvts === 0) {
+    console.error('[PSM] Sig incohérente: sig.mouvements=' + sig.mouvements + ' mais APP.mouvements=' + mvts);
+    return false;
+  }
+  return true;
+}
+
+// Garde avant push : bloque si état local est manifestement corrompu
+function _pushAllowed() {
+  if (!APP._sig) return true; // première save, pas de sig encore
+  if (!_sigConsistent(APP._sig, APP)) {
+    console.error('[PSM] PUSH BLOQUÉ — incohérence sig détectée avant upload');
+    if (typeof notify === 'function') notify(
+      '⛔ Sauvegarde bloquée : données incohérentes détectées. Rechargez la page.',
+      'error'
+    );
+    return false;
+  }
+  return true;
+}
+
 async function _doSaveToCloud() {
   if (!_firebaseDB || !_cloudUser) return;
+  // Guard : bloquer si données locales incohérentes
+  if (!_pushAllowed()) return;
   _cloudSaving = true;
   _updateSyncStatus('syncing');
   // Pause real-time listener during save to prevent echo/race
@@ -173,15 +215,18 @@ async function _doSaveToCloud() {
       }
     } catch(e) { console.warn('[PSM] images cache:', e); }
 
-    // ── Full upload : toujours .set() du node complet ──
-    // Plus de diff par hash — source trop fréquente de bugs de sync.
-    // Pour 10 users et ~500KB par save, le coût bande passante est négligeable
-    // vs la fiabilité gagnée (chaque save est garanti de partir).
+    // Incrémenter le compteur de version pour détecter les overwrites non voulus
+    dataObj._dataVersion = (APP._dataVersion || 0) + 1;
+    APP._dataVersion = dataObj._dataVersion;
+    // Sig dans le payload cloud (permet de valider l'intégrité au prochain fetch)
+    dataObj._sig = _computeSig();
+
+    // ── Full upload ──
     await _firebaseDB.ref('app_data').set({
       data: dataObj,
       updated_at: new Date().toISOString()
     });
-    console.log('[PSM] Cloud save FULL (_ts=' + _lastLocalSaveTs + ')');
+    console.log('[PSM] Cloud save FULL v' + dataObj._dataVersion + ' (_ts=' + _lastLocalSaveTs + ')');
 
   } catch(e) {
     console.warn('[PSM] _doSaveToCloud:', e);
@@ -378,6 +423,8 @@ var _cloudSaveDebounceTimer = null; // debounce timer for cloud saves
 
 function saveDB() {
   APP._ts = Date.now();
+  // Mettre à jour la signature AVANT l'invalidation (reflète l'état actuel)
+  APP._sig = _computeSig();
   _invalidatePageCache();
   // ALWAYS save to localStorage (instant, reliable)
   // Sécu 4 : strip backup data → économise ~2.5MB dans localStorage

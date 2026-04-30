@@ -100,6 +100,19 @@ function _stopProfileListener() {
   _initialRole = null;
 }
 
+// ── Recovery screen ──────────────────────────────────────────────────────
+function _psmShowRecovery(reason) {
+  try {
+    document.body.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0b0f14;color:#fff;font-family:sans-serif;z-index:99999">'
+      + '<div style="text-align:center;max-width:480px;padding:40px 32px;background:#13171f;border-radius:16px;border:1px solid #2a3040">'
+      + '<div style="font-size:48px;margin-bottom:16px">\u26a0\ufe0f</div>'
+      + '<h2 style="margin-bottom:12px;font-size:20px">Données indisponibles</h2>'
+      + '<p style="color:#aaa;margin-bottom:20px;font-size:13px;line-height:1.6">' + reason + '</p>'
+      + '<button onclick="location.reload()" style="padding:10px 20px;background:#3d7fff;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px">\ud83d\udd04 R\u00e9essayer</button>'
+      + '</div></div>';
+  } catch(e) { alert('PSM \u2014 Donn\u00e9es indisponibles. ' + reason); }
+}
+
 // ── Auto-logout apres inactivite (10 min) ─────────────────
 
 var _IDLE_TIMEOUT_MS = 10 * 60 * 1000;  // 10 minutes
@@ -456,13 +469,16 @@ async function _handleLogin(e) {
               }
             }, 1500);
           } else {
-            console.warn('[PSM] PSm Saves aussi vide. Aucune donnée disponible.');
+            console.warn('[PSM] PSm Saves aussi vide.');
+            _psmShowRecovery('Aucune source de données disponible (cloud vide, PSm Saves vide). Contactez l\'administrateur.');
+            return;
           }
         } catch(e) {
           console.warn('[PSM] PSm Saves récupération:', e);
         }
       } else {
-        console.warn('[PSM] Cloud vide + PSm Saves non configuré. Admin: configurez PSm Saves dans Paramètres.');
+        _psmShowRecovery('Cloud vide et aucune sauvegarde locale configurée. Connectez-vous en tant qu\'admin et configurez PSm Saves dans Paramètres.');
+        return;
       }
     }
     // ── Fin du bloc login : aucun push automatique ───────────────────────
