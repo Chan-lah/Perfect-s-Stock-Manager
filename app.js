@@ -7034,6 +7034,7 @@ function renderAnalytics() {
   document.getElementById('content').innerHTML=`
   <div class="page-header">
     <div><div class="page-title">🧠 Analytique</div><div class="page-sub">Insights intelligents — prévisions basées sur l'historique, fréquence et moyenne des sorties</div></div>
+    <div><button class="btn btn-primary" onclick="renderArticleTracking()">🔍 Suivi Gadget</button></div>
   </div>
   <div class="grid-4 mb-16">
     <div class="card"><div class="card-header"><span class="card-title">Entrées / 30j</span></div><div class="kpi-value" style="color:var(--success)">${ratio.entrees}</div><div class="kpi-change">unités reçues</div></div>
@@ -7060,6 +7061,155 @@ function renderAnalytics() {
     ${suggestions.length===0?'<div class="empty-state"><p>✅ Aucune commande urgente nécessaire</p></div>':suggestions.map(s=>`<div class="suggestion-card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px"><div style="flex:1;min-width:200px"><div class="art-name">${_h(s.article.name)} <span class="badge badge-blue">${s.article.code}</span></div><div class="art-detail">Stock: ${s.article.stock} — Seuil: ${s.article.stockMin} — Rate: ${s.dailyRate}/j</div></div><div style="display:flex;align-items:center;gap:14px"><div class="text-right"><div style="font-size:20px;font-weight:700;color:var(--accent)">${s.suggestQty}</div><div style="font-size:11px;color:var(--text-2)">unités à commander</div><div style="font-size:11px;color:${s.urgency==='critical'?'var(--danger)':'var(--warning)'}">${s.daysLeft===0?'⚡ Urgent!':s.daysLeft+' jours'}</div></div><button class="btn btn-sm btn-primary" onclick="launchSuggestedOrder('${s.article.id}',${s.suggestQty})" title="Lancer une commande fournisseur">🛒 Commander</button></div></div>`).join('')}
   </div>`;
 }
+
+// ============================================================
+// SUIVI GADGET — Tracking intelligent par article
+// ============================================================
+function renderArticleTracking() {
+  var arts = (APP.articles || []).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||'','fr'); });
+  var html = '<div class="page-header"><div><div class="page-title">🔍 Suivi Gadget</div><div class="page-sub">Tracking intelligent par article — entrées, sorties, stock, opérateurs</div></div>'
+    + '<div><button class="btn btn-secondary" onclick="renderAnalytics()">← Retour Analytique</button></div></div>';
+  html += '<div class="card mb-16"><div class="card-header"><span class="card-title">Sélectionner un gadget</span></div>'
+    + '<div style="padding:12px"><input id="art-track-search" class="form-control" placeholder="Rechercher un article..." oninput="(function(){var q=document.getElementById(\'art-track-search\').value.toLowerCase();document.querySelectorAll(\'.art-track-row\').forEach(function(r){r.style.display=r.dataset.name.includes(q)?\'flex\':\'none\';})})()" style="margin-bottom:12px">';
+  html += '<div style="display:flex;flex-direction:column;gap:6px;max-height:400px;overflow-y:auto">';
+  arts.forEach(function(art) {
+    var stock = art.stock || 0;
+    var alert = stock <= (art.stockMin||0) ? 'var(--danger)' : (stock <= (art.stockMin||0)*1.5 ? 'var(--warning)' : 'var(--success)');
+    html += '<div class="art-track-row" data-name="' + (art.name||'').toLowerCase() + '" onclick="renderArticleDetail(\'' + art.id + '\',{})"'
+      + ' style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;cursor:pointer;background:var(--bg-row);border:1px solid var(--border);gap:10px">'
+      + '<div style="flex:1"><div style="font-weight:600;font-size:13px">' + _h(art.name) + '</div>'
+      + '<div style="font-size:11px;color:var(--text-2)">' + (art.code||'') + (art.categorie?' — '+art.categorie:'') + '</div></div>'
+      + '<div style="display:flex;align-items:center;gap:16px">'
+      + '<div style="text-align:right"><div style="font-size:18px;font-weight:700;color:' + alert + '">' + stock + '</div><div style="font-size:11px;color:var(--text-2)">en stock</div></div>'
+      + '<span style="color:var(--text-2);font-size:18px">›</span></div></div>';
+  });
+  html += '</div></div></div>';
+  document.getElementById('content').innerHTML = html;
+}
+
+function renderArticleDetail(artId, opts) {
+  opts = opts || {};
+  var art = (APP.articles||[]).find(function(a){ return a.id===artId; });
+  if (!art) { notify('Article introuvable','error'); return; }
+
+  // Period
+  var period = opts.period || '30d';
+  var now = Date.now();
+  var periodMs = { '7d': 7, '30d': 30, '90d': 90, '1yr': 365 };
+  var days = periodMs[period] || 30;
+  var fromTs = opts.from ? new Date(opts.from).getTime() : (now - days*86400000);
+  var toTs   = opts.to   ? new Date(opts.to).getTime()   : now;
+  var withArchive = !!opts.archive;
+
+  // Gather movements from live + archive
+  var allMvts = (APP.mouvements||[]).filter(function(m){ return m.artId===artId; });
+  if (withArchive && window._archiveData) {
+    var archMvts = ((_archiveData.mouvements)||[]).filter(function(m){ return m.artId===artId; });
+    allMvts = allMvts.concat(archMvts);
+  }
+
+  // Filter by period
+  var mvts = allMvts.filter(function(m){
+    var t = new Date(m.date||m.createdAt||0).getTime();
+    return t >= fromTs && t <= toTs;
+  }).sort(function(a,b){
+    return new Date(b.date||b.createdAt||0) - new Date(a.date||a.createdAt||0);
+  });
+
+  // KPIs
+  var entries = 0, exits = 0;
+  mvts.forEach(function(m){ if(m.type==='entree') entries+=m.qty||0; else exits+=m.qty||0; });
+  var net = entries - exits;
+
+  // Stock at T (reconstruct from current stock + movements after toTs)
+  var mvtsAfter = allMvts.filter(function(m){ return new Date(m.date||m.createdAt||0).getTime() > toTs; });
+  var stockAtT = art.stock;
+  mvtsAfter.forEach(function(m){ if(m.type==='entree') stockAtT-=(m.qty||0); else stockAtT+=(m.qty||0); });
+
+  // Top operators
+  var ops = {};
+  mvts.forEach(function(m){
+    var n = m.agent || m.operateur || m.userName || 'Inconnu';
+    if (!ops[n]) ops[n] = { entries:0, exits:0, count:0 };
+    ops[n].count++;
+    if(m.type==='entree') ops[n].entries+=(m.qty||0); else ops[n].exits+=(m.qty||0);
+  });
+  var opList = Object.keys(ops).map(function(n){ return { name:n, entries:ops[n].entries, exits:ops[n].exits, count:ops[n].count }; });
+  opList.sort(function(a,b){ return b.count-a.count; });
+
+  // Build period buttons
+  var pBtns = ['7d','30d','90d','1yr'].map(function(p){
+    return '<button class="btn btn-sm ' + (period===p?'btn-primary':'btn-secondary') + '" onclick="renderArticleDetail(\'' + artId + '\',{period:\'' + p + '\',archive:' + withArchive + '})">'
+      + { '7d':'7j', '30d':'30j', '90d':'90j', '1yr':'1 an' }[p] + '</button>';
+  }).join('');
+
+  // Archive checkbox label
+  var archLabel = '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:var(--text-2)">'
+    + '<input type="checkbox" ' + (withArchive?'checked':'') + ' onchange="renderArticleDetail(\'' + artId + '\',{period:\'' + period + '\',archive:this.checked})"> Inclure archives</label>';
+
+  var stockColor = (art.stock||0) <= (art.stockMin||0) ? 'var(--danger)' : 'var(--success)';
+
+  var html = '<div class="page-header"><div><div class="page-title">🔍 ' + _h(art.name) + '</div>'
+    + '<div class="page-sub">' + (art.code||'') + (art.categorie?' — '+art.categorie:'') + '</div></div>'
+    + '<div style="display:flex;gap:8px;align-items:center"><button class="btn btn-secondary" onclick="renderArticleTracking()">← Liste</button>'
+    + '<button class="btn btn-secondary" onclick="renderAnalytics()">🧠 Analytique</button></div></div>';
+
+  // Period bar
+  html += '<div class="card mb-16" style="padding:12px"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + pBtns + archLabel + '</div></div>';
+
+  // KPI grid
+  html += '<div class="grid-4 mb-16">'
+    + '<div class="card"><div class="card-header"><span class="card-title">Entrées</span></div><div class="kpi-value" style="color:var(--success)">' + entries + '</div><div class="kpi-change">unités reçues</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Sorties</span></div><div class="kpi-value" style="color:var(--accent3)">' + exits + '</div><div class="kpi-change">unités distribuées</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Net</span></div><div class="kpi-value" style="color:' + (net>=0?'var(--success)':'var(--danger)') + '">' + (net>=0?'+':'') + net + '</div><div class="kpi-change">balance période</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Stock à T</span></div><div class="kpi-value" style="color:' + stockColor + '">' + Math.max(0,stockAtT) + '</div><div class="kpi-change">en fin de période</div></div>'
+    + '</div>';
+
+  // Top operators
+  html += '<div class="card mb-16"><div class="card-header"><span class="card-title">👤 Top opérateurs</span></div>';
+  if (!opList.length) { html += '<div class="empty-state"><p>Aucun mouvement sur cette période</p></div>'; }
+  else {
+    var maxOp = opList[0].count || 1;
+    html += opList.slice(0,8).map(function(op,i){
+      return '<div class="rank-item"><div class="rank-num ' + (i===0?'top':'') + '">' + (i+1) + '</div>'
+        + '<div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">' + _h(op.name) + '</div>'
+        + '<div class="progress-bar"><div class="progress-fill" style="width:' + (op.count/maxOp*100) + '%;background:' + (i===0?'var(--warning)':'var(--accent)') + '"></div></div></div>'
+        + '<div class="text-right" style="margin-left:12px;min-width:80px">'
+        + '<div style="font-size:11px;color:var(--success)">+' + op.entries + '</div>'
+        + '<div style="font-size:11px;color:var(--accent3)">-' + op.exits + '</div>'
+        + '<div style="font-weight:700;font-size:13px">' + op.count + ' mvts</div></div></div>';
+    }).join('');
+  }
+  html += '</div>';
+
+  // Movements table
+  html += '<div class="card"><div class="card-header"><span class="card-title">📋 Mouvements chronologiques</span>'
+    + '<span style="font-size:11px;color:var(--text-2)">' + mvts.length + ' mouvement(s)</span></div>';
+  if (!mvts.length) { html += '<div class="empty-state"><p>Aucun mouvement sur cette période</p></div></div>'; }
+  else {
+    html += '<div class="table-wrap"><table><thead><tr>'
+      + '<th>Date</th><th>Type</th><th>Qté</th><th>Opérateur</th><th>Bon / Ref</th><th>Note</th>'
+      + '</tr></thead><tbody>';
+    mvts.forEach(function(m){
+      var d = new Date(m.date||m.createdAt||0);
+      var ds = (String(d.getDate()).padStart(2,'0')) + '/' + (String(d.getMonth()+1).padStart(2,'0')) + '/' + d.getFullYear();
+      var isEntree = m.type==='entree';
+      html += '<tr>'
+        + '<td>' + ds + '</td>'
+        + '<td><span class="badge ' + (isEntree?'badge-green':'badge-orange') + '">' + (isEntree?'Entrée':'Sortie') + '</span></td>'
+        + '<td style="font-weight:700;color:' + (isEntree?'var(--success)':'var(--accent3)') + '">' + (isEntree?'+':'-') + (m.qty||0) + '</td>'
+        + '<td>' + _h(m.agent||m.operateur||m.userName||'—') + '</td>'
+        + '<td style="font-size:11px;color:var(--text-2)">' + _h(m.bonId||m.ref||'—') + '</td>'
+        + '<td style="font-size:11px;color:var(--text-2)">' + _h(m.note||m.motif||'—') + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  document.getElementById('content').innerHTML = html;
+}
+
 
 function launchSuggestedOrder(articleId, suggestQty) {
   const art = APP.articles.find(a=>a.id===articleId);
