@@ -11,3 +11,6 @@ serviceAccount*.json
 .agents/
 .claude/
 skills-lock.json
+# Firebase rules — locaux uniquement, ne pas exposer sur GitHub
+database.rules.json
+storage.rules
