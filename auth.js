@@ -52,11 +52,17 @@ async function _loadUserProfile() {
     if (_cached) {
       var _cp = JSON.parse(_cached);
       if (_cp && _cp.email === _cloudUser.email) {
+      // Invalider le cache si compte expiré (sinon le check est bypassé)
+      if (_cp.expiresAt && _cp.role !== 'admin' && Date.now() > new Date(_cp.expiresAt).getTime()) {
+        try { sessionStorage.removeItem('psm_profile_cache'); } catch(e) {}
+        // Continue vers Firebase pour profil frais
+      } else {
         _userProfile = _cp;
         _syncProfileToLocal(_userProfile);
         console.log('[PSM] Profile from sessionStorage cache (fast path)');
         return _userProfile;
       }
+    }
     }
   } catch(e) {}
   try {
@@ -102,6 +108,15 @@ function _startProfileListener() {
       if (!snap.exists()) { _forceLogout('Votre compte a \u00e9t\u00e9 supprim\u00e9.'); return; }
       var p = snap.val();
       if (p.is_active === false) { _forceLogout('Votre compte a \u00e9t\u00e9 d\u00e9sactiv\u00e9 par un administrateur.'); return; }
+      // Expiration de compte (admins exemptés)
+      if (p.expiresAt && p.role !== 'admin' && Date.now() > new Date(p.expiresAt).getTime()) {
+        _forceLogout('Votre compte a expir\u00e9. Contactez un administrateur pour le renouveler.'); return;
+      }
+      // Expiration du rôle admin → downgrade automatique vers manager
+      if (p.adminRoleExpiresAt && p.role === 'admin' && Date.now() > new Date(p.adminRoleExpiresAt).getTime()) {
+        try { _firebaseDB.ref('profiles/' + _cloudUser.uid).update({ role: 'manager', adminRoleExpiresAt: null }); } catch(e) { console.warn('[PSM] admin role downgrade:', e); }
+        return; // Le listener re-fire avec role:'manager' → _forceLogout (changement de rôle)
+      }
       if (_initialRole && p.role !== _initialRole) { _forceLogout('Votre r\u00f4le a chang\u00e9. Reconnectez-vous pour appliquer les nouveaux droits.'); return; }
       _userProfile = p;
       if (typeof _syncProfileToLocal === 'function') _syncProfileToLocal(p);
@@ -378,6 +393,13 @@ async function _handleLogin(e) {
       await _signOut();
       throw new Error('Compte d\u00e9sactiv\u00e9. Contactez l\u2019administrateur.');
     }
+    // 2c. Expiration compte (admins toujours illimités)
+    if (_userProfile && _userProfile.expiresAt && _userProfile.role !== 'admin') {
+      if (Date.now() > new Date(_userProfile.expiresAt).getTime()) {
+        await _signOut();
+        throw new Error('Compte expir\u00e9 le ' + new Date(_userProfile.expiresAt).toLocaleDateString('fr-FR') + '. Contactez un administrateur.');
+      }
+    }
 
     // 3. Sync local user
     if (!APP.users) APP.users = [];
@@ -579,7 +601,7 @@ async function _handleLogin(e) {
 // ── Admin: Create user via Firebase REST API ───────────────
 // Uses REST API to avoid changing the admin's session
 
-async function _adminCreateSupabaseUser(email, password, displayName, role, permissions) {
+async function _adminCreateSupabaseUser(email, password, displayName, role, permissions, expiresAt, adminRoleExpiresAt) {
   if (!_firebaseAuth || !_cloudUser) throw new Error('Firebase non disponible');
 
   // 1. Create auth account via REST API (doesn't affect current session)
@@ -614,7 +636,9 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
     permissions: permissions || {},
     created_by: _cloudUser.email,
     created_at: new Date().toISOString(),
-    is_active: true
+    is_active: true,
+    expiresAt: expiresAt || null,
+    adminRoleExpiresAt: adminRoleExpiresAt || null
   };
 
   await _firebaseDB.ref('profiles/' + newUid).set(profileData);
@@ -623,7 +647,7 @@ async function _adminCreateSupabaseUser(email, password, displayName, role, perm
   return { user: { uid: newUid, email: email } };
 }
 
-async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature, matricule, signatureKey) {
+async function _adminUpdateProfile(email, displayName, role, permissions, isActive, photo, signature, matricule, signatureKey, expiresAt, adminRoleExpiresAt) {
   if (!_firebaseDB) return;
   // Find profile by email
   var snap = await _firebaseDB.ref('profiles').orderByChild('email').equalTo(email).once('value');
@@ -638,6 +662,8 @@ async function _adminUpdateProfile(email, displayName, role, permissions, isActi
   if (signature) updates.signature = signature;
   if (matricule !== undefined) updates.matricule = matricule;
   if (signatureKey !== undefined) updates.signatureKey = signatureKey;
+  if (expiresAt !== undefined) updates.expiresAt = expiresAt || null;
+  if (adminRoleExpiresAt !== undefined) updates.adminRoleExpiresAt = adminRoleExpiresAt || null;
   await _firebaseDB.ref('profiles/' + uid).update(updates);
   logActivity('admin_update_user', 'Modification: ' + email + ' -> ' + role);
 }

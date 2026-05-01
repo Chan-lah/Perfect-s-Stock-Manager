@@ -8694,7 +8694,9 @@ function openUserModal(userId) {
       <div class="form-group"><label>Email *</label><input id="um-email" value="${u?.email||''}" type="email"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Mot de passe ${userId ? '<span style="font-size:10px;color:var(--text-3)">(laisser vide = inchang\u00e9)</span>' : '<span style="font-size:10px;color:var(--danger)">* obligatoire</span>'}</label><input id="um-pass" type="text" placeholder="${userId ? 'Laisser vide = inchang\u00e9' : 'Min. 6 caract\u00e8res'}" value="" autocomplete="off">${userId && u ? '<div style="font-size:10px;color:var(--text-3);margin-top:2px">\u2705 Mot de passe d\u00e9j\u00e0 d\u00e9fini</div>' : ''}</div>
+      ${userId
+        ? '<div class="form-group"><label>Mot de passe</label><div style="display:flex;align-items:center;gap:8px"><button type="button" class="btn btn-secondary btn-sm" onclick="_umSendResetEmail()">\uD83D\uDCE7 R\u00e9initialisation mdp</button><span style="font-size:11px;color:var(--text-2)">Un lien est envoy\u00e9 par email</span></div></div>'
+        : '<div class="form-group"><label>Mot de passe <span style="font-size:10px;color:var(--danger)">* obligatoire</span></label><input id="um-pass" type="text" placeholder="Min. 6 caract\u00e8res" value="" autocomplete="off"></div>'}
       <div class="form-group"><label>R\u00f4le</label><select id="um-role" onchange="_onRoleChange(this.value)">
         ${typeof ROLE_TEMPLATES!=='undefined' ? Object.keys(ROLE_TEMPLATES).map(function(k){ return '<option value="'+k+'" '+(u&&u.role===k?'selected':'')+'>'+ROLE_TEMPLATES[k].label+'</option>'; }).join('') : '<option value="user">Utilisateur</option><option value="admin">Administrateur</option>'}
       </select></div>
@@ -8702,6 +8704,16 @@ function openUserModal(userId) {
     <div class="form-group">
       <label>Matricule <span style="font-size:10px;color:var(--text-3)">(unique \u2014 GMA-XXX)</span></label>
       <input id="um-matricule" value="${u?.matricule||''}" placeholder="ex: GMA-042">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Expiration du compte <span style="font-size:10px;color:var(--text-2)">(vide = illimit\u00e9)</span></label>
+        <input type="date" id="um-expires-at" value="${u?.expiresAt ? u.expiresAt.slice(0,10) : ''}" style="width:auto">
+      </div>
+      <div class="form-group" id="um-admin-expiry-section" style="display:${(u?.role||'user')==='admin' ? 'block' : 'none'}">
+        <label>Expiration r\u00f4le Admin <span style="font-size:10px;color:var(--text-2)">(repasse manager \u00e0 l\u2019\u00e9ch\u00e9ance)</span></label>
+        <input type="date" id="um-admin-role-expires-at" value="${u?.adminRoleExpiresAt ? u.adminRoleExpiresAt.slice(0,10) : ''}" style="width:auto">
+      </div>
     </div>
     <div class="form-group">
       <label>Photo (optionnel)</label>
@@ -8768,9 +8780,23 @@ function openUserModal(userId) {
   setTimeout(function() { _onRoleChange(document.getElementById('um-role')?.value); }, 50);
 }
 
+async function _umSendResetEmail() {
+  var email = document.getElementById('um-email')?.value?.trim();
+  if (!email) { notify('Saisissez l\u2019email d\u2019abord', 'warning'); return; }
+  if (typeof _firebaseAuth === 'undefined' || !_firebaseAuth) { notify('Firebase non disponible', 'error'); return; }
+  try {
+    await _firebaseAuth.sendPasswordResetEmail(email);
+    notify('\uD83D\uDCE7 Lien envoy\u00e9 \u00e0 ' + email, 'success');
+  } catch(e) {
+    notify('Erreur : ' + (e.message || e), 'error');
+  }
+}
+
 function _onRoleChange(role) {
   var permsSection = document.getElementById('um-perms-section');
   if(permsSection) permsSection.style.display = (role === 'admin') ? 'none' : 'block';
+  var adminExpSec = document.getElementById('um-admin-expiry-section');
+  if(adminExpSec) adminExpSec.style.display = (role === 'admin') ? 'block' : 'none';
   if(typeof _getDefaultPerms === 'function' && role && role !== 'custom') {
     var defaults = _getDefaultPerms(role);
     ALL_PAGES_PERMS.forEach(function(pg) {
@@ -8876,6 +8902,8 @@ async function saveUserModal(userId) {
   const existingSigKey = document.getElementById('um-sig-existing-key')?.value || '';
   const sigCleared = (document.getElementById('um-sig-cleared')?.value === '1');
   const matricule = document.getElementById('um-matricule')?.value?.trim() || '';
+  const expiresAt = document.getElementById('um-expires-at')?.value || null;
+  const adminRoleExpiresAt = document.getElementById('um-admin-role-expires-at')?.value || null;
   // Resolve actual user.id for matricule check (userId may be an email)
   var _resolvedUser = userId ? ((APP.users||[]).find(x=>x.id===userId) || (APP.users||[]).find(x=>x.email&&x.email.toLowerCase()===userId.toLowerCase())) : null;
   var _resolvedId = _resolvedUser ? _resolvedUser.id : null;
@@ -8954,25 +8982,24 @@ async function saveUserModal(userId) {
       // Mot de passe en édition : Firebase Auth ne permet pas de changer le mdp
       // d'un autre utilisateur côté client. Si l'admin a rempli le champ,
       // envoyer un email de réinitialisation de mot de passe.
-      if (pass && pass.length >= 6 && typeof _firebaseAuth !== 'undefined' && _firebaseAuth) {
-        try {
-          await _firebaseAuth.sendPasswordResetEmail(email);
-          notify('📧 Lien de réinitialisation envoyé à ' + email + ' (le mdp ne peut pas être changé directement côté client)', 'info');
-        } catch(e) { console.warn('[PSM] Password reset email:', e); }
-      }
       if(u) {
+        var _auditOld = { role: u.role, expiresAt: u.expiresAt||null, adminRoleExpiresAt: u.adminRoleExpiresAt||null };
         u.prenom = prenom; u.nom = nom; u.name = name;
         u.email = email; u.role = role; u.permissions = permissions;
         u.matricule = matricule;
+        u.expiresAt = expiresAt || null;
+        u.adminRoleExpiresAt = (role === 'admin') ? (adminRoleExpiresAt || null) : null;
         if(photo) u.photo = photo;
         u.signatureKey = finalSigKey || '';
         // Phase 10: drop legacy base64 once we have a key (or were cleared)
         if (u.signatureKey || sigCleared) delete u.signature;
         u._version = (u._version||1) + 1;
+        var _auditNew = { role: u.role, expiresAt: u.expiresAt, adminRoleExpiresAt: u.adminRoleExpiresAt };
+        try { auditLog('UPDATE', 'user', u.id, _auditOld, _auditNew); } catch(e) {}
       }
       // Update Firebase profile (mirrors photo + resolved sig dataUrl)
       if(typeof _adminUpdateProfile === 'function' && _firebaseDB && _cloudUser) {
-        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule, finalSigKey); } catch(e) { console.warn('[PSM] profile update:', e); }
+        try { await _adminUpdateProfile(email, name, role, permissions, true, photo, finalSigDataUrl, matricule, finalSigKey, expiresAt || null, (role === 'admin') ? (adminRoleExpiresAt || null) : null); } catch(e) { console.warn('[PSM] profile update:', e); }
       }
       // Propager les modifs Admin → Annuaire (Admin = source de vérité, override _manualEdit)
       var _annEntry = (APP.annuaire||[]).find(function(a){
@@ -8991,13 +9018,14 @@ async function saveUserModal(userId) {
       // 1. Create Supabase Auth account + profile
       if(typeof _adminCreateSupabaseUser === 'function' && _firebaseAuth && _cloudUser) {
         notify('Cr\u00e9ation du compte...', 'info');
-        await _adminCreateSupabaseUser(email, pass, name, role, permissions);
+        await _adminCreateSupabaseUser(email, pass, name, role, permissions, expiresAt || null, (role === 'admin') ? (adminRoleExpiresAt || null) : null);
       }
       // 2. Create local entry
       var existing = APP.users.find(function(x) { return x.email === email; });
       if(!existing) {
         var _newUserId = generateId();
-        APP.users.push({ id: _newUserId, prenom: prenom, nom: nom, name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, createdAt: Date.now(), _version: 1 });
+        APP.users.push({ id: _newUserId, prenom: prenom, nom: nom, name: name, email: email, password: null, role: role, matricule: matricule, photo: photo||null, signatureKey: finalSigKey||'', permissions: permissions, expiresAt: expiresAt||null, adminRoleExpiresAt: (role==='admin')?(adminRoleExpiresAt||null):null, createdAt: Date.now(), _version: 1 });
+        try { auditLog('CREATE', 'user', _newUserId, null, { name: name, email: email, role: role, expiresAt: expiresAt||null }); } catch(e) {}
         // Synchroniser immédiatement avec l'annuaire
         // Chercher d'abord par email pour éviter doublons
         var _existingAnn = (APP.annuaire||[]).find(function(a){
@@ -9091,6 +9119,7 @@ async function deleteUser(userId) {
   if (annBefore !== APP.annuaire.length) { try { auditLog('DELETE','annuaire_auto','user:'+userIdToRemove,null,null); } catch(e){} }
   if(sessionStorage.getItem('psm_user') === userId) sessionStorage.removeItem('psm_user');
   if(typeof logActivity === 'function') logActivity('admin_delete_user', 'Désactivation: ' + userEmail);
+  try { auditLog('DELETE', 'user', userIdToRemove, { email: userEmail, role: (user||{}).role }, null); } catch(e) {}
 
   // ── ÉTAPE 3 : sauvegarde cloud uniquement ──
   APP._ts = Date.now();
@@ -9101,6 +9130,23 @@ async function deleteUser(userId) {
   notify('Utilisateur désactivé ✓ — accès cloud bloqué', 'success');
   if(typeof currentPage !== 'undefined' && currentPage === 'administration') { showPage('administration'); }
   else { renderSettings(); }
+  // Guide suppression manuelle du compte Firebase Auth
+  var _delEmail = userEmail;
+  setTimeout(function() {
+    window._psmFbAuthUrl = 'https://console.firebase.google.com/project/perfect-stock-manager/authentication/users';
+    openModal('Compte d\u00e9sactiv\u00e9 dans PSM',
+      '<div style="font-size:13px;line-height:1.8">'
+      + '<p>Le compte <strong>' + _h(_delEmail) + '</strong> est bloqu\u00e9 dans PSM.</p>'
+      + '<p style="color:var(--text-2);margin-top:6px">Pour supprimer d\u00e9finitivement le compte Firebase Auth (optionnel) :</p>'
+      + '<div style="margin:10px 0;padding:10px 14px;background:var(--bg-2);border-radius:8px;font-size:12px;line-height:2">'
+      + '1. Cliquer le bouton ci-dessous<br>'
+      + '2. Authentication \u2192 Users<br>'
+      + '3. Chercher <b>' + _h(_delEmail) + '</b> \u2192 Supprimer</div>'
+      + '<p style="font-size:11px;color:var(--text-3)">Optionnel \u2014 le compte est d\u00e9j\u00e0 inaccessible dans PSM.</p></div>',
+      [{ label: '\uD83D\uDD17 Firebase Console', cls: 'btn-primary', onclick: 'window.open(window._psmFbAuthUrl,\'_blank\')' },
+       { label: 'Fermer', cls: 'btn-secondary', onclick: 'closeModal()' }]
+    );
+  }, 300);
 }
 
 
