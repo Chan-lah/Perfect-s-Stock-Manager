@@ -763,6 +763,11 @@ async function archiveSweep() {
   if (typeof _firebaseDB === 'undefined' || !_firebaseDB) {
     throw new Error('Firebase indisponible — archivage impossible');
   }
+  if (APP._archiveInProgress) {
+    throw new Error('Un archivage est déjà en cours');
+  }
+  APP._archiveInProgress = true;
+  try {
   var cutoff = _archCutoffTs();
   var bonsOld  = (APP.bons        || []).filter(function(b){ return _archItemTs(b,'bons')        < cutoff; });
   var mvtsOld  = (APP.mouvements  || []).filter(function(m){ return _archItemTs(m,'mouvements')  < cutoff; });
@@ -771,6 +776,7 @@ async function archiveSweep() {
   if (bonsOld.length + mvtsOld.length + auditOld.length === 0) {
     APP.settings._lastArchiveRun = Date.now();
     if (typeof saveDB === 'function') saveDB();
+    APP._archiveInProgress = false;
     return { moved: 0, bons: 0, mouvements: 0, audit: 0, message: 'Aucun élément à archiver' };
   }
 
@@ -811,6 +817,7 @@ async function archiveSweep() {
     moved: bonsOld.length + mvtsOld.length + auditOld.length,
     bons: bonsOld.length, mouvements: mvtsOld.length, audit: auditOld.length
   };
+  } finally { APP._archiveInProgress = false; }
 }
 
 async function maybeAutoArchive() {
@@ -820,7 +827,24 @@ async function maybeAutoArchive() {
     if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
     var r = await archiveSweep();
     if (r.moved > 0) console.log('[PSM] Archive auto: ' + r.moved + ' éléments déplacés');
-  } catch(e) { console.warn('[PSM] Archive auto échec:', e); }
+    // Succès : effacer le flag d'échec si présent
+    if (APP.settings && APP.settings._archiveFailedAt) {
+      APP.settings._archiveFailedAt = null;
+      APP.settings._archiveFailedReason = null;
+      if (typeof saveDB === 'function') saveDB();
+    }
+  } catch(e) {
+    console.warn('[PSM] Archive auto échec:', e);
+    // Persister l'échec pour bannière dashboard + log Firebase
+    try {
+      if (APP.settings) {
+        APP.settings._archiveFailedAt = Date.now();
+        APP.settings._archiveFailedReason = (e && e.message) ? e.message.substring(0, 200) : String(e).substring(0, 200);
+        if (typeof saveDB === 'function') saveDB();
+      }
+      if (typeof logError === 'function') logError('archive_auto_failed', e, { lastRun: (APP.settings||{})._lastArchiveRun || 0 });
+    } catch(_e) {}
+  }
 }
 
 async function loadArchiveYears(type) {
@@ -869,6 +893,98 @@ async function deleteArchiveEntry(type, year, id) {
   }
   if (typeof auditLog === 'function') auditLog('SOFT_DELETE', 'archive_' + type, id, { year: year }, { _deletedBy: (_cu2 && _cu2.email)||'admin' });
   return true;
+}
+
+// ── Désarchiver un item : remettre dans le hot set + soft-delete dans archive ──
+async function unarchiveItem(type, year, id) {
+  if (_currentUser()?.role !== 'admin') {
+    if (typeof notify==='function') notify('⛔ Action réservée à l\u0027admin', 'warning');
+    return false;
+  }
+  if (APP._archiveInProgress) {
+    if (typeof notify==='function') notify('Un archivage est en cours, réessayez dans quelques secondes', 'warning');
+    return false;
+  }
+  if (!['bons','mouvements','audit'].includes(type)) {
+    if (typeof notify==='function') notify('Type d\u0027archive invalide', 'error');
+    return false;
+  }
+  if (!confirm('Désarchiver cet élément et le réintégrer dans les données actives ?\n\nL\u0027élément restera marqué comme supprimé dans les archives (traçabilité préservée).')) return false;
+  try {
+    // 1. Recharger l'archive de l'année (peut être en cache)
+    var ref = _firebaseDB.ref('app_data/archives/' + type + '/' + year);
+    var snap = await ref.once('value');
+    var arr = _archArrayFromSnap(snap.val());
+    var item = arr.find(function(x){ return x && x.id === id && !x._deleted; });
+    if (!item) { if (typeof notify==='function') notify('Élément introuvable dans l\u0027archive', 'error'); return false; }
+    // 2. Vérifier qu'il n'est pas déjà dans le hot set (sécurité)
+    if (!APP[type]) APP[type] = [];
+    if (APP[type].some(function(x){ return x && x.id === id; })) {
+      if (typeof notify==='function') notify('Élément déjà présent dans les données actives', 'warning');
+      return false;
+    }
+    // 3. Push dans le hot set (clone propre, sans _deleted ni _deletedAt/_deletedBy hérités)
+    var clean = Object.assign({}, item);
+    delete clean._deleted; delete clean._deletedAt; delete clean._deletedBy;
+    APP[type].push(clean);
+    // 4. Soft-delete dans l'archive (préserve la traçabilité)
+    var u = _currentUser() || {};
+    var updated = arr.map(function(x){
+      if (x && x.id === id) {
+        return Object.assign({}, x, { _deleted: true, _deletedAt: Date.now(), _deletedBy: u.email || 'unknown', _unarchivedTo: 'hot' });
+      }
+      return x;
+    });
+    await ref.set(updated);
+    // 5. Invalider le cache local de cette année
+    if (APP._archivesCache && APP._archivesCache[type] && APP._archivesCache[type][year]) {
+      delete APP._archivesCache[type][year];
+    }
+    // 6. Sauvegarder le hot set + audit log
+    if (typeof saveDB === 'function') saveDB();
+    if (typeof auditLog === 'function') auditLog('UNARCHIVE', type, id, { year: year }, { restored: true });
+    if (typeof notify==='function') notify('✅ Élément désarchivé et réintégré dans les données actives', 'success');
+    // 7. Re-render le modal courant si encore ouvert
+    if (typeof _loadArchiveBody === 'function' && document.getElementById('arch-year-select')) {
+      var sel = document.getElementById('arch-year-select');
+      _loadArchiveBody(type, sel.value);
+    }
+    return true;
+  } catch(e) {
+    console.warn('[PSM] unarchiveItem failed:', e);
+    if (typeof notify==='function') notify('Désarchivage échoué : ' + (e.message || e), 'error');
+    return false;
+  }
+}
+
+// ── Retry manuel de l'archivage depuis la bannière dashboard ──
+async function manualRetryArchive() {
+  if (_currentUser()?.role !== 'admin') {
+    if (typeof notify==='function') notify('⛔ Action réservée à l\u0027admin', 'warning');
+    return;
+  }
+  if (typeof notify==='function') notify('Relance de l\u0027archivage…', 'info');
+  try {
+    var r = await archiveSweep();
+    if (APP.settings) {
+      APP.settings._archiveFailedAt = null;
+      APP.settings._archiveFailedReason = null;
+      if (typeof saveDB === 'function') saveDB();
+    }
+    if (typeof notify==='function') {
+      if (r.moved === 0) notify(r.message || 'Rien à archiver', 'success');
+      else notify('✅ Archivage relancé : ' + r.moved + ' élément(s) déplacé(s)', 'success');
+    }
+    if (typeof renderDashboard === 'function' && currentPage === 'dashboard') renderDashboard();
+  } catch(e) {
+    if (APP.settings) {
+      APP.settings._archiveFailedAt = Date.now();
+      APP.settings._archiveFailedReason = (e && e.message) ? e.message.substring(0, 200) : String(e).substring(0, 200);
+      if (typeof saveDB === 'function') saveDB();
+    }
+    if (typeof logError === 'function') logError('archive_manual_retry_failed', e, {});
+    if (typeof notify==='function') notify('Retry archivage échoué : ' + (e.message || e), 'error');
+  }
 }
 
 function confirmDeleteArchiveEntry(type, year, id, label) {
@@ -966,6 +1082,7 @@ function _buildArchBonsRows(year, list) {
       + '<button class="btn btn-sm btn-secondary" onclick="previewArchivedBon(\''+year+'\',\''+b.id+'\')" title="Aperçu"><i class="fa-solid fa-eye"></i></button>'
       + '<button class="btn btn-sm btn-secondary" onclick="printArchivedBon(\''+year+'\',\''+b.id+'\')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
       + '<button class="btn btn-sm btn-secondary" onclick="exportArchivedBonPDF(\''+year+'\',\''+b.id+'\')" title="PDF"><i class="fa-solid fa-file-pdf"></i></button>'
+      + (_isAdmin ? '<button class="btn btn-sm" style="background:var(--success,#10b981);color:#fff" onclick="unarchiveItem(\'bons\',\''+year+'\',\''+b.id+'\')" title="Désarchiver — réintégrer dans les données actives"><i class="fa-solid fa-rotate-left"></i></button>' : '')
       + (_isAdmin ? '<button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'bons\',\''+year+'\',\''+b.id+'\',\'Bon '+(b.numero||'?')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button>' : '')
       + '</div>'
       + '</div>'
@@ -1022,7 +1139,8 @@ function _buildArchMvtsRows(year, list) {
       + '<td style="font-weight:600">' + (m.articleName||'—') + '</td>'
       + '<td style="white-space:nowrap;font-size:13px;font-weight:700;color:' + (isE?'var(--success)':'var(--accent3)') + '">' + (isE?'+':'-') + m.qty + '</td>'
       + '<td style="font-size:11px;color:var(--text-2);max-width:240px">' + (m.obs||m.note||'—') + '</td>'
-      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'mouvements\',\''+year+'\',\''+m.id+'\',\'Mvt '+(m.articleName||'?')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
+      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--success,#10b981);color:#fff;margin-right:4px" onclick="unarchiveItem(\'mouvements\',\''+year+'\',\''+m.id+'\')" title="Désarchiver"><i class="fa-solid fa-rotate-left"></i></button>'
+        + '<button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'mouvements\',\''+year+'\',\''+m.id+'\',\'Mvt '+(m.articleName||'?')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
       + '</tr>';
   }).join('');
   return '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Type</th><th>Article</th><th>Quantité</th><th>Observation</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
@@ -1074,7 +1192,8 @@ function _buildArchAuditRows(year, list) {
       + '<td style="font-weight:600">' + (a.entity||'—') + '</td>'
       + '<td style="font-size:11px;color:var(--text-2)">' + (a.entityId||'—') + '</td>'
       + '<td style="font-size:11px;color:var(--text-2)">' + (a.userName||a.userLogin||'—') + '</td>'
-      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'audit\',\''+year+'\',\''+a.id+'\',\''+(a.type||'?')+' '+(a.entity||'')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
+      + (_isAdmin ? '<td><button class="btn btn-sm" style="background:var(--success,#10b981);color:#fff;margin-right:4px" onclick="unarchiveItem(\'audit\',\''+year+'\',\''+a.id+'\')" title="Désarchiver"><i class="fa-solid fa-rotate-left"></i></button>'
+        + '<button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="confirmDeleteArchiveEntry(\'audit\',\''+year+'\',\''+a.id+'\',\''+(a.type||'?')+' '+(a.entity||'')+'\')" title="Supprimer"><i class="fa-solid fa-trash"></i></button></td>' : '<td></td>')
       + '</tr>';
   }).join('');
   return '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Type</th><th>Entité</th><th>ID</th><th>Utilisateur</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
@@ -2240,7 +2359,21 @@ function renderDashboard() {
   const content = document.getElementById('content');
   const logo = _safeCompanyLogo();
   const name = APP.settings.companyName || 'Mon Entreprise';
+  // Bannière d'alerte si l'archivage automatique a échoué
+  var _archAlertHtml = '';
+  try {
+    var _failTs = (APP.settings && APP.settings._archiveFailedAt) || 0;
+    if (_failTs && _currentUser && _currentUser()?.role === 'admin') {
+      var _failDate = new Date(_failTs).toLocaleString('fr-FR');
+      var _failReason = (APP.settings && APP.settings._archiveFailedReason) ? APP.settings._archiveFailedReason : 'Cause inconnue';
+      _archAlertHtml = '<div style="background:#fef2f2;border-left:4px solid #dc2626;color:#991b1b;padding:12px 16px;border-radius:6px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:200px"><div style="font-weight:700;font-size:13px">⚠️ Archivage automatique en échec</div>'
+        + '<div style="font-size:11px;opacity:.85;margin-top:2px">Dernière tentative : ' + _failDate + '. Raison : ' + _failReason + '</div></div>'
+        + '<button class="btn btn-sm btn-primary" onclick="manualRetryArchive()">🔄 Réessayer maintenant</button></div>';
+    }
+  } catch(_e) {}
   content.innerHTML = `
+  ${_archAlertHtml}
   <div class="page-header">
     <div style="display:flex;align-items:center;gap:14px">
       ${logo
