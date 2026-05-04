@@ -707,8 +707,9 @@ if (typeof APP !== 'undefined' && !APP._archivesCache) {
 
 function _archRetentionMonths() {
   var m = parseInt(APP.settings && APP.settings.archiveRetentionMonths);
-  // Plancher minimum de 24 mois non modifiable (conformité légale / audit GMA)
-  if (!m || m < 24) m = 24;
+  // Conformité OHADA assurée par le cold permanent (archives jamais purgées pour bons/mouvements/audit)
+  // Le hot ne sert qu'à l'affichage rapide — plancher 1 mois, défaut 2 mois
+  if (!m || m < 1) m = 2;
   return m;
 }
 function _archCutoffTs() {
@@ -823,7 +824,7 @@ async function archiveSweep() {
 async function maybeAutoArchive() {
   try {
     var last = (APP.settings && APP.settings._lastArchiveRun) || 0;
-    if (Date.now() - last < 30 * 86400000) return;
+    if (Date.now() - last < 7 * 86400000) return;
     if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
     var r = await archiveSweep();
     if (r.moved > 0) console.log('[PSM] Archive auto: ' + r.moved + ' éléments déplacés');
@@ -994,7 +995,7 @@ async function manualRetryArchive() {
 // Délai entre soft-delete et purge physique (fenêtre de récupération)
 var _LOG_PURGE_GRACE_DAYS = 30;
 // Délai d'archivage (entrée hot → cold)
-var _LOG_ARCHIVE_MONTHS = 12;
+var _LOG_ARCHIVE_MONTHS = 2;
 // Délai de purge cold → DELETE (uniquement activity_logs et sessions_logs)
 var _LOG_PURGE_MONTHS = 24;
 
@@ -1185,7 +1186,7 @@ async function maybeAutoArchiveLogs() {
     if (!_firebaseDB) return;
     if ((APP.settings && APP.settings.disableLogArchive) === true) return;
     var last = (APP.settings && APP.settings._lastLogArchiveRun) || 0;
-    if (Date.now() - last < 30 * 86400000) return;
+    if (Date.now() - last < 7 * 86400000) return;
     var r = await archiveSweepLogs();
     var totalArch = r.archived.audit + r.archived.activity + r.archived.sessions;
     if (totalArch > 0) console.log('[PSM] Logs archive auto: ' + totalArch + ' déplacés');
@@ -2806,7 +2807,7 @@ function renderDashboard() {
   <div class="grid-3 mb-16 dash-widget" data-widget="kpis">
     <div class="card"><div class="card-header"><span class="card-title">Stock Total</span><div class="kpi-icon" style="background:rgba(61,127,255,.15);color:var(--accent)">${ICONS.box}</div></div><div class="kpi-value" id="kv-stock" style="color:var(--accent)">—</div><div class="kpi-change" id="ks-stock">—</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Alertes</span><div class="kpi-icon" style="background:rgba(255,71,87,.15);color:var(--danger)">⚠️</div></div><div class="kpi-value" id="kv-alerts">—</div><div class="kpi-change">Gadgets sous seuil</div></div>
-    <div class="card"><div class="card-header"><span class="card-title">Bons / 30j</span><div class="kpi-icon" style="background:rgba(0,229,170,.15);color:var(--accent2)">📋</div></div><div class="kpi-value" id="kv-bons" style="color:var(--accent2)">—</div><div class="kpi-change">Bons émis</div></div>
+    <div class="card"><div class="card-header"><span class="card-title" id="kv-bons-label">Bons / Ce mois</span><div class="kpi-icon" style="background:rgba(0,229,170,.15);color:var(--accent2)">📋</div></div><div class="kpi-value" id="kv-bons" style="color:var(--accent2)">—</div><div class="kpi-change">Bons émis</div></div>
   </div>
   <!-- Dispatch summary bar -->
   <div class="card mb-16 dash-widget" data-widget="dispatch" style="border-left:3px solid var(--accent);cursor:pointer" onclick="showPage('dispatch')">
@@ -2864,7 +2865,7 @@ function animateNumber(el, newVal) {
 }
 
 function getDashPeriod() {
-  const sel = document.getElementById('dash-period')?.value || '30';
+  const sel = document.getElementById('dash-period')?.value || 'current_month';
   const fromVal = document.getElementById('dash-from')?.value;
   const toVal   = document.getElementById('dash-to')?.value;
   let tFrom, tTo, label;
@@ -2881,7 +2882,10 @@ function getDashPeriod() {
       case '30':  tFrom = tTo - 30*86400000;  label='30 derniers jours'; break;
       case '90':  tFrom = tTo - 90*86400000;  label='3 derniers mois';   break;
       case '365': tFrom = new Date(now.getFullYear(),0,1).getTime(); label='Cette année ('+now.getFullYear()+')'; break;
-      default:    tFrom = tTo - 30*86400000;  label='30 derniers jours';
+      case 'current_month':
+      default:
+        tFrom = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
+        label = 'Mois en cours';
     }
   }
   return {tFrom, tTo, label};
@@ -3264,6 +3268,9 @@ function refreshDashboard(showNotif) {
   const ae = document.getElementById('kv-alerts');
   if(ae) { ae.style.color = alerts.length>0?'var(--danger)':'var(--success)'; animateNumber(ae, alerts.length); }
   animateNumber(document.getElementById('kv-bons'), bonsMonth);
+  // Adapter le label du KPI Bons selon la période sélectionnée
+  var bonsLbl = document.getElementById('kv-bons-label');
+  if (bonsLbl) bonsLbl.textContent = 'Bons · ' + label;
   const ss = document.getElementById('ks-stock'); if(ss) ss.textContent = APP.articles.length + ' gadgets référencés';
   // Redraw charts on every refresh so categories stay in sync
   drawChartCat(); drawChartMvt();
@@ -7507,43 +7514,141 @@ function _addNewCmdLine() {
 // ============================================================
 // ANALYTICS IA
 // ============================================================
-function getTopArticles(limit=5) {
-  const w30=Date.now()-30*86400000, artQty={};
-  APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>w30).forEach(m=>{
-    if(!artQty[m.articleId]) artQty[m.articleId]={id:m.articleId,name:m.articleName,qty:0,count:0};
-    artQty[m.articleId].qty+=m.qty; artQty[m.articleId].count++;
-  });
-  return Object.values(artQty).sort((a,b)=>b.qty-a.qty).slice(0,limit);
+// ── Calendar month helpers (sélecteur Analytique) ──────────────────────
+// monthOffset: 0 = mois en cours (1er → maintenant), -1 = mois dernier complet, etc.
+function _calendarMonth(monthOffset) {
+  monthOffset = parseInt(monthOffset) || 0;
+  var now = new Date();
+  var year = now.getFullYear();
+  var month = now.getMonth() + monthOffset;
+  while (month < 0) { month += 12; year -= 1; }
+  while (month > 11) { month -= 12; year += 1; }
+  var from = new Date(year, month, 1, 0, 0, 0, 0).getTime();
+  var to;
+  if (monthOffset === 0) {
+    to = Date.now();
+  } else {
+    to = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
+  }
+  var monthNames = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+  var label = monthNames[month] + ' ' + year + (monthOffset === 0 ? ' (en cours)' : '');
+  return { from: from, to: to, year: year, month: month, label: label };
 }
 
-function getActiveAgents(limit=5) {
-  const w30 = Date.now() - 30*86400000;
-  const _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
-  const agentData = {};
+// Hot cutoff = combien de jours en arrière le hot couvre
+function _hotCutoffMs() {
+  return Date.now() - _archRetentionMonths() * 30 * 86400000;
+}
+
+// Fusion hot + archives pour les bons sur une plage donnée
+async function _getBonsForRange(from, to) {
+  var hotItems = (APP.bons || []).filter(function(b){ var ts = b.createdAt || 0; return ts >= from && ts <= to; });
+  // Si la plage commence après le hot cutoff, hot suffit
+  if (from >= _hotCutoffMs()) return hotItems;
+  // Sinon fusion avec archives par année
+  var fromYear = new Date(from).getFullYear();
+  var toYear = new Date(to).getFullYear();
+  var archived = [];
+  if (typeof loadArchiveYear === 'function' && _firebaseDB) {
+    for (var y = fromYear; y <= toYear; y++) {
+      try {
+        var items = await loadArchiveYear('bons', String(y));
+        archived = archived.concat(items.filter(function(b){
+          var ts = b.createdAt || 0;
+          return ts >= from && ts <= to;
+        }));
+      } catch(e) { console.warn('[PSM] loadArchive bons ' + y + ' failed:', e); }
+    }
+  }
+  // Dédup par id
+  var seen = {};
+  var merged = [];
+  hotItems.forEach(function(b){ if(b && b.id) { seen[b.id] = true; merged.push(b); } });
+  archived.forEach(function(b){ if(b && b.id && !seen[b.id]) { merged.push(b); } });
+  return merged;
+}
+
+// Fusion hot + archives pour les mouvements sur une plage donnée
+async function _getMouvementsForRange(from, to) {
+  var hotItems = (APP.mouvements || []).filter(function(m){ var ts = m.ts || 0; return ts >= from && ts <= to; });
+  if (from >= _hotCutoffMs()) return hotItems;
+  var fromYear = new Date(from).getFullYear();
+  var toYear = new Date(to).getFullYear();
+  var archived = [];
+  if (typeof loadArchiveYear === 'function' && _firebaseDB) {
+    for (var y = fromYear; y <= toYear; y++) {
+      try {
+        var items = await loadArchiveYear('mouvements', String(y));
+        archived = archived.concat(items.filter(function(m){
+          var ts = m.ts || 0;
+          return ts >= from && ts <= to;
+        }));
+      } catch(e) { console.warn('[PSM] loadArchive mouvements ' + y + ' failed:', e); }
+    }
+  }
+  var seen = {};
+  var merged = [];
+  hotItems.forEach(function(m){ if(m && m.id) { seen[m.id] = true; merged.push(m); } });
+  archived.forEach(function(m){ if(m && m.id && !seen[m.id]) { merged.push(m); } });
+  return merged;
+}
+
+// Setter du mois sélectionné (state global)
+function _setAnalyticsMonth(value) {
+  APP._analyticsMonthOffset = parseInt(value) || 0;
+  if (typeof renderAnalytics === 'function') renderAnalytics();
+}
+function _changeAnalyticsMonth(delta) {
+  var cur = parseInt(APP._analyticsMonthOffset) || 0;
+  var next = cur + parseInt(delta);
+  if (next > 0) next = 0;        // pas dans le futur
+  if (next < -12) next = -12;    // limite 12 mois en arrière
+  _setAnalyticsMonth(next);
+}
+
+async function getTopArticles(monthOffset, limit) {
+  monthOffset = parseInt(monthOffset) || 0;
+  limit = limit || 5;
+  var range = _calendarMonth(monthOffset);
+  var mvts = await _getMouvementsForRange(range.from, range.to);
+  var artQty = {};
+  mvts.filter(function(m){ return m.type==='sortie'; }).forEach(function(m){
+    if(!artQty[m.articleId]) artQty[m.articleId]={id:m.articleId,name:m.articleName,qty:0,count:0};
+    artQty[m.articleId].qty += (m.qty||0); artQty[m.articleId].count++;
+  });
+  return Object.values(artQty).sort(function(a,b){ return b.qty-a.qty; }).slice(0,limit);
+}
+
+async function getActiveAgents(monthOffset, limit) {
+  monthOffset = parseInt(monthOffset) || 0;
+  limit = limit || 5;
+  var range = _calendarMonth(monthOffset);
+  var bonsRange = await _getBonsForRange(range.from, range.to);
+  var mvtsRange = await _getMouvementsForRange(range.from, range.to);
+  var _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
+  var agentData = {};
   (APP.commerciaux||[]).forEach(function(c){
-    const _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
-    const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
-    const _matchBon = function(b){
+    var _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
+    var _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
+    var _matchBon = function(b){
       if (b.commercialId === c.id) return true;
-      // Bon annuaire: ne jamais le rattacher a un commercial homonyme
       if (b._recipientType === 'annuaire') return false;
       if (!_fullA) return false;
-      const _d = _norm(b.demandeur);
-      const _r = _norm(b.recipiendaire);
+      var _d = _norm(b.demandeur);
+      var _r = _norm(b.recipiendaire);
       return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
     };
-    const matchedBons = (APP.bons||[]).filter(function(b){ return _matchBon(b) && (b.createdAt||0) > w30; });
-    const bonsCount = matchedBons.length;
-    const qtyFromBons = matchedBons.filter(function(b){return b.status==='validé';}).reduce(function(s,b){
+    var matchedBons = bonsRange.filter(function(b){ return _matchBon(b); });
+    var bonsCount = matchedBons.length;
+    var qtyFromBons = matchedBons.filter(function(b){return b.status==='validé';}).reduce(function(s,b){
       return s + (b.lignes||[]).reduce(function(sl,l){return sl + (parseInt(l.qty)||0);}, 0);
     }, 0);
-    const qtyFromManual = (APP.mouvements||[]).filter(function(m){
+    var qtyFromManual = mvtsRange.filter(function(m){
       if (m.type !== 'sortie') return false;
-      if ((m.ts||0) <= w30) return false;
       if (m.commercialId !== c.id) return false;
       return !/^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i.test(m.note||'');
-    }).reduce(function(s,m){return s+m.qty;}, 0);
-    const qty = qtyFromBons + qtyFromManual;
+    }).reduce(function(s,m){return s+(m.qty||0);}, 0);
+    var qty = qtyFromBons + qtyFromManual;
     if (qty > 0 || bonsCount > 0) {
       agentData[c.id] = { id:c.id, name:((c.prenom||'')+' '+(c.nom||'')).trim()||'Inconnu', qty:qty, bons:bonsCount };
     }
@@ -7551,11 +7656,13 @@ function getActiveAgents(limit=5) {
   return Object.values(agentData).sort(function(a,b){return b.qty-a.qty;}).slice(0, limit);
 }
 
-function getEntryExitRatio() {
-  const w30=Date.now()-30*86400000;
-  const entrees=APP.mouvements.filter(m=>m.type==='entree'&&m.ts>w30).reduce((s,m)=>s+m.qty,0);
-  const sorties=APP.mouvements.filter(m=>m.type==='sortie'&&m.ts>w30).reduce((s,m)=>s+m.qty,0);
-  return{entrees,sorties,ratio:sorties>0?(entrees/sorties).toFixed(2):'∞',balance:entrees-sorties};
+async function getEntryExitRatio(monthOffset) {
+  monthOffset = parseInt(monthOffset) || 0;
+  var range = _calendarMonth(monthOffset);
+  var mvts = await _getMouvementsForRange(range.from, range.to);
+  var entrees = mvts.filter(function(m){ return m.type==='entree'; }).reduce(function(s,m){ return s+(m.qty||0); }, 0);
+  var sorties = mvts.filter(function(m){ return m.type==='sortie'; }).reduce(function(s,m){ return s+(m.qty||0); }, 0);
+  return { entrees: entrees, sorties: sorties, ratio: sorties>0 ? (entrees/sorties).toFixed(2) : '∞', balance: entrees-sorties };
 }
 
 function predictShortages() {
@@ -7577,27 +7684,55 @@ function getSuggestions() {
   });
 }
 
-function renderAnalytics() {
-  const topArts=getTopArticles(), agents=getActiveAgents();
-  const ratio=getEntryExitRatio(), predictions=predictShortages(), suggestions=getSuggestions();
-  document.getElementById('content').innerHTML=`
+async function renderAnalytics() {
+  var offset = parseInt(APP._analyticsMonthOffset) || 0;
+  var range = _calendarMonth(offset);
+  // Loading state immédiat (mois en cours = rapide, mois passé = ~500ms charge archive)
+  var contentEl = document.getElementById('content');
+  if (offset !== 0 && contentEl) {
+    contentEl.innerHTML = '<div style="padding:60px;text-align:center;color:var(--text-2)"><div style="font-size:30px;margin-bottom:10px">⏳</div><div>Chargement de ' + range.label + '...</div></div>';
+  }
+  var topArts = await getTopArticles(offset);
+  var agents = await getActiveAgents(offset);
+  var ratio = await getEntryExitRatio(offset);
+  // Predictions et suggestions toujours rolling 30j (précision maintenue indépendamment du sélecteur)
+  var predictions = predictShortages();
+  var suggestions = getSuggestions();
+  // Construction du sélecteur de mois (12 derniers + courant)
+  var monthOptions = '';
+  for (var i = 0; i >= -12; i--) {
+    var m = _calendarMonth(i);
+    monthOptions += '<option value="' + i + '"' + (i === offset ? ' selected' : '') + '>' + m.label + '</option>';
+  }
+  var monthSelector = '<div class="card" style="margin-bottom:14px;padding:10px 14px;background:linear-gradient(135deg,rgba(99,102,241,.05),rgba(168,85,247,.03))">'
+    + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<span style="font-size:13px;font-weight:600;color:var(--text-1)">📅 Période :</span>'
+    + '<button class="btn btn-secondary btn-sm" onclick="_changeAnalyticsMonth(-1)" title="Mois précédent">◄</button>'
+    + '<select onchange="_setAnalyticsMonth(this.value)" style="width:auto;min-width:180px">' + monthOptions + '</select>'
+    + '<button class="btn btn-secondary btn-sm" onclick="_changeAnalyticsMonth(1)" title="Mois suivant"' + (offset >= 0 ? ' disabled' : '') + '>►</button>'
+    + (offset !== 0 ? '<button class="btn btn-primary btn-sm" onclick="_setAnalyticsMonth(0)">↺ Mois en cours</button>' : '')
+    + '<span style="flex:1"></span>'
+    + '<span style="font-size:11px;color:var(--text-3)">Prédictions : 30 jours glissants (indépendant du mois sélectionné)</span>'
+    + '</div></div>';
+  if (!contentEl) return;
+  contentEl.innerHTML = monthSelector + `
   <div class="page-header">
     <div><div class="page-title">🧠 Analytique</div><div class="page-sub">Insights intelligents — prévisions basées sur l'historique, fréquence et moyenne des sorties</div></div>
     <div><button class="btn btn-primary" onclick="renderArticleTracking()">🔍 Suivi Gadget</button></div>
   </div>
   <div class="grid-4 mb-16">
-    <div class="card"><div class="card-header"><span class="card-title">Entrées / 30j</span></div><div class="kpi-value" style="color:var(--success)">${ratio.entrees}</div><div class="kpi-change">unités reçues</div></div>
-    <div class="card"><div class="card-header"><span class="card-title">Sorties / 30j</span></div><div class="kpi-value" style="color:var(--accent3)">${ratio.sorties}</div><div class="kpi-change">unités distribuées</div></div>
+    <div class="card"><div class="card-header"><span class="card-title">Entrées · ${range.label}</span></div><div class="kpi-value" style="color:var(--success)">${ratio.entrees}</div><div class="kpi-change">unités reçues</div></div>
+    <div class="card"><div class="card-header"><span class="card-title">Sorties · ${range.label}</span></div><div class="kpi-value" style="color:var(--accent3)">${ratio.sorties}</div><div class="kpi-change">unités distribuées</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Ratio E/S</span></div><div class="kpi-value" style="color:${parseFloat(ratio.ratio)<1?'var(--danger)':parseFloat(ratio.ratio)>1.5?'var(--success)':'var(--warning)'}">${ratio.ratio}</div><div class="kpi-change">entrées par sortie</div></div>
     <div class="card"><div class="card-header"><span class="card-title">Balance</span></div><div class="kpi-value" style="color:${ratio.balance>=0?'var(--success)':'var(--danger)'}">${ratio.balance>=0?'+':''}${ratio.balance}</div><div class="kpi-change">unités net</div></div>
   </div>
   <div class="card mb-16">
-    <div class="card-header"><span class="card-title">👑 Agents les plus actifs</span><span style="font-size:11px;color:var(--text-2)">30 jours</span></div>
+    <div class="card-header"><span class="card-title">👑 Agents les plus actifs</span><span style="font-size:11px;color:var(--text-2)">${range.label}</span></div>
     ${agents.length===0?'<div class="empty-state"><p>Aucune activité</p></div>':agents.map((a,i)=>{const max=agents[0].qty||1;return`<div class="rank-item"><div class="rank-num ${i===0?'top':''}">${i+1}</div><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${_h(a.name)}</div><div class="progress-bar"><div class="progress-fill" style="width:${a.qty/max*100}%;background:${i===0?'var(--warning)':'var(--accent)'}"></div></div></div><div class="text-right" style="margin-left:12px"><div style="font-weight:700;font-size:13px">${a.qty}</div><div style="font-size:11px;color:var(--text-2)">${a.bons} bons</div></div></div>`;}).join('')}
   </div>
   <div class="grid-2 mb-16">
     <div class="card">
-      <div class="card-header"><span class="card-title">📦 Top gadgets sortis</span><span style="font-size:11px;color:var(--text-2)">30 jours</span></div>
+      <div class="card-header"><span class="card-title">📦 Top gadgets sortis</span><span style="font-size:11px;color:var(--text-2)">${range.label}</span></div>
       ${topArts.length===0?'<div class="empty-state"><p>Aucune sortie</p></div>':topArts.map((a,i)=>{const max=topArts[0].qty||1;return`<div class="rank-item"><div class="rank-num ${i===0?'top':''}">${i+1}</div><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${_h(a.name)}</div><div class="progress-bar"><div class="progress-fill" style="width:${a.qty/max*100}%;background:${i===0?'var(--accent3)':'var(--accent)'}"></div></div></div><div class="text-right" style="margin-left:12px"><div style="font-weight:700;font-size:13px">${a.qty}</div><div style="font-size:11px;color:var(--text-2)">${a.count} mvts</div></div></div>`;}).join('')}
     </div>
     <div class="card">
