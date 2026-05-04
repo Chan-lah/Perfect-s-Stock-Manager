@@ -553,6 +553,8 @@ async function _handleLogin(e) {
     setTimeout(function() {
       if (typeof maybeAutoArchive === 'function') maybeAutoArchive().catch(function(){});
       if (typeof _purgeOldCloudSnapshots === 'function') { try { _purgeOldCloudSnapshots(); } catch(e) {} }
+      // Logs archive (audit/activity/sessions) — différé de 5s pour ne pas surcharger le login
+      setTimeout(function() { if (typeof maybeAutoArchiveLogs === 'function') maybeAutoArchiveLogs().catch(function(){}); }, 5000);
       logActivity('login', 'Connexion: ' + (localUser ? localUser.name : email) + ' (' + (localUser ? localUser.role : 'unknown') + ')');
       try { localStorage.removeItem('psm_pro_db'); localStorage.removeItem('psm_theme'); } catch(e) {}
     }, 500);

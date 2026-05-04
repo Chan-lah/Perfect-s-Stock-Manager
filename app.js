@@ -987,6 +987,422 @@ async function manualRetryArchive() {
   }
 }
 
+// ── LOG ARCHIVE SYSTEM (audit_log, activity_log, sessions) ──────────────
+// Archive 12 mois → cold permanent (audit) ou cold + purge 24 mois (autres)
+// Two-phase commit (copy then delete) + idempotence par dedup ID
+
+// Délai entre soft-delete et purge physique (fenêtre de récupération)
+var _LOG_PURGE_GRACE_DAYS = 30;
+// Délai d'archivage (entrée hot → cold)
+var _LOG_ARCHIVE_MONTHS = 12;
+// Délai de purge cold → DELETE (uniquement activity_logs et sessions_logs)
+var _LOG_PURGE_MONTHS = 24;
+
+// Helper : récupérer le timestamp d'une entrée selon son type
+function _logEntryTs(entry) {
+  if (!entry) return 0;
+  return entry.ts || entry.timestamp || entry.created_at || entry.loginAt || entry.logoutAt || 0;
+}
+
+// Helper : grouper par année selon ts
+function _logGroupByYear(items) {
+  var out = {};
+  items.forEach(function(it) {
+    var ts = _logEntryTs(it);
+    if (!ts) return;
+    var y = new Date(ts).getFullYear();
+    (out[y] = out[y] || []).push(it);
+  });
+  return out;
+}
+
+// 1. Archivage générique d'un node Firebase plat (audit_log, activity_log)
+async function _archiveLogNode(srcPath, archivePathBase, cutoffMs) {
+  if (!_firebaseDB) throw new Error('Firebase indisponible');
+  var snap = await _firebaseDB.ref(srcPath).once('value');
+  var val = snap.val() || {};
+  // val est un objet { firebaseKey: entry }
+  var oldKeys = [];
+  var oldItems = [];
+  Object.keys(val).forEach(function(k) {
+    var entry = val[k];
+    var ts = _logEntryTs(entry);
+    if (ts && ts < cutoffMs) {
+      // Inject _firebaseKey pour pouvoir delete précisément
+      var clone = Object.assign({}, entry, { _firebaseKey: k });
+      oldItems.push(clone);
+      oldKeys.push(k);
+    }
+  });
+  if (oldItems.length === 0) return { moved: 0 };
+
+  // COPY phase : groupe par année puis merge dans archive
+  var byYear = _logGroupByYear(oldItems);
+  for (var year in byYear) {
+    var ref = _firebaseDB.ref('app_data/archives/' + archivePathBase + '/' + year);
+    var aSnap = await ref.once('value');
+    var existing = _archArrayFromSnap(aSnap.val());
+    var seen = {};
+    existing.forEach(function(e){ if (e && e._firebaseKey) seen[e._firebaseKey] = true; });
+    var merged = existing.concat(byYear[year].filter(function(i){ return i && i._firebaseKey && !seen[i._firebaseKey]; }));
+    await ref.set(merged);
+    if (APP._archivesCache && APP._archivesCache[archivePathBase]) delete APP._archivesCache[archivePathBase][year];
+  }
+
+  // DELETE phase : suppression précise par clé Firebase (jamais bulk)
+  var updates = {};
+  oldKeys.forEach(function(k){ updates[k] = null; });
+  await _firebaseDB.ref(srcPath).update(updates);
+
+  return { moved: oldItems.length };
+}
+
+// 2. Archivage spécifique de sessions/{uid}/{sessionId} (structure imbriquée)
+async function _archiveSessionsNode(cutoffMs) {
+  if (!_firebaseDB) throw new Error('Firebase indisponible');
+  var snap = await _firebaseDB.ref('sessions').once('value');
+  var allUsers = snap.val() || {};
+  var oldItems = [];
+  var deletePaths = [];
+
+  Object.keys(allUsers).forEach(function(uid) {
+    var userSessions = allUsers[uid] || {};
+    Object.keys(userSessions).forEach(function(sid) {
+      var entry = userSessions[sid];
+      var ts = _logEntryTs(entry);
+      if (ts && ts < cutoffMs) {
+        var clone = Object.assign({}, entry, { _firebaseKey: uid + '_' + sid, _uid: uid, _sessionId: sid });
+        oldItems.push(clone);
+        deletePaths.push('sessions/' + uid + '/' + sid);
+      }
+    });
+  });
+  if (oldItems.length === 0) return { moved: 0 };
+
+  // COPY phase
+  var byYear = _logGroupByYear(oldItems);
+  for (var year in byYear) {
+    var ref = _firebaseDB.ref('app_data/archives/sessions_logs/' + year);
+    var aSnap = await ref.once('value');
+    var existing = _archArrayFromSnap(aSnap.val());
+    var seen = {};
+    existing.forEach(function(e){ if (e && e._firebaseKey) seen[e._firebaseKey] = true; });
+    var merged = existing.concat(byYear[year].filter(function(i){ return i && i._firebaseKey && !seen[i._firebaseKey]; }));
+    await ref.set(merged);
+    if (APP._archivesCache && APP._archivesCache.sessions_logs) delete APP._archivesCache.sessions_logs[year];
+  }
+
+  // DELETE phase
+  var updates = {};
+  deletePaths.forEach(function(p){ updates[p] = null; });
+  // Update à la racine pour gérer plusieurs uids en une fois
+  await _firebaseDB.ref('/').update(updates);
+
+  return { moved: oldItems.length };
+}
+
+// 3. Purge cold archive (soft-delete puis physique après 30j)
+async function _purgeArchiveLogNode(archivePathBase, cutoffMs) {
+  if (!_firebaseDB) throw new Error('Firebase indisponible');
+  var snap = await _firebaseDB.ref('app_data/archives/' + archivePathBase).once('value');
+  var val = snap.val() || {};
+  var totalSoftDeleted = 0;
+  var totalPurged = 0;
+  var graceCutoff = Date.now() - _LOG_PURGE_GRACE_DAYS * 86400000;
+  var u = (typeof _currentUser === 'function' && _currentUser()) || {};
+
+  for (var year in val) {
+    var arr = _archArrayFromSnap(val[year]);
+    var changed = false;
+    var keep = [];
+    arr.forEach(function(item) {
+      if (!item) return;
+      var ts = _logEntryTs(item);
+      // Phase 1 : marquer pour soft-delete si > cutoff et pas déjà marqué
+      if (ts && ts < cutoffMs && !item._deletedAt) {
+        item = Object.assign({}, item, { _deletedAt: Date.now(), _deletedBy: u.email || 'auto' });
+        changed = true;
+        totalSoftDeleted++;
+        keep.push(item);
+        return;
+      }
+      // Phase 2 : purge physique si soft-deleted depuis > 30j
+      if (item._deletedAt && item._deletedAt < graceCutoff) {
+        changed = true;
+        totalPurged++;
+        return; // not pushed → purgé
+      }
+      keep.push(item);
+    });
+    if (changed) {
+      await _firebaseDB.ref('app_data/archives/' + archivePathBase + '/' + year).set(keep);
+      if (APP._archivesCache && APP._archivesCache[archivePathBase]) delete APP._archivesCache[archivePathBase][year];
+    }
+  }
+  return { softDeleted: totalSoftDeleted, purged: totalPurged };
+}
+
+// 4. Orchestrateur : archive + purge selon les règles Option B
+async function archiveSweepLogs() {
+  if (!_firebaseDB) throw new Error('Firebase indisponible');
+  if (APP._archiveInProgress) throw new Error('Un archivage est déjà en cours');
+  APP._archiveInProgress = true;
+  try {
+    var cutoffArchive = Date.now() - _LOG_ARCHIVE_MONTHS * 30 * 86400000;
+    var cutoffPurge   = Date.now() - _LOG_PURGE_MONTHS   * 30 * 86400000;
+
+    var auditMoved   = await _archiveLogNode('audit_log',    'audit_logs',    cutoffArchive);
+    var activityMoved = await _archiveLogNode('activity_log', 'activity_logs', cutoffArchive);
+    var sessionsMoved = await _archiveSessionsNode(cutoffArchive);
+
+    // Purge UNIQUEMENT activity_logs et sessions_logs (audit_logs jamais purgé — OHADA)
+    var activityPurge = await _purgeArchiveLogNode('activity_logs', cutoffPurge);
+    var sessionsPurge = await _purgeArchiveLogNode('sessions_logs', cutoffPurge);
+
+    APP.settings._lastLogArchiveRun = Date.now();
+    if (typeof saveDB === 'function') saveDB();
+    if (typeof auditLog === 'function') {
+      auditLog('LOG_SWEEP', 'system', '', null, {
+        archived: auditMoved.moved + activityMoved.moved + sessionsMoved.moved,
+        purged: activityPurge.purged + sessionsPurge.purged
+      });
+    }
+    return {
+      archived: { audit: auditMoved.moved, activity: activityMoved.moved, sessions: sessionsMoved.moved },
+      purge: {
+        activity: activityPurge,
+        sessions: sessionsPurge
+      }
+    };
+  } finally {
+    APP._archiveInProgress = false;
+  }
+}
+
+// 5. Auto-trigger 30 jours
+async function maybeAutoArchiveLogs() {
+  try {
+    if (!_firebaseDB) return;
+    if ((APP.settings && APP.settings.disableLogArchive) === true) return;
+    var last = (APP.settings && APP.settings._lastLogArchiveRun) || 0;
+    if (Date.now() - last < 30 * 86400000) return;
+    var r = await archiveSweepLogs();
+    var totalArch = r.archived.audit + r.archived.activity + r.archived.sessions;
+    if (totalArch > 0) console.log('[PSM] Logs archive auto: ' + totalArch + ' déplacés');
+    if (APP.settings && APP.settings._logArchiveFailedAt) {
+      APP.settings._logArchiveFailedAt = null;
+      APP.settings._logArchiveFailedReason = null;
+      if (typeof saveDB === 'function') saveDB();
+    }
+  } catch(e) {
+    console.warn('[PSM] Logs archive auto échec:', e);
+    try {
+      if (APP.settings) {
+        APP.settings._logArchiveFailedAt = Date.now();
+        APP.settings._logArchiveFailedReason = (e && e.message) ? e.message.substring(0, 200) : String(e).substring(0, 200);
+        if (typeof saveDB === 'function') saveDB();
+      }
+      if (typeof logError === 'function') logError('log_archive_auto_failed', e, {});
+    } catch(_e) {}
+  }
+}
+
+// 6. Module UI : Logs Archivés (admin only)
+async function openLogArchivesModal(initialType) {
+  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') {
+    if (typeof notify === 'function') notify('Acces reserve aux administrateurs', 'warning');
+    return;
+  }
+  initialType = initialType || 'audit_logs';
+  openModal('log-archives', '📋 Logs Archivés (Firebase)', '<div id="log-arch-content"><div class="empty-state"><p>Chargement...</p></div></div>');
+  setTimeout(function(){ _renderLogArchivesShell(initialType); }, 50);
+}
+
+function _renderLogArchivesShell(activeType) {
+  var c = document.getElementById('log-arch-content');
+  if (!c) return;
+  var tabs = [
+    { id: 'audit_logs',    label: '🛡 Audit Log',    badge: 'Permanent (OHADA)', badgeColor: '#16a34a' },
+    { id: 'activity_logs', label: '👤 Activity Log', badge: 'Purge 24 mois',    badgeColor: '#d97706' },
+    { id: 'sessions_logs', label: '🔐 Sessions',     badge: 'Purge 24 mois',    badgeColor: '#d97706' }
+  ];
+  var tabsHtml = '<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;flex-wrap:wrap">'
+    + tabs.map(function(t){
+        var active = t.id === activeType;
+        return '<button class="btn btn-sm ' + (active ? 'btn-primary' : 'btn-secondary')
+          + '" onclick="_renderLogArchivesShell(\'' + t.id + '\')">' + t.label + '</button>';
+      }).join('')
+    + '</div>';
+  var current = tabs.find(function(t){ return t.id === activeType; });
+  var badge = '<span style="display:inline-block;background:' + current.badgeColor + '20;color:' + current.badgeColor + ';font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px">' + current.badge + '</span>';
+  c.innerHTML = tabsHtml
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">'
+    + '<select id="log-arch-year" onchange="_loadLogArchiveBody(\'' + activeType + '\', this.value)" style="width:auto"><option>Chargement...</option></select>'
+    + badge
+    + '<div style="flex:1"></div>'
+    + '<button class="btn btn-secondary btn-sm" onclick="_exportLogArchive(\'' + activeType + '\',\'json\')">⬇️ JSON</button>'
+    + '<button class="btn btn-secondary btn-sm" onclick="_exportLogArchive(\'' + activeType + '\',\'csv\')">⬇️ CSV</button>'
+    + '</div>'
+    + '<div id="log-arch-body" style="max-height:55vh;overflow:auto"><div class="empty-state"><p>Sélectionnez une année…</p></div></div>';
+
+  // Charger les années
+  _firebaseDB.ref('app_data/archives/' + activeType).once('value').then(function(snap) {
+    var val = snap.val() || {};
+    var years = Object.keys(val).sort().reverse();
+    var sel = document.getElementById('log-arch-year');
+    if (!sel) return;
+    if (years.length === 0) {
+      sel.innerHTML = '<option>Aucune année</option>';
+      var body = document.getElementById('log-arch-body');
+      if (body) body.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center"><p>Aucune entrée archivée pour ce type</p></div>';
+      return;
+    }
+    sel.innerHTML = years.map(function(y){ return '<option value="' + y + '">' + y + '</option>'; }).join('');
+    _loadLogArchiveBody(activeType, years[0]);
+  }).catch(function(e){
+    if (typeof notify === 'function') notify('Lecture archive échouée: ' + e.message, 'error');
+  });
+}
+
+async function _loadLogArchiveBody(type, year) {
+  var body = document.getElementById('log-arch-body');
+  if (!body) return;
+  body.innerHTML = '<div class="empty-state"><p>Chargement…</p></div>';
+  try {
+    var snap = await _firebaseDB.ref('app_data/archives/' + type + '/' + year).once('value');
+    var items = _archArrayFromSnap(snap.val()).filter(function(i){ return i && !i._deletedAt; });
+    // Cache
+    if (!APP._archivesCache) APP._archivesCache = {};
+    if (!APP._archivesCache[type]) APP._archivesCache[type] = {};
+    APP._archivesCache[type][year] = items;
+    if (items.length === 0) {
+      body.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center"><p>Aucune entrée pour ' + year + '</p></div>';
+      return;
+    }
+    body.innerHTML = _renderLogArchTable(type, year, items);
+  } catch(e) {
+    body.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:var(--danger)"><p>Erreur : ' + (e.message || e) + '</p></div>';
+  }
+}
+
+function _renderLogArchTable(type, year, items) {
+  var info = '<div style="font-size:11px;color:var(--text-3);margin-bottom:8px">' + items.length + ' entrée(s) archivée(s)</div>';
+  if (type === 'audit_logs') {
+    var rows = items.slice(0, 500).map(function(it) {
+      var d = new Date(_logEntryTs(it));
+      return '<tr>'
+        + '<td style="font-size:10px">' + d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR') + '</td>'
+        + '<td><b>' + (it.type || '—') + '</b></td>'
+        + '<td>' + (it.entity || '—') + '</td>'
+        + '<td style="font-family:monospace;font-size:10px">' + (it.entityId || '—') + '</td>'
+        + '<td style="font-size:10px">' + (it.userEmail || it.userName || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+    return info
+      + (items.length > 500 ? '<div class="warning" style="margin-bottom:8px">⚠️ ' + (items.length - 500) + ' entrées supplémentaires non affichées. Utilisez Export JSON pour tout récupérer.</div>' : '')
+      + '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Type</th><th>Entité</th><th>ID</th><th>Utilisateur</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  if (type === 'activity_logs') {
+    var rows = items.slice(0, 500).map(function(it) {
+      var d = new Date(_logEntryTs(it));
+      return '<tr>'
+        + '<td style="font-size:10px">' + d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR') + '</td>'
+        + '<td><b>' + (it.action || it.type || '—') + '</b></td>'
+        + '<td style="font-size:10px">' + (it.user_email || it.userEmail || '—') + '</td>'
+        + '<td style="font-size:10px">' + (it.details || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+    return info
+      + (items.length > 500 ? '<div class="warning" style="margin-bottom:8px">⚠️ ' + (items.length - 500) + ' entrées supplémentaires non affichées.</div>' : '')
+      + '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Action</th><th>Utilisateur</th><th>Détails</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  if (type === 'sessions_logs') {
+    var rows = items.slice(0, 500).map(function(it) {
+      var d = new Date(_logEntryTs(it));
+      var dur = it.duration ? Math.round(it.duration / 60000) + ' min' : '—';
+      return '<tr>'
+        + '<td style="font-size:10px">' + d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR') + '</td>'
+        + '<td style="font-size:10px">' + (it.email || '—') + '</td>'
+        + '<td style="font-size:10px">' + (it.userName || '—') + '</td>'
+        + '<td>' + dur + '</td>'
+        + '<td style="font-size:10px"><span class="badge ' + (it.status === 'clean' ? 'badge-green' : 'badge-orange') + '">' + (it.status || '—') + '</span></td>'
+        + '</tr>';
+    }).join('');
+    return info
+      + (items.length > 500 ? '<div class="warning" style="margin-bottom:8px">⚠️ ' + (items.length - 500) + ' entrées supplémentaires non affichées.</div>' : '')
+      + '<div class="table-wrap"><table><thead><tr><th>Date / Heure</th><th>Email</th><th>Utilisateur</th><th>Durée</th><th>Statut</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  return '<div class="empty-state"><p>Type inconnu</p></div>';
+}
+
+async function _exportLogArchive(type, format) {
+  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') return;
+  var sel = document.getElementById('log-arch-year');
+  if (!sel || !sel.value) { if (typeof notify === 'function') notify('Sélectionnez une année', 'warning'); return; }
+  var year = sel.value;
+  var items = (APP._archivesCache && APP._archivesCache[type] && APP._archivesCache[type][year]) || [];
+  if (items.length === 0) { if (typeof notify === 'function') notify('Rien à exporter', 'info'); return; }
+  var today = new Date().toISOString().split('T')[0];
+  var fname = 'PSM_' + type + '_' + year + '_' + today + '.' + format;
+  if (format === 'json') {
+    var blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+    if (typeof notify === 'function') notify(items.length + ' entrée(s) exportée(s) en JSON', 'success');
+  } else if (format === 'csv') {
+    var headers, rows;
+    if (type === 'audit_logs') {
+      headers = ['Date','Heure','Type','Entité','ID','Email','Détails'];
+      rows = items.map(function(it){
+        var d = new Date(_logEntryTs(it));
+        return [d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR'), it.type||'', it.entity||'', it.entityId||'', it.userEmail||'', JSON.stringify(it.newVal||it.oldVal||'')];
+      });
+    } else if (type === 'activity_logs') {
+      headers = ['Date','Heure','Action','Email','Détails'];
+      rows = items.map(function(it){
+        var d = new Date(_logEntryTs(it));
+        return [d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR'), it.action||it.type||'', it.user_email||it.userEmail||'', it.details||''];
+      });
+    } else { // sessions_logs
+      headers = ['Date','Heure','Email','Utilisateur','Durée(min)','Statut'];
+      rows = items.map(function(it){
+        var d = new Date(_logEntryTs(it));
+        return [d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR'), it.email||'', it.userName||'', it.duration?Math.round(it.duration/60000):0, it.status||''];
+      });
+    }
+    if (typeof _exportCSV === 'function') {
+      _exportCSV(fname, headers, rows);
+      if (typeof notify === 'function') notify(items.length + ' entrée(s) exportée(s) en CSV', 'success');
+    }
+  }
+  if (typeof auditLog === 'function') auditLog('EXPORT_LOG_ARCHIVE', type, year, null, { format: format, count: items.length });
+}
+
+// Retry manuel logs (utilisable depuis Paramètres ou bannière)
+async function manualRetryLogArchive() {
+  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') {
+    if (typeof notify === 'function') notify('Action reservee aux administrateurs', 'warning');
+    return;
+  }
+  if (typeof notify === 'function') notify('Archivage des logs en cours…', 'info');
+  try {
+    var r = await archiveSweepLogs();
+    if (APP.settings) {
+      APP.settings._logArchiveFailedAt = null;
+      APP.settings._logArchiveFailedReason = null;
+      if (typeof saveDB === 'function') saveDB();
+    }
+    var total = r.archived.audit + r.archived.activity + r.archived.sessions;
+    if (typeof notify === 'function') notify('✅ ' + total + ' entrée(s) archivée(s) · ' + (r.purge.activity.purged + r.purge.sessions.purged) + ' purgée(s)', 'success');
+    if (typeof renderSettings === 'function' && currentPage === 'settings') renderSettings();
+  } catch(e) {
+    if (typeof logError === 'function') logError('log_archive_manual_retry_failed', e, {});
+    if (typeof notify === 'function') notify('Archivage logs échoué : ' + (e.message || e), 'error');
+  }
+}
+
 function confirmDeleteArchiveEntry(type, year, id, label) {
   var _cu = typeof _currentUser==='function' ? _currentUser() : null;
   if (!_cu || _cu.role !== 'admin') {
@@ -8043,6 +8459,20 @@ ${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba
       </div>
       <div id="arch-dryrun-output"></div>
       <div style="margin-top:8px;font-size:11px;color:var(--text-3)">Dernier archivage : ${(APP.settings && APP.settings._lastArchiveRun) ? new Date(APP.settings._lastArchiveRun).toLocaleString('fr-FR') : 'jamais'}</div>
+    </div>` : ''}
+${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba(99,102,241,0.3)">
+      <div class="card-header"><span class="card-title">📋 Logs Firebase archivés</span></div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.5">
+        Les logs Firebase (audit, activity, sessions) de plus de <b>12 mois</b> sont déplacés vers les archives. <br>
+        🛡 <b>Audit Log</b> conservé en permanence (conformité OHADA).<br>
+        ⚠️ <b>Activity Log</b> et <b>Sessions</b> purgés après 24 mois (fenêtre de récupération de 30 jours après soft-delete).
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <button class="btn btn-primary btn-sm" onclick="openLogArchivesModal('audit_logs')">📋 Consulter Logs Archivés</button>
+        <button class="btn btn-secondary btn-sm" onclick="manualRetryLogArchive()">🔄 Lancer manuellement</button>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-3)">Dernier archivage logs : ${(APP.settings && APP.settings._lastLogArchiveRun) ? new Date(APP.settings._lastLogArchiveRun).toLocaleString('fr-FR') : 'jamais'}</div>
+      ${(APP.settings && APP.settings._logArchiveFailedAt) ? `<div style="margin-top:6px;padding:6px 10px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:11px;color:#991b1b">⚠️ Dernière tentative en échec le ${new Date(APP.settings._logArchiveFailedAt).toLocaleString('fr-FR')} — ${APP.settings._logArchiveFailedReason || 'cause inconnue'}</div>` : ''}
     </div>` : ''}
   </div>
   <div class="card" style="margin-top:16px;background:linear-gradient(135deg,rgba(61,127,255,0.06),rgba(0,229,170,0.04));border-color:rgba(61,127,255,0.2)">
