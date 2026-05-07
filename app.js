@@ -3770,8 +3770,7 @@ function renderArticleRow(a) {
     <td class="editable" id="td-price-${a.id}">${fmtCurrency(a.price)}</td>
     <td>${isAlert?'<span class="badge badge-red">⚠ Alerte</span>':'<span class="badge badge-green">✓ OK</span>'}</td>
     <td><div style="display:flex;gap:6px">
-      <button class="btn btn-sm btn-secondary" onclick="openMvtModal('${a.id}')">📦</button>
-      <button class="btn btn-sm btn-secondary" onclick="openArticleHistory('${a.id}')" title="Historique">📜</button>
+      <button class="btn btn-sm btn-secondary" onclick="openArticleHistory('${a.id}')" title="Historique détaillé">📜</button>
       <button class="btn btn-sm btn-secondary" onclick="openArticleModal('${a.id}')">✏️</button>
       <button class="btn btn-sm btn-danger" onclick="deleteArticle('${a.id}')">🗑</button>
     </div></td>
@@ -6868,12 +6867,177 @@ function renderArticleMiniHistory(artId, limit) {
   return '<div style="max-height:260px;overflow-y:auto;background:var(--bg-2);border-radius:8px;border:1px solid var(--border)">' + rows + more + '</div>';
 }
 
+// ── Article history detail (style Mouvements de stock filtré par article) ─
+// Stocke l'artId courant pour permettre le filtrage interactif
+var _artHistCurrentId = null;
+
+function _buildArticleHistoryEvents(artId) {
+  var events = [];
+  // 1. Bons (sorties via lignes)
+  (APP.bons || []).forEach(function(b) {
+    (b.lignes || []).forEach(function(l) {
+      if (l.articleId === artId) {
+        var qty = parseInt(l.qty || l.qte || l.quantity || 0) || 0;
+        events.push({
+          ts: b.createdAt || b._validatedAt || 0,
+          type: 'sortie',
+          source: 'bon',
+          qty: qty,
+          label: 'Bon ' + (b.numero || '?'),
+          status: b.status || '',
+          recipient: b.recipiendaire || (b.commercialName || ''),
+          note: b.objet || '',
+          ref: b.id
+        });
+      }
+    });
+  });
+  // 2. Mouvements manuels
+  (APP.mouvements || []).forEach(function(m) {
+    if (m.articleId !== artId) return;
+    var who = '';
+    if (m.commercialId) {
+      var c = (APP.commerciaux||[]).find(function(x){return x.id===m.commercialId;});
+      if (c) who = (c.prenom||'') + ' ' + (c.nom||'');
+    } else if (m.fournisseurId) {
+      var f = (APP.fournisseurs||[]).find(function(x){return x.id===m.fournisseurId;});
+      if (f) who = f.nom || '';
+    }
+    events.push({
+      ts: m.ts || 0,
+      type: m.type === 'entree' ? 'entree' : 'sortie',
+      source: 'mvt',
+      qty: parseInt(m.qty || 0) || 0,
+      label: m.type === 'entree' ? 'Entrée manuelle' : 'Sortie manuelle',
+      status: '',
+      recipient: who.trim(),
+      note: m.note || m.obs || '',
+      ref: m.id || ''
+    });
+  });
+  // 3. Réceptions fournisseur
+  (APP.commandesFourn || []).forEach(function(cf) {
+    (cf.lignes || []).forEach(function(l) {
+      if (l.articleId !== artId) return;
+      var fournName = '';
+      if (cf.fournisseurId) {
+        var f2 = (APP.fournisseurs||[]).find(function(x){return x.id===cf.fournisseurId;});
+        if (f2) fournName = f2.nom || '';
+      }
+      var recs = Array.isArray(l.receptions) ? l.receptions : Object.values(l.receptions || {});
+      recs.forEach(function(r) {
+        events.push({
+          ts: r.date || r.ts || 0,
+          type: 'entree',
+          source: 'reception',
+          qty: parseInt(r.qty || 0) || 0,
+          label: 'Réception Cmd ' + (cf.numero || '?'),
+          status: '',
+          recipient: fournName,
+          note: r.note || '',
+          ref: cf.id
+        });
+      });
+    });
+  });
+  return events.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+}
+
+function _renderArticleHistoryRows(events) {
+  if (!events.length) {
+    return '<div class="empty-state" style="padding:30px;text-align:center;color:var(--text-2)"><p>Aucun mouvement pour cette période</p></div>';
+  }
+  var rows = events.map(function(e) {
+    var d = e.ts ? new Date(e.ts) : null;
+    var ds = d ? (String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear()) : '?';
+    var hh = d ? (String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')) : '';
+    var typeLabel, typeClass, qtyColor, sign;
+    if (e.type === 'entree') {
+      typeLabel = '↑ Entrée'; typeClass = 'badge-green'; qtyColor = 'var(--success)'; sign = '+';
+    } else {
+      typeLabel = '↓ Sortie'; typeClass = 'badge-orange'; qtyColor = 'var(--accent3)'; sign = '-';
+    }
+    var sourceBadge = '';
+    if (e.source === 'bon') {
+      var statusBadge = '';
+      if (e.status === 'validé') statusBadge = '<span class="badge badge-green" style="font-size:9px;margin-left:4px">validé</span>';
+      else if (e.status === 'brouillon') statusBadge = '<span class="badge badge-yellow" style="font-size:9px;margin-left:4px">brouillon</span>';
+      else if (e.status === 'annulé') statusBadge = '<span class="badge badge-red" style="font-size:9px;margin-left:4px">annulé</span>';
+      sourceBadge = '<span style="color:#cc4400">📄 ' + _h(e.label) + '</span>' + statusBadge;
+    } else if (e.source === 'reception') {
+      sourceBadge = '<span style="color:#0891b2">📥 ' + _h(e.label) + '</span>';
+    } else {
+      sourceBadge = '<span style="color:var(--text-2)">' + _h(e.label) + '</span>';
+    }
+    return '<tr>'
+      + '<td style="font-size:11px;white-space:nowrap">' + ds + (hh?' <span style="color:var(--text-3)">'+hh+'</span>':'') + '</td>'
+      + '<td><span class="badge ' + typeClass + '" style="font-size:10px">' + typeLabel + '</span></td>'
+      + '<td style="font-size:12px">' + sourceBadge + '</td>'
+      + '<td style="text-align:center;font-weight:700;color:' + qtyColor + '">' + sign + e.qty + '</td>'
+      + '<td style="font-size:11px">' + _h(e.recipient || '—') + '</td>'
+      + '<td style="font-size:11px;color:var(--text-2)">' + _h(e.note || '—') + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="table-wrap" style="max-height:55vh;overflow-y:auto"><table style="width:100%"><thead style="position:sticky;top:0;background:var(--bg-1);z-index:1"><tr>'
+    + '<th>Date / Heure</th><th>Type</th><th>Source / Référence</th><th style="text-align:center">Qté</th><th>Commanditaire</th><th>Observation</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function filterArticleHistory() {
+  if (!_artHistCurrentId) return;
+  var t    = (document.getElementById('art-hist-type-filter')||{}).value || 'all';
+  var from = (document.getElementById('art-hist-date-from')||{}).value;
+  var to   = (document.getElementById('art-hist-date-to')  ||{}).value;
+  var needle = _normSearch((document.getElementById('art-hist-search')||{}).value || '');
+  var fromTs = from ? new Date(from).getTime() : 0;
+  var toTs   = to   ? new Date(to).getTime() + 86399999 : Date.now() + 86400000;
+  var events = _buildArticleHistoryEvents(_artHistCurrentId).filter(function(e){
+    if (t !== 'all' && e.type !== t) return false;
+    if (e.ts < fromTs || e.ts > toTs) return false;
+    if (needle) {
+      var hay = _normSearch([e.label, e.recipient, e.note, e.status].filter(Boolean).join(' '));
+      if (hay.indexOf(needle) < 0) return false;
+    }
+    return true;
+  });
+  var wrap = document.getElementById('art-hist-tbody-wrap');
+  if (wrap) wrap.innerHTML = _renderArticleHistoryRows(events);
+  var cnt = document.getElementById('art-hist-count');
+  if (cnt) {
+    var ent = events.filter(function(x){return x.type==='entree';}).reduce(function(s,x){return s+x.qty;}, 0);
+    var sor = events.filter(function(x){return x.type==='sortie';}).reduce(function(s,x){return s+x.qty;}, 0);
+    cnt.innerHTML = events.length + ' mouvement(s) — <span style="color:var(--success)">↑'+ent+'</span> · <span style="color:var(--accent3)">↓'+sor+'</span>';
+  }
+}
+
 function openArticleHistory(artId) {
   var a = (APP.articles || []).find(function(x) { return x.id === artId; });
   if (!a) { notify('Gadget introuvable', 'error'); return; }
-  var body = '<div style="font-size:12px;color:var(--text-2);margin-bottom:10px">Historique complet des mouvements (bons, entr\u00e9es/sorties manuelles, r\u00e9ceptions)</div>'
-    + renderArticleMiniHistory(artId, 50);
-  openModal('art-history', '\ud83d\udcdc Historique \u2014 ' + a.name, body, null, 'modal-md');
+  _artHistCurrentId = artId;
+  var allEvents = _buildArticleHistoryEvents(artId);
+  var totalEnt = allEvents.filter(function(x){return x.type==='entree';}).reduce(function(s,x){return s+x.qty;}, 0);
+  var totalSor = allEvents.filter(function(x){return x.type==='sortie';}).reduce(function(s,x){return s+x.qty;}, 0);
+  var stockColor = (a.stock||0) <= (a.stockMin||0) ? 'var(--danger)' : 'var(--success)';
+  var body = '<div style="display:flex;gap:14px;align-items:center;padding:10px 14px;background:var(--bg-2);border-radius:8px;margin-bottom:12px;flex-wrap:wrap">'
+    + '<div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase">Stock actuel</div><div style="font-size:18px;font-weight:700;color:' + stockColor + '">' + (a.stock||0) + ' ' + (a.unit||'pcs') + '</div></div>'
+    + '<div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase">Total entrées</div><div style="font-size:18px;font-weight:700;color:var(--success)">+' + totalEnt + '</div></div>'
+    + '<div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase">Total sorties</div><div style="font-size:18px;font-weight:700;color:var(--accent3)">-' + totalSor + '</div></div>'
+    + '<div style="flex:1"></div>'
+    + '<div id="art-hist-count" style="font-size:11px;color:var(--text-2)">' + allEvents.length + ' mouvement(s) au total</div>'
+    + '</div>';
+  body += '<div class="filters" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">'
+    + '<select id="art-hist-type-filter" onchange="filterArticleHistory()" style="width:auto">'
+    +   '<option value="all">Tous types</option>'
+    +   '<option value="entree">↑ Entrées seulement</option>'
+    +   '<option value="sortie">↓ Sorties seulement</option>'
+    + '</select>'
+    + '<input type="date" id="art-hist-date-from" onchange="filterArticleHistory()" style="width:auto" title="Date début">'
+    + '<input type="date" id="art-hist-date-to" onchange="filterArticleHistory()" style="width:auto" title="Date fin">'
+    + '<input type="text" id="art-hist-search" placeholder="🔍 Bon, commanditaire, observation..." oninput="filterArticleHistory()" style="flex:1;min-width:200px">'
+    + '</div>';
+  body += '<div id="art-hist-tbody-wrap">' + _renderArticleHistoryRows(allEvents) + '</div>';
+  body += '<div style="font-size:10px;color:var(--text-3);margin-top:10px;text-align:center;font-style:italic">📦 Pour les mouvements archivés (>2 mois), consulter le module Mouvements → bouton 📦 Archives</div>';
+  openModal('art-history', '📜 Historique — ' + (a.name||'?') + (a.code?' ('+a.code+')':''), body, null, 'modal-lg');
 }
 
 function openGMAArticleDetail(artId) {
