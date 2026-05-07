@@ -2737,13 +2737,32 @@ function initStockNotifications() {
 }
 
 let _lastNotifiedAlerts = {};
+let _lastNotifiedAlertsTs = {};
+// Purge entrées plus vieilles que 7 jours, ou hard reset si > 5000 clés
+function _purgeStaleNotifiedAlerts() {
+  var cutoff = Date.now() - 7 * 86400000;
+  var keys = Object.keys(_lastNotifiedAlertsTs);
+  if (keys.length > 5000) {
+    _lastNotifiedAlerts = {};
+    _lastNotifiedAlertsTs = {};
+    return;
+  }
+  keys.forEach(function(k) {
+    if (_lastNotifiedAlertsTs[k] < cutoff) {
+      delete _lastNotifiedAlerts[k];
+      delete _lastNotifiedAlertsTs[k];
+    }
+  });
+}
 function checkStockAlerts() {
   if (_notifPermission !== 'granted') return;
+  _purgeStaleNotifiedAlerts();
   const alerts = APP.articles.filter(function(a) { return a.stock <= a.stockMin && a.stock >= 0; });
   const newAlerts = alerts.filter(function(a) {
     const key = a.id + '_' + a.stock;
     if (_lastNotifiedAlerts[key]) return false;
     _lastNotifiedAlerts[key] = true;
+    _lastNotifiedAlertsTs[key] = Date.now();
     return true;
   });
   if (newAlerts.length === 0) return;
@@ -2938,11 +2957,50 @@ function printDashboard() {
   // Mouvements sur la période
   const movsP = APP.mouvements.filter(m=>m.ts>=tFrom&&m.ts<=tTo).slice().sort((a,b)=>b.ts-a.ts);
 
-  // Stock par gadget
+  // E1: Pré-calcul agrégats par articleId en single-pass (au lieu de O(A×M))
+  // E5: Index Maps pour les lookups rapides dans la boucle d'impression
+  const _artMap_PD = new Map();
+  const _fournMap_PD = new Map();
+  const _comMap_PD = new Map();
+  const _bonsByNum_PD = new Map();
+  APP.articles.forEach(function(x){ _artMap_PD.set(x.id, x); });
+  APP.fournisseurs.forEach(function(x){ _fournMap_PD.set(x.id, x); });
+  APP.commerciaux.forEach(function(x){ _comMap_PD.set(x.id, x); });
+  APP.bons.forEach(function(b){ if(b && b.numero) _bonsByNum_PD.set(String(b.numero), b); });
+  // Agrégats sortie/entrée par articleId (single-pass mouvements)
+  const _artTotals_PD = {};
+  APP.articles.forEach(function(a){ _artTotals_PD[a.id] = { sorties: 0, entrees: 0 }; });
+  APP.mouvements.forEach(function(m){
+    if (m.ts < tFrom || m.ts > tTo) return;
+    var bucket = _artTotals_PD[m.articleId];
+    if (!bucket) return;
+    if (m.type === 'sortie' && !_isBonSortie(m.note)) bucket.sorties += (m.qty || 0);
+    else if (m.type === 'entree' && !_isGhostEntree(m.note)) bucket.entrees += (m.qty || 0);
+  });
+  // Agrégat bons validés (single-pass) — match par articleId puis fallback code/nom
+  _validBonsInP.forEach(function(b){
+    (b.lignes || []).forEach(function(l){
+      var qty = parseInt(l.qty) || 0;
+      if (l.articleId && _artTotals_PD[l.articleId]) {
+        _artTotals_PD[l.articleId].sorties += qty;
+        return;
+      }
+      // Fallback rare : match par code/name si pas d'articleId
+      for (var ai = 0; ai < APP.articles.length; ai++) {
+        var ax = APP.articles[ai];
+        if (l.code === ax.code || (l.name || l.articleName) === ax.name) {
+          _artTotals_PD[ax.id].sorties += qty;
+          break;
+        }
+      }
+    });
+  });
+
+  // Stock par gadget — utilise les agrégats pré-calculés
   const stockRows = APP.articles.map(a => {
-    const sorties = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
-                  + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).filter(l=>_artMatch(l,a)).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
-    const entrees = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
+    const totals = _artTotals_PD[a.id] || { sorties: 0, entrees: 0 };
+    const sorties = totals.sorties;
+    const entrees = totals.entrees;
     const isAlert = a.stock <= a.stockMin;
     return `<tr style="${isAlert?'background:#fff5f5':''}">
       <td>${a.code}</td>
@@ -3017,15 +3075,15 @@ function printDashboard() {
   <table>
     <thead><tr><th>Date / Heure</th><th>Type</th><th>Article</th><th>Code</th><th style="text-align:center">Quantité</th><th>Commanditaire</th><th>Observation</th></tr></thead>
     <tbody>${movsP.slice(0,100).map(m=>{
-      const art  = APP.articles.find(a=>a.id===m.articleId);
+      const art  = _artMap_PD.get(m.articleId);
       const dt   = new Date(m.ts);
       const isE  = m.type === 'entree';
-      const fourn= m.fournisseurId ? APP.fournisseurs.find(f=>f.id===m.fournisseurId) : null;
-      const who  = m.commercialId  ? APP.commerciaux.find(c=>c.id===m.commercialId)   : null;
+      const fourn= m.fournisseurId ? _fournMap_PD.get(m.fournisseurId) : null;
+      const who  = m.commercialId  ? _comMap_PD.get(m.commercialId) : null;
       let whoLabel;
       const _bm = /^(?:Modif |Suppression |Renvoi )?Bon\s+(\S+)/i.exec(m.note||'');
       if (_bm) {
-        const _bon = APP.bons.find(b=>String(b.numero)===_bm[1]);
+        const _bon = _bonsByNum_PD.get(_bm[1]);
         if (_bon) whoLabel = '<div style="font-weight:600">'+(_bonLiveName(_bon)||'—')+'</div><div style="font-size:10px;color:#666">Dem: '+(_bon.demandeur||'—')+'</div>';
       }
       if (typeof whoLabel === 'undefined') {
@@ -3261,10 +3319,36 @@ function refreshReportCard() {
       Période : <strong style="margin-left:4px;color:var(--text-2)">${label}</strong>
     </div>`;
 
+  // E1: Pré-calcul agrégats par articleId en single-pass
+  const _artTotals_RC = {};
+  APP.articles.forEach(function(a){ _artTotals_RC[a.id] = { sorties: 0, entrees: 0 }; });
+  APP.mouvements.forEach(function(m){
+    if (m.ts < tFrom || m.ts > tTo) return;
+    var bucket = _artTotals_RC[m.articleId];
+    if (!bucket) return;
+    if (m.type === 'sortie' && !_isBonSortie(m.note)) bucket.sorties += (m.qty || 0);
+    else if (m.type === 'entree' && !_isGhostEntree(m.note)) bucket.entrees += (m.qty || 0);
+  });
+  _validBonsInP.forEach(function(b){
+    (b.lignes || []).forEach(function(l){
+      var qty = parseInt(l.qty) || 0;
+      if (l.articleId && _artTotals_RC[l.articleId]) {
+        _artTotals_RC[l.articleId].sorties += qty;
+        return;
+      }
+      for (var ai = 0; ai < APP.articles.length; ai++) {
+        var ax = APP.articles[ai];
+        if (l.code === ax.code || (l.name || l.articleName) === ax.name) {
+          _artTotals_RC[ax.id].sorties += qty;
+          break;
+        }
+      }
+    });
+  });
   const rows = APP.articles.map(a => {
-    const ent = APP.mouvements.filter(m=>m.type==='entree'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
-    const sor = APP.mouvements.filter(m=>m.type==='sortie'&&m.articleId===a.id&&m.ts>=tFrom&&m.ts<=tTo&&!_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
-              + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).filter(l=>_artMatch(l,a)).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
+    const totals = _artTotals_RC[a.id] || { sorties: 0, entrees: 0 };
+    const ent = totals.entrees;
+    const sor = totals.sorties;
     const isAlert = a.stock <= a.stockMin;
     return `<tr style="${isAlert?'background:rgba(255,71,87,.07)':''}">
       <td style="font-size:11px;color:var(--text-3)">${a.code}</td>
@@ -3729,10 +3813,13 @@ function filterArticles() {
   artCat=document.getElementById('art-cat')?.value||'all';
   artStk=document.getElementById('art-stk')?.value||'all';
   const needle=_normSearch(artSearch);
+  // E5: Index fournisseurs en Map (O(1) au lieu de O(F) par article)
+  const _fournMap_FA = new Map();
+  APP.fournisseurs.forEach(function(f){ _fournMap_FA.set(f.id, f); });
   const arts=APP.articles.filter(a=>{
     let ms=!needle;
     if(!ms){
-      const fourn=a.fournisseurId?APP.fournisseurs.find(f=>f.id===a.fournisseurId):null;
+      const fourn=a.fournisseurId?_fournMap_FA.get(a.fournisseurId):null;
       const hay=_normSearch([a.name,a.code,a.category,a.description,a.colors,a.unit,fourn&&fourn.nom,fourn&&fourn.contact].filter(Boolean).join(' '));
       ms=hay.includes(needle);
     }
