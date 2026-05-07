@@ -2851,11 +2851,7 @@ function renderDashboard() {
       <span class="card-title">📊 Rapport de stock</span>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <select id="rpt-period" onchange="toggleReportPeriod();refreshReportCard()" style="width:auto;font-size:12px">
-          <option value="7">7 derniers jours</option>
-          <option value="30" selected>30 derniers jours</option>
-          <option value="90">3 derniers mois</option>
-          <option value="365">Cette année</option>
-          <option value="custom">📅 Période personnalisée</option>
+          <option value="current_month" selected>📅 Mois en cours</option>
         </select>
         <span id="rpt-custom-wrap" style="display:none;align-items:center;gap:4px">
           <input type="date" id="rpt-from" style="width:auto;font-size:12px" onchange="refreshReportCard()">
@@ -2872,6 +2868,7 @@ function renderDashboard() {
     <div id="rpt-table-wrap" style="overflow-x:auto;max-height:420px;overflow-y:auto;padding:0 4px 8px"></div>
   </div>`;
   _applyDashWidgets();
+  if (typeof _populateReportPeriodOptions === 'function') _populateReportPeriodOptions();
   _initDashDragDrop();
   refreshDashboard(false);
   drawChartCat(); drawChartMvt();
@@ -3056,11 +3053,117 @@ function printDashboard() {
 
 // ─── Rapport de stock (sélecteur de période dédié + aperçu + impression) ─────
 
+// ── Dashboard report period helpers ─────────────────────────────────────
+// Groupement des snaps de dispatch.history par fenêtre horaire
+// (multi-articles d'un même dispatch ont le même ts)
+function _getDispatchEvents() {
+  var hist = (APP.dispatch && APP.dispatch.history) || [];
+  var groups = {};
+  hist.forEach(function(snap, idx) {
+    if (!snap || !snap.ts) return;
+    var hourKey = Math.floor(snap.ts / 3600000); // bucket 1h
+    if (!groups[hourKey]) {
+      groups[hourKey] = { key: hourKey, ts: snap.ts, snaps: [], indices: [], totalQty: 0, articleNames: [], bonIds: [] };
+    }
+    var g = groups[hourKey];
+    g.snaps.push(snap);
+    g.indices.push(idx);
+    g.totalQty += (snap.totalQty || 0);
+    if (snap.articleName) g.articleNames.push(snap.articleName);
+    if (Array.isArray(snap.bonIds)) g.bonIds = g.bonIds.concat(snap.bonIds);
+    if (snap.ts > g.ts) g.ts = snap.ts;
+  });
+  return Object.values(groups).sort(function(a,b){ return b.ts - a.ts; });
+}
+
+// Génère dynamiquement les options du sélecteur #rpt-period
+function _populateReportPeriodOptions(preselectVal) {
+  var sel = document.getElementById('rpt-period');
+  if (!sel) return;
+  var events = _getDispatchEvents();
+  var now = new Date();
+  var curMonth = now.getMonth();
+  var curYear = now.getFullYear();
+  var currentMonthEvents = [];
+  var pastEvents = [];
+  events.forEach(function(ev) {
+    var d = new Date(ev.ts);
+    if (d.getMonth() === curMonth && d.getFullYear() === curYear) currentMonthEvents.push(ev);
+    else pastEvents.push(ev);
+  });
+  var hasCurrent = currentMonthEvents.length > 0;
+  var html = '';
+  // 1. Dispatch courant (si présent ce mois) en tête
+  if (hasCurrent) {
+    var cur = currentMonthEvents[0];
+    var dStr = new Date(cur.ts).toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+    html += '<option value="dispatch_event_' + cur.key + '">🎯 Dispatch courant (' + dStr + ')</option>';
+  }
+  // 2. Mois en cours
+  html += '<option value="current_month">📅 Mois en cours</option>';
+  // 3. Mois précédent
+  html += '<option value="prev_month">📅 Mois précédent</option>';
+  // 4. Autres dispatches du mois en cours (si > 1)
+  if (currentMonthEvents.length > 1) {
+    html += '<optgroup label="Autres dispatches ce mois">';
+    currentMonthEvents.slice(1).forEach(function(ev) {
+      var d = new Date(ev.ts);
+      var dStr2 = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'long'});
+      html += '<option value="dispatch_event_' + ev.key + '">⚙️ ' + dStr2 + ' (' + ev.articleNames.length + ' art.)</option>';
+    });
+    html += '</optgroup>';
+  }
+  // 5. Dispatches passés (tous, pas de limite)
+  if (pastEvents.length) {
+    html += '<optgroup label="Dispatches passés">';
+    pastEvents.forEach(function(ev) {
+      var d = new Date(ev.ts);
+      var dStr3 = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'});
+      html += '<option value="dispatch_event_' + ev.key + '">⚙️ ' + dStr3 + ' (' + ev.articleNames.length + ' art.)</option>';
+    });
+    html += '</optgroup>';
+  }
+  // 6. Périodes calendaires/glissantes
+  html += '<optgroup label="Autres périodes">';
+  html += '<option value="365">📊 Cette année</option>';
+  html += '<option value="90">📊 3 derniers mois</option>';
+  html += '<option value="30">📊 30 derniers jours</option>';
+  html += '<option value="7">📊 7 derniers jours</option>';
+  html += '<option value="custom">📅 Période personnalisée</option>';
+  html += '</optgroup>';
+  sel.innerHTML = html;
+  // Sélection par défaut
+  var target = preselectVal || (hasCurrent ? ('dispatch_event_' + currentMonthEvents[0].key) : 'current_month');
+  sel.value = target;
+  if (sel.value === '') sel.value = 'current_month';
+}
+
+// Récupère un dispatch event depuis sa clé
+function _findDispatchEvent(key) {
+  var events = _getDispatchEvents();
+  return events.find(function(e){ return e.key === key; }) || null;
+}
+
 function getReportPeriod() {
-  const sel = document.getElementById('rpt-period')?.value || '30';
+  const selRaw = document.getElementById('rpt-period')?.value || 'current_month';
+  let sel = selRaw;
   const fromVal = document.getElementById('rpt-from')?.value;
   const toVal   = document.getElementById('rpt-to')?.value;
-  let tFrom, tTo, label;
+  let tFrom, tTo, label, mode = 'period', dispatchEvent = null;
+  // Mode dispatch event (group de snaps)
+  if (typeof sel === 'string' && sel.indexOf('dispatch_event_') === 0) {
+    const key = parseInt(sel.slice('dispatch_event_'.length));
+    const ev = _findDispatchEvent(key);
+    if (ev) {
+      tFrom = ev.ts - 3600000;
+      tTo = ev.ts + 3600000;
+      label = 'Dispatch du ' + new Date(ev.ts).toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'});
+      mode = 'dispatch';
+      dispatchEvent = ev;
+      return {tFrom, tTo, label, mode, dispatchEvent};
+    }
+    sel = 'current_month'; // fallback si event introuvable
+  }
   if(sel === 'custom' && fromVal && toVal) {
     tFrom = new Date(fromVal).getTime();
     tTo   = new Date(toVal).getTime() + 86399999;
@@ -3070,12 +3173,28 @@ function getReportPeriod() {
     const now = new Date();
     switch(sel) {
       case '7':   tFrom = tTo - 7*86400000;   label = '7 derniers jours';  break;
+      case '30':  tFrom = tTo - 30*86400000;  label = '30 derniers jours'; break;
       case '90':  tFrom = tTo - 90*86400000;  label = '3 derniers mois';   break;
       case '365': tFrom = new Date(now.getFullYear(),0,1).getTime(); label = 'Cette année ('+now.getFullYear()+')'; break;
-      default:    tFrom = tTo - 30*86400000;  label = '30 derniers jours';
+      case 'prev_month': {
+        const py = now.getMonth() === 0 ? now.getFullYear()-1 : now.getFullYear();
+        const pm = now.getMonth() === 0 ? 11 : now.getMonth()-1;
+        tFrom = new Date(py, pm, 1, 0, 0, 0, 0).getTime();
+        tTo   = new Date(py, pm+1, 0, 23, 59, 59, 999).getTime();
+        const monthNames = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+        label = monthNames[pm] + ' ' + py;
+        mode = 'prev_month';
+        break;
+      }
+      case 'current_month':
+      default: {
+        tFrom = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
+        label = 'Mois en cours';
+        mode = 'current_month';
+      }
     }
   }
-  return {tFrom, tTo, label};
+  return {tFrom, tTo, label, mode, dispatchEvent};
 }
 
 function toggleReportPeriod() {
@@ -3085,14 +3204,23 @@ function toggleReportPeriod() {
 }
 
 function refreshReportCard() {
-  const {tFrom, tTo, label} = getReportPeriod();
+  const period = getReportPeriod();
+  const {tFrom, tTo, label, mode, dispatchEvent} = period;
   const kpiEl   = document.getElementById('rpt-kpi-row');
   const tableEl = document.getElementById('rpt-table-wrap');
   if(!kpiEl || !tableEl) return;
 
   const _isGhostEntree = (n) => /^(?:Annulation|Retour brouillon|Suppression)\s+Bon\s/i.test(n||'') || /^Modif\s+Bon\s.*\(restauration\)/i.test(n||'');
   const _isBonSortie = (n) => /^(?:Modif\s+|Suppression\s+|Renvoi\s+)?Bon\s+\S+/i.test(n||'');
-  const _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
+  // En mode dispatch : filtrer par bonIds du dispatch event (capture aussi les brouillons)
+  // En mode période : filtrer par tFrom/tTo classique
+  let _validBonsInP;
+  if (mode === 'dispatch' && dispatchEvent) {
+    const bonIdSet = new Set(dispatchEvent.bonIds || []);
+    _validBonsInP = APP.bons.filter(b => bonIdSet.has(b.id) && b.status === 'valid\u00e9');
+  } else {
+    _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
+  }
   const _artMatch = (l,a) => l.articleId===a.id || l.code===a.code || (l.name||l.articleName)===a.name;
 
   const totalStock  = APP.articles.reduce((s,a) => s + (a.stock||0), 0);
@@ -3100,7 +3228,13 @@ function refreshReportCard() {
   const entreesP    = APP.mouvements.filter(m => m.type==='entree' && m.ts>=tFrom && m.ts<=tTo && !_isGhostEntree(m.note)).reduce((s,m)=>s+m.qty,0);
   const sortiesP    = APP.mouvements.filter(m => m.type==='sortie' && m.ts>=tFrom && m.ts<=tTo && !_isBonSortie(m.note)).reduce((s,m)=>s+m.qty,0)
                     + _validBonsInP.reduce((s,b)=>s+(b.lignes||[]).reduce((ss,l)=>ss+(parseInt(l.qty)||0),0),0);
-  const bonsP       = APP.bons.filter(b => b.createdAt>=tFrom && b.createdAt<=tTo).length;
+  let bonsP;
+  if (mode === 'dispatch' && dispatchEvent) {
+    const bonIdSet2 = new Set(dispatchEvent.bonIds || []);
+    bonsP = APP.bons.filter(b => bonIdSet2.has(b.id)).length;
+  } else {
+    bonsP = APP.bons.filter(b => b.createdAt>=tFrom && b.createdAt<=tTo).length;
+  }
 
   kpiEl.innerHTML = `
     <div style="background:var(--bg-2);border-radius:8px;padding:10px 16px;min-width:120px;text-align:center">
@@ -3157,7 +3291,8 @@ function refreshReportCard() {
 }
 
 function printStockReport() {
-  const {tFrom, tTo, label} = getReportPeriod();
+  const period = getReportPeriod();
+  const {tFrom, tTo, label, mode, dispatchEvent} = period;
   const _isGhostEntree = (n) => /^(?:Annulation|Retour brouillon|Suppression)\s+Bon\s/i.test(n||'') || /^Modif\s+Bon\s.*\(restauration\)/i.test(n||'');
   const _isBonSortie = (n) => /^(?:Modif\s+|Suppression\s+|Renvoi\s+)?Bon\s+\S+/i.test(n||'');
   const _validBonsInP = APP.bons.filter(b=>b.status==='valid\u00e9' && ((b._validatedAt||b.createdAt)>=tFrom && (b._validatedAt||b.createdAt)<=tTo));
@@ -8788,22 +8923,36 @@ function printComReport() {
   const name = APP.settings.companyName || 'Mon Entreprise';
   const addr = APP.settings.companyAddress || '';
   const tel  = APP.settings.companyTel || '';
+  const period = getReportPeriod();
+  const {tFrom, tTo, label, mode, dispatchEvent} = period;
   const _norm = function(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); };
+  const _isBonSortieRe = /^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i;
+
+  // Filtrage des bons selon le mode
+  let bonsScope, mvtsScope;
+  if (mode === 'dispatch' && dispatchEvent) {
+    const bonIdSet = new Set(dispatchEvent.bonIds || []);
+    bonsScope = APP.bons.filter(b => bonIdSet.has(b.id));
+    mvtsScope = []; // Les mouvements manuels n'appartiennent pas à un dispatch précis
+  } else {
+    bonsScope = APP.bons.filter(b => (b._validatedAt || b.createdAt) >= tFrom && (b._validatedAt || b.createdAt) <= tTo);
+    mvtsScope = (APP.mouvements || []).filter(m => m.ts >= tFrom && m.ts <= tTo && m.type === 'sortie' && !_isBonSortieRe.test(m.note || ''));
+  }
+
+  // 1. Lignes commerciaux (filtrées par période)
   const comRows = APP.commerciaux.map(c => {
     const _fullA = _norm((c.prenom||'')+' '+(c.nom||''));
     const _fullB = _norm((c.nom||'')+' '+(c.prenom||''));
     const _matchBon = function(b){
       if (b.commercialId===c.id) return true;
-      // Bon annuaire: ne jamais le rattacher a un commercial homonyme
       if (b._recipientType === 'annuaire') return false;
       if (!_fullA) return false;
       const _d = _norm(b.demandeur);
       const _r = _norm(b.recipiendaire);
       return (_d===_fullA||_d===_fullB||_r===_fullA||_r===_fullB);
     };
-    const matchedBons = APP.bons.filter(_matchBon);
+    const matchedBons = bonsScope.filter(_matchBon);
     const bonsCount = matchedBons.length;
-    // Retraits reels = lignes des bons valides + mouvements sortie manuels (sans ref Bon) de ce commercial
     const artMap = {};
     matchedBons.filter(b => b.status==='valid\u00e9').forEach(b => {
       (b.lignes||[]).forEach(l => {
@@ -8812,20 +8961,46 @@ function printComReport() {
         artMap[n] = (artMap[n]||0) + q;
       });
     });
-    APP.mouvements.filter(m => {
-      if (m.type!=='sortie') return false;
-      if (m.commercialId!==c.id) return false;
-      return !/^(?:Modif |Suppression |Renvoi )?Bon\s+\S+/i.test(m.note||'');
-    }).forEach(m => { artMap[m.articleName||'Article'] = (artMap[m.articleName||'Article']||0) + m.qty; });
+    mvtsScope.filter(m => m.commercialId === c.id).forEach(m => {
+      artMap[m.articleName||'Article'] = (artMap[m.articleName||'Article']||0) + m.qty;
+    });
     const totalQty = Object.values(artMap).reduce((s,q)=>s+q,0);
+    if (mode !== 'dispatch' && totalQty === 0 && bonsCount === 0) return ''; // skip vide hors dispatch
     const zone = (APP.zones||[]).find(z=>z.id===(c.dispatchZoneId||c.zoneId));
     const pdv = (APP.pdv||[]).filter(p=>p.commercialId===c.id&&p.actif!==false).length;
     const artDetail = Object.entries(artMap).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([n,q])=>n+': '+q).join(', ');
     return '<tr><td style="font-weight:600">'+_h(c.prenom)+' '+_h(c.nom)+'</td><td>'+(zone?zone.label:'\u2014')+'</td><td style="text-align:center">'+pdv+'</td><td style="text-align:center">'+bonsCount+'</td><td style="text-align:center;font-weight:700;color:#cc4400">'+totalQty+'</td><td style="font-size:10px;color:#666">'+(artDetail||'\u2014')+'</td></tr>';
+  }).filter(Boolean).join('');
+
+  // 2. Lignes annuaire (bénéficiaires non-commerciaux)
+  const annMap = {};
+  bonsScope.forEach(b => {
+    if (b._recipientType !== 'annuaire') return;
+    const annId = b._annuaireId || b._recipiendaireAnnuaireId || ('name:' + (b.recipiendaire||'?'));
+    if (!annMap[annId]) annMap[annId] = { id: annId, name: b.recipiendaire||'?', bons: 0, qty: 0, articles: {} };
+    const ent = annMap[annId];
+    ent.bons++;
+    if (b.status === 'valid\u00e9') {
+      (b.lignes||[]).forEach(l => {
+        const n = l.name || l.articleName || 'Article';
+        const q = parseInt(l.qty)||0;
+        ent.qty += q;
+        ent.articles[n] = (ent.articles[n]||0) + q;
+      });
+    }
+  });
+  const annRows = Object.values(annMap).map(ent => {
+    const annPerson = (APP.annuaire||[]).find(a => a.id === ent.id);
+    const fonction = annPerson ? (annPerson.fonction || annPerson.poste || '\u2014') : '\u2014';
+    const artDetail = Object.entries(ent.articles).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([n,q])=>n+': '+q).join(', ');
+    return '<tr style="background:rgba(99,102,241,0.04)"><td style="font-weight:600">'+_h(ent.name)+'</td><td><span style="font-size:10px;color:#6366f1;font-weight:700">📋 ANNUAIRE</span> '+_h(fonction)+'</td><td style="text-align:center">\u2014</td><td style="text-align:center">'+ent.bons+'</td><td style="text-align:center;font-weight:700;color:#cc4400">'+ent.qty+'</td><td style="font-size:10px;color:#666">'+(artDetail||'\u2014')+'</td></tr>';
   }).join('');
+
+  const allRows = comRows + annRows;
+  const emptyMsg = !allRows ? '<tr><td colspan="6" style="text-align:center;padding:20px;color:#888">Aucune donnée pour cette période</td></tr>' : '';
   const win = window.open('','_blank','width=1000,height=750');
   if (!win) { notify('Popups bloqu\u00e9s \u2014 autorisez-les pour imprimer', 'warning'); return; }
-  win.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>R\u00e9capitulatif par commercial</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:24px 32px;color:#111;background:#fff;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th{background:#1a3a8b;color:white;padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:7px 10px;border-bottom:1px solid #eee;font-size:11px}tr:nth-child(even) td{background:#f9f9f9}.header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:16px}@media print{@page{margin:10mm;size:A4 landscape}}</style></head><body><div class="header"><div>'+(logo?'<img src="'+logo+'" style="max-height:80px;max-width:180px;object-fit:contain;display:block;margin-bottom:6px">':'')+'<div style="font-size:11px;color:#444">'+(addr||'')+'</div>'+(tel?'<div style="font-size:11px">T\u00e9l: '+tel+'</div>':'')+'</div><div style="text-align:right"><div style="font-size:18px;font-weight:900;border:2px solid #111;padding:8px 16px;display:inline-block">R\u00c9CAPITULATIF PAR COMMERCIAL</div><div style="font-size:11px;color:#555;margin-top:4px">Imprim\u00e9 le '+new Date().toLocaleDateString('fr-FR')+'</div></div></div><table><thead><tr><th>Commercial</th><th>Zone</th><th style="text-align:center">PDV</th><th style="text-align:center">Bons</th><th style="text-align:center">Total sorti</th><th>Top gadgets</th></tr></thead><tbody>'+comRows+'</tbody></table><div style="margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px">Document g\u00e9n\u00e9r\u00e9 automatiquement \u2014 Perfect\'s Stock Manager</div><script>window.onload=()=>{setTimeout(()=>window.print(),400)}<\/script></body></html>');
+  win.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>R\u00e9capitulatif par commercial \u2014 '+label+'</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:24px 32px;color:#111;background:#fff;font-size:12px}table{width:100%;border-collapse:collapse;margin:16px 0}th{background:#1a3a8b;color:white;padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:7px 10px;border-bottom:1px solid #eee;font-size:11px}tr:nth-child(even) td{background:#f9f9f9}.header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:16px}.period-badge{display:inline-block;background:#fff7ed;border:1px solid #fb923c;color:#c2410c;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;margin-top:6px}@media print{@page{margin:10mm;size:A4 landscape}}</style></head><body><div class="header"><div>'+(logo?'<img src="'+logo+'" style="max-height:80px;max-width:180px;object-fit:contain;display:block;margin-bottom:6px">':'')+'<div style="font-size:11px;color:#444">'+(addr||'')+'</div>'+(tel?'<div style="font-size:11px">T\u00e9l: '+tel+'</div>':'')+'</div><div style="text-align:right"><div style="font-size:18px;font-weight:900;border:2px solid #111;padding:8px 16px;display:inline-block">R\u00c9CAPITULATIF PAR COMMERCIAL</div><div class="period-badge">'+(mode==='dispatch'?'\u2699\ufe0f ':'\ud83d\udcc5 ')+label+'</div><div style="font-size:11px;color:#555;margin-top:4px">Imprim\u00e9 le '+new Date().toLocaleDateString('fr-FR')+'</div></div></div><table><thead><tr><th>Bénéficiaire</th><th>Zone / Fonction</th><th style="text-align:center">PDV</th><th style="text-align:center">Bons</th><th style="text-align:center">Total sorti</th><th>Top gadgets</th></tr></thead><tbody>'+(allRows||emptyMsg)+'</tbody></table><div style="margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px">Document g\u00e9n\u00e9r\u00e9 automatiquement \u2014 Perfect\'s Stock Manager</div><script>window.onload=()=>{setTimeout(()=>window.print(),400)}<\/script></body></html>');
   win.document.close();
 }
 
@@ -11087,6 +11262,20 @@ async function validateDispatchV3(articleIds) {
   saveDB();
   auditLog('DISPATCH', 'dispatch', '', null, { message: results.length + ' gadget(s) dispatched, ' + bonIds.length + ' bon(s) generated', bonIds: bonIds });
   notify('\u2705 Dispatch valid\u00e9 \u2014 ' + results.length + ' gadget(s), ' + bonIds.length + ' bon(s) cr\u00e9\u00e9(s)', 'success');
+  // Auto-bascule du rapport sur le dispatch fraichement valide (si dashboard ouvert)
+  if (typeof currentPage !== 'undefined' && currentPage === 'dashboard') {
+    setTimeout(function(){
+      try {
+        if (typeof _populateReportPeriodOptions === 'function' && typeof _getDispatchEvents === 'function') {
+          var events = _getDispatchEvents();
+          var newKey = events && events[0] ? ('dispatch_event_' + events[0].key) : 'current_month';
+          _populateReportPeriodOptions(newKey);
+          if (typeof refreshReportCard === 'function') refreshReportCard();
+          if (typeof notify === 'function') notify('\ud83d\udcca Rapports basculent sur le dispatch courant', 'info');
+        }
+      } catch(e) { console.warn('[PSM] auto-refresh report failed:', e); }
+    }, 400);
+  }
   renderDispatchPage();
 
   // Offer to print bons
