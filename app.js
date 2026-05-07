@@ -265,6 +265,90 @@ function _h(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ── Sécurité : sources de vérité role + validator restore ──────────────
+// Lit toujours _userProfile (Firebase, immuable depuis console) avec fallback sécurisé.
+// Détecte le tampering APP.users[i].role et log dans error_log.
+function _authenticRole() {
+  var profileRole = null;
+  try {
+    if (typeof _userProfile !== 'undefined' && _userProfile && _userProfile.role) {
+      profileRole = _userProfile.role;
+    }
+  } catch(e) {}
+  var localRole = null;
+  try {
+    if (typeof _currentUser === 'function') {
+      var u = _currentUser();
+      if (u && u.role) localRole = u.role;
+    }
+  } catch(e) {}
+  // Détection tampering : si profil cloud charge ET diffère du local
+  if (profileRole && localRole && profileRole !== localRole) {
+    try {
+      if (typeof logError === 'function') {
+        logError('role_tamper_detected', new Error('Role mismatch detected'), {
+          profileRole: profileRole,
+          localRole: localRole,
+          ts: Date.now()
+        });
+      }
+    } catch(_e) {}
+    return profileRole; // SOURCE DE VÉRITÉ = profil Firebase
+  }
+  // Cas normaux : retourner le role authentique
+  return profileRole || localRole || null;
+}
+function _isAuthenticAdmin() {
+  return _authenticRole() === 'admin';
+}
+
+// Validator strict pour restauration de backup (S3)
+// Évite injection JSON malformé qui corromperait l'état APP.
+function _validateRestorePayload(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Format invalide : objet attendu');
+  }
+  // Whitelist des clés top-level acceptées
+  var allowedTopKeys = [
+    'articles','fournisseurs','commerciaux','mouvements','bons','audit',
+    'backups','commandesFourn','annuaire','pdv','zones','secteurs',
+    'dispatch','users','settings','_ts','_dataVersion','_sig','_archivesCache',
+    '_annuaireTombstones','_activityLog'
+  ];
+  // Vérifier les arrays et tailles max
+  var arrayLimits = {
+    articles: 100000, fournisseurs: 10000, commerciaux: 10000,
+    mouvements: 1000000, bons: 500000, audit: 500,
+    backups: 100, commandesFourn: 100000, annuaire: 100000,
+    pdv: 1000000, zones: 10000, secteurs: 10000, users: 1000
+  };
+  Object.keys(arrayLimits).forEach(function(k){
+    if (data[k] !== undefined) {
+      if (!Array.isArray(data[k])) {
+        throw new Error('Champ ' + k + ' doit être un tableau');
+      }
+      if (data[k].length > arrayLimits[k]) {
+        throw new Error(k + ' dépasse la limite (' + arrayLimits[k] + ')');
+      }
+    }
+  });
+  // Settings : objet plat, whitelist des clés sensibles
+  if (data.settings !== undefined) {
+    if (typeof data.settings !== 'object' || Array.isArray(data.settings)) {
+      throw new Error('settings doit être un objet');
+    }
+  }
+  // Bloquer les clés magiques/dangereuses
+  ['__proto__', 'constructor', 'prototype'].forEach(function(k){
+    if (k in data) {
+      throw new Error('Clé interdite: ' + k);
+    }
+  });
+  return true;
+}
+
+
+
 let APP = {
   // ── GADGETS / ARTICLES ───────────────────────────────────────
   articles: [
@@ -905,7 +989,7 @@ async function deleteArchiveEntry(type, year, id) {
 
 // ── Désarchiver un item : remettre dans le hot set + soft-delete dans archive ──
 async function unarchiveItem(type, year, id) {
-  if (_currentUser()?.role !== 'admin') {
+  if (!_isAuthenticAdmin()) {
     if (typeof notify==='function') notify('⛔ Action réservée à l\u0027admin', 'warning');
     return false;
   }
@@ -967,7 +1051,7 @@ async function unarchiveItem(type, year, id) {
 
 // ── Retry manuel de l'archivage depuis la bannière dashboard ──
 async function manualRetryArchive() {
-  if (_currentUser()?.role !== 'admin') {
+  if (!_isAuthenticAdmin()) {
     if (typeof notify==='function') notify('⛔ Action réservée à l\u0027admin', 'warning');
     return;
   }
@@ -1224,7 +1308,7 @@ async function maybeAutoArchiveLogs() {
 
 // 6. Module UI : Logs Archivés (admin only)
 async function openLogArchivesModal(initialType) {
-  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') {
+  if (!_isAuthenticAdmin()) {
     if (typeof notify === 'function') notify('Acces reserve aux administrateurs', 'warning');
     return;
   }
@@ -1351,7 +1435,7 @@ function _renderLogArchTable(type, year, items) {
 }
 
 async function _exportLogArchive(type, format) {
-  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') return;
+  if (!_isAuthenticAdmin()) return;
   var sel = document.getElementById('log-arch-year');
   if (!sel || !sel.value) { if (typeof notify === 'function') notify('Sélectionnez une année', 'warning'); return; }
   var year = sel.value;
@@ -1397,7 +1481,7 @@ async function _exportLogArchive(type, format) {
 
 // Retry manuel logs (utilisable depuis Paramètres ou bannière)
 async function manualRetryLogArchive() {
-  if (typeof _currentUser === 'function' && _currentUser()?.role !== 'admin') {
+  if (!_isAuthenticAdmin()) {
     if (typeof notify === 'function') notify('Action reservee aux administrateurs', 'warning');
     return;
   }
@@ -8763,7 +8847,7 @@ function editZone(id){openZoneModal(id);}
 // Admin uniquement. Corrige les stocks d'articles dont la valeur est incorrecte
 // en utilisant le stockAfter du dernier mouvement connu pour chaque article.
 function reconstructStocksFromMovements(dryRun) {
-  if (_currentUser()?.role !== 'admin') { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
+  if (!_isAuthenticAdmin()) { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
   var results = [];
   (APP.articles || []).forEach(function(art) {
     var lastMvt = (APP.mouvements || [])
@@ -8784,7 +8868,7 @@ function reconstructStocksFromMovements(dryRun) {
 }
 
 function openStockRepairModal() {
-  if (_currentUser()?.role !== 'admin') { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
+  if (!_isAuthenticAdmin()) { notify('⛔ Action réservée à l\'admin', 'warning'); return; }
   var preview = reconstructStocksFromMovements(true); // dry run
   var changed = preview.filter(function(r) { return r.stockReconstruit !== null && r.stockReconstruit !== r.stockActuel; });
   var unchanged = preview.filter(function(r) { return r.stockReconstruit !== null && r.stockReconstruit === r.stockActuel; });
@@ -9386,14 +9470,18 @@ function exportAllJSON() {
 
 function importJSON(input) {
   const file=input.files[0]; if(!file) return;
+  // Limite taille fichier (50 MB)
+  if (file.size > 50 * 1024 * 1024) { notify('Fichier trop volumineux (max 50 MB)','error'); input.value=''; return; }
   if(!confirm('Importer ce fichier ? Les données actuelles seront remplacées. Un backup sera créé automatiquement.')) {input.value='';return;}
   autoBackup(true);
   const reader=new FileReader();
   reader.onload=e=>{
     try {
       const data=JSON.parse(e.target.result);
+      // S3 — Validation stricte avant écriture
+      _validateRestorePayload(data);
       ['articles','fournisseurs','commerciaux','mouvements','bons','audit','backups','commandesFourn'].forEach(k=>{if(Array.isArray(data[k])) APP[k]=data[k];});
-      if(data.settings) APP.settings=data.settings;
+      if(data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) APP.settings=data.settings;
       saveDB(); auditLog('IMPORT','all',null,null,{file:file.name});
       notify('Import réussi ✓','success'); initApp();
     } catch(err){notify('Fichier invalide: '+err.message,'error');}
@@ -9409,6 +9497,8 @@ function restoreSpecificBackup(id) {
     if (!bk.data) { notify('Données de backup absentes (session rechargée) — utilisez un snapshot cloud', 'warning'); return; }
     var _prevTs = APP._ts || 0;
     const restored=JSON.parse(bk.data);
+    // S3 — Validation stricte avant Object.assign
+    _validateRestorePayload(restored);
     Object.assign(APP,restored);
     if (typeof auditLog === 'function') auditLog('RESTORE_BACKUP','system',bk.id,{ts:_prevTs},{bkTs:bk.ts,restoredBy:(_currentUser()&&_currentUser().email)||'admin'});
     // Fix bug regression Sprint G : saveDB() est debounced 250ms.
@@ -10044,7 +10134,7 @@ function _umClearSig() {
 }
 
 async function saveUserModal(userId) {
-  if(_currentUser()?.role !== 'admin') { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
+  if(!_isAuthenticAdmin()) { notify('\u26d4 Action r\u00e9serv\u00e9e', 'warning'); return; }
   // H5 : plafond 10 utilisateurs
   if (!userId && (APP.users||[]).length >= 10) {
     notify('\u26d4 Limite atteinte : PSM est plafonn\u00e9 \u00e0 10 comptes. Supprimez un compte avant d\'en cr\u00e9er un nouveau.', 'error');
@@ -10228,7 +10318,7 @@ async function saveUserModal(userId) {
 }
 
 async function deleteUser(userId) {
-  if(_currentUser()?.role !== 'admin') { notify('⛔ Action réservée', 'warning'); return; }
+  if(!_isAuthenticAdmin()) { notify('⛔ Action réservée', 'warning'); return; }
   if(!confirm('Désactiver cet utilisateur ?\n\nLe profil Firebase restera en base (is_active:false) pour empêcher toute reconnexion. C\u2019est l\u2019équivalent d\u2019une suppression définitive côté accès — les données historiques (audit) sont préservées.')) return;
 
   // Résolution user (par id puis par email fallback)
