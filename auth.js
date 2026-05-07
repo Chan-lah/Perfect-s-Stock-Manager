@@ -736,7 +736,9 @@ function _currentUser() {
       role: _userProfile.role || 'viewer',
       permissions: _userProfile.permissions || null,
       photo: _userProfile.photo || null,
-      signature: _userProfile.signature || null
+      signature: _userProfile.signature || null,
+      matricule: _userProfile.matricule || null,
+      signatureKey: _userProfile.signatureKey || null
     };
   }
   // Fallback: local APP.users (offline mode)

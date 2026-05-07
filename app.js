@@ -824,10 +824,17 @@ async function archiveSweep() {
 async function maybeAutoArchive() {
   try {
     var last = (APP.settings && APP.settings._lastArchiveRun) || 0;
-    if (Date.now() - last < 7 * 86400000) return;
+    // Detection changement de seuil : bypass throttle 1 fois si la retention a change
+    var lastRet = (APP.settings && APP.settings._lastArchiveRetention != null) ? APP.settings._lastArchiveRetention : null;
+    var currentRet = _archRetentionMonths();
+    var retentionChanged = (lastRet !== null && lastRet !== currentRet);
+    if (!retentionChanged && Date.now() - last < 7 * 86400000) return;
     if (typeof _firebaseDB === 'undefined' || !_firebaseDB) return;
     var r = await archiveSweep();
-    if (r.moved > 0) console.log('[PSM] Archive auto: ' + r.moved + ' éléments déplacés');
+    if (r.moved > 0) console.log('[PSM] Archive auto: ' + r.moved + ' éléments déplacés (rétention=' + currentRet + ' mois)');
+    // Persister la retention utilisee pour detecter les changements futurs
+    if (APP.settings) APP.settings._lastArchiveRetention = currentRet;
+    if (typeof saveDB === 'function') saveDB();
     // Succès : effacer le flag d'échec si présent
     if (APP.settings && APP.settings._archiveFailedAt) {
       APP.settings._archiveFailedAt = null;
@@ -1186,8 +1193,15 @@ async function maybeAutoArchiveLogs() {
     if (!_firebaseDB) return;
     if ((APP.settings && APP.settings.disableLogArchive) === true) return;
     var last = (APP.settings && APP.settings._lastLogArchiveRun) || 0;
-    if (Date.now() - last < 7 * 86400000) return;
+    // Detection changement seuil logs : bypass throttle 1 fois si _LOG_ARCHIVE_MONTHS a change
+    var lastLogRet = (APP.settings && APP.settings._lastLogArchiveMonths != null) ? APP.settings._lastLogArchiveMonths : null;
+    var currentLogRet = _LOG_ARCHIVE_MONTHS;
+    var logRetChanged = (lastLogRet !== null && lastLogRet !== currentLogRet);
+    if (!logRetChanged && Date.now() - last < 7 * 86400000) return;
     var r = await archiveSweepLogs();
+    // Persister le seuil utilise
+    if (APP.settings) APP.settings._lastLogArchiveMonths = currentLogRet;
+    if (typeof saveDB === 'function') saveDB();
     var totalArch = r.archived.audit + r.archived.activity + r.archived.sessions;
     if (totalArch > 0) console.log('[PSM] Logs archive auto: ' + totalArch + ' déplacés');
     if (APP.settings && APP.settings._logArchiveFailedAt) {
@@ -1440,7 +1454,15 @@ async function openArchivesModal(type, preselectYear) {
   var bodyEl = document.querySelector('#active-modal .modal-body');
   if (!bodyEl) return;
   if (years.length === 0) {
-    bodyEl.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center"><p style="font-size:14px;color:var(--text-2)">Aucune archive disponible pour le moment.</p><p style="font-size:12px;color:var(--text-3);margin-top:8px">Les éléments de plus de ' + _archRetentionMonths() + ' mois sont déplacés ici automatiquement.</p></div>';
+    var _isAdminUser = _currentUser && _currentUser()?.role === 'admin';
+    bodyEl.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center">'
+      + '<div style="font-size:42px;margin-bottom:10px">📂</div>'
+      + '<p style="font-size:14px;color:var(--text-1);font-weight:600;margin-bottom:6px">Aucune archive pour le moment</p>'
+      + '<p style="font-size:12px;color:var(--text-2);margin-bottom:12px;max-width:480px;margin-left:auto;margin-right:auto;line-height:1.6">'
+      + 'Les éléments de plus de <b>' + _archRetentionMonths() + ' mois</b> sont déplacés ici automatiquement. '
+      + 'Le prochain archivage automatique aura lieu d\u0027ici 7 jours maximum.</p>'
+      + (_isAdminUser ? '<button class="btn btn-primary btn-sm" onclick="closeModal();showPage(\'settings\');setTimeout(function(){var b=document.getElementById(\'btn-arch-sweep\');if(b){b.scrollIntoView({behavior:\'smooth\',block:\'center\'});b.style.outline=\'2px solid var(--warning)\';setTimeout(function(){b.style.outline=\'\';},2000);}},250);">⚙️ Archiver maintenant (Paramètres)</button>' : '')
+      + '</div>';
     return;
   }
   var selected = preselectYear && years.indexOf(String(preselectYear)) >= 0 ? String(preselectYear) : years[0];
@@ -7771,49 +7793,58 @@ function renderArticleTracking() {
   document.getElementById('content').innerHTML = html;
 }
 
-function renderArticleDetail(artId, opts) {
+async function renderArticleDetail(artId, opts) {
   opts = opts || {};
   var art = (APP.articles||[]).find(function(a){ return a.id===artId; });
   if (!art) { notify('Article introuvable','error'); return; }
 
-  // Period
+  // Période
   var period = opts.period || '30d';
   var now = Date.now();
   var periodMs = { '7d': 7, '30d': 30, '90d': 90, '1yr': 365 };
   var days = periodMs[period] || 30;
   var fromTs = opts.from ? new Date(opts.from).getTime() : (now - days*86400000);
   var toTs   = opts.to   ? new Date(opts.to).getTime()   : now;
-  var withArchive = !!opts.archive;
 
-  // Gather movements from live + archive
-  var allMvts = (APP.mouvements||[]).filter(function(m){ return m.artId===artId; });
-  if (withArchive && window._archiveData) {
-    var archMvts = ((_archiveData.mouvements)||[]).filter(function(m){ return m.artId===artId; });
-    allMvts = allMvts.concat(archMvts);
+  // Loading state immediat si periode > hot retention (chargement archives)
+  var willLoadArchive = (typeof _hotCutoffMs === 'function') && fromTs < _hotCutoffMs();
+  if (willLoadArchive) {
+    document.getElementById('content').innerHTML = '<div style="padding:60px;text-align:center;color:var(--text-2)"><div style="font-size:30px;margin-bottom:10px">⏳</div><div>Chargement de l\u0027historique de ' + _h(art.name) + '...</div></div>';
   }
 
-  // Filter by period
-  var mvts = allMvts.filter(function(m){
-    var t = new Date(m.date||m.createdAt||0).getTime();
-    return t >= fromTs && t <= toTs;
-  }).sort(function(a,b){
-    return new Date(b.date||b.createdAt||0) - new Date(a.date||a.createdAt||0);
-  });
+  // Fusion hot + archives via helper deja eprouve
+  // Fix bug : champ correct = articleId (pas artId), timestamp = ts (pas date/createdAt)
+  var rangeMvts = [];
+  if (typeof _getMouvementsForRange === 'function') {
+    var allRange = await _getMouvementsForRange(fromTs, toTs);
+    rangeMvts = allRange.filter(function(m){ return m && m.articleId === artId; });
+  } else {
+    rangeMvts = (APP.mouvements||[]).filter(function(m){
+      if (m.articleId !== artId) return false;
+      var t = m.ts || 0;
+      return t >= fromTs && t <= toTs;
+    });
+  }
+  rangeMvts.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+  var mvts = rangeMvts;
 
   // KPIs
   var entries = 0, exits = 0;
   mvts.forEach(function(m){ if(m.type==='entree') entries+=m.qty||0; else exits+=m.qty||0; });
   var net = entries - exits;
 
-  // Stock at T (reconstruct from current stock + movements after toTs)
-  var mvtsAfter = allMvts.filter(function(m){ return new Date(m.date||m.createdAt||0).getTime() > toTs; });
+  // Stock à T (reconstruit depuis stock courant - mouvements posterieurs a toTs)
+  // Pour mouvements posterieurs : utiliser hot uniquement (suffisant car toTs <= now)
+  var mvtsAfter = (APP.mouvements||[]).filter(function(m){
+    return m.articleId === artId && (m.ts||0) > toTs;
+  });
   var stockAtT = art.stock;
   mvtsAfter.forEach(function(m){ if(m.type==='entree') stockAtT-=(m.qty||0); else stockAtT+=(m.qty||0); });
 
-  // Top operators
+  // Top opérateurs
   var ops = {};
   mvts.forEach(function(m){
-    var n = m.agent || m.operateur || m.userName || 'Inconnu';
+    var n = m.agent || m.operateur || m.userName || m.commercialName || 'Inconnu';
     if (!ops[n]) ops[n] = { entries:0, exits:0, count:0 };
     ops[n].count++;
     if(m.type==='entree') ops[n].entries+=(m.qty||0); else ops[n].exits+=(m.qty||0);
@@ -7821,15 +7852,16 @@ function renderArticleDetail(artId, opts) {
   var opList = Object.keys(ops).map(function(n){ return { name:n, entries:ops[n].entries, exits:ops[n].exits, count:ops[n].count }; });
   opList.sort(function(a,b){ return b.count-a.count; });
 
-  // Build period buttons
+  // Build period buttons (archive: toujours fusionne automatiquement via helper)
   var pBtns = ['7d','30d','90d','1yr'].map(function(p){
-    return '<button class="btn btn-sm ' + (period===p?'btn-primary':'btn-secondary') + '" onclick="renderArticleDetail(\'' + artId + '\',{period:\'' + p + '\',archive:' + withArchive + '})">'
+    return '<button class="btn btn-sm ' + (period===p?'btn-primary':'btn-secondary') + '" onclick="renderArticleDetail(\'' + artId + '\',{period:\'' + p + '\'})">'
       + { '7d':'7j', '30d':'30j', '90d':'90j', '1yr':'1 an' }[p] + '</button>';
   }).join('');
 
-  // Archive checkbox label
-  var archLabel = '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:var(--text-2)">'
-    + '<input type="checkbox" ' + (withArchive?'checked':'') + ' onchange="renderArticleDetail(\'' + artId + '\',{period:\'' + period + '\',archive:this.checked})"> Inclure archives</label>';
+  // Indicateur fusion archive (info, pas action)
+  var archLabel = willLoadArchive
+    ? '<span style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);font-style:italic">📦 Archives incluses automatiquement</span>'
+    : '';
 
   var stockColor = (art.stock||0) <= (art.stockMin||0) ? 'var(--danger)' : 'var(--success)';
 
@@ -7876,15 +7908,16 @@ function renderArticleDetail(artId, opts) {
       + '<th>Date</th><th>Type</th><th>Qté</th><th>Opérateur</th><th>Bon / Ref</th><th>Note</th>'
       + '</tr></thead><tbody>';
     mvts.forEach(function(m){
-      var d = new Date(m.date||m.createdAt||0);
+      var d = new Date(m.ts||0);
       var ds = (String(d.getDate()).padStart(2,'0')) + '/' + (String(d.getMonth()+1).padStart(2,'0')) + '/' + d.getFullYear();
+      var hh = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
       var isEntree = m.type==='entree';
       html += '<tr>'
-        + '<td>' + ds + '</td>'
+        + '<td style="font-size:11px">' + ds + ' ' + hh + '</td>'
         + '<td><span class="badge ' + (isEntree?'badge-green':'badge-orange') + '">' + (isEntree?'Entrée':'Sortie') + '</span></td>'
         + '<td style="font-weight:700;color:' + (isEntree?'var(--success)':'var(--accent3)') + '">' + (isEntree?'+':'-') + (m.qty||0) + '</td>'
-        + '<td>' + _h(m.agent||m.operateur||m.userName||'—') + '</td>'
-        + '<td style="font-size:11px;color:var(--text-2)">' + _h(m.bonId||m.ref||'—') + '</td>'
+        + '<td style="font-size:11px">' + _h(m.agent||m.operateur||m.userName||m.commercialName||'—') + '</td>'
+        + '<td style="font-size:11px;color:var(--text-2)">' + _h(m.bonNum||m.bonId||m.ref||'—') + '</td>'
         + '<td style="font-size:11px;color:var(--text-2)">' + _h(m.note||m.motif||'—') + '</td>'
         + '</tr>';
     });
