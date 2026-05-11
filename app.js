@@ -2123,6 +2123,36 @@ async function _finishAppInit() {
       } catch(err) { console.warn('[PSM] Phase 10 migration error:', err); }
     })();
   }
+  // Auto-cancel des bons brouillon abandonnés > 30 jours (scan 1x/session)
+  (function _autoCancelStaleBrouillons(){
+    try {
+      var STALE_MS = 30 * 86400 * 1000;
+      var now = Date.now();
+      var affected = [];
+      (APP.bons||[]).forEach(function(b){
+        if(b.status !== 'brouillon') return;
+        var c = b.createdAt || 0;
+        if(!c || (now - c) < STALE_MS) return;
+        b.status = 'annulé';
+        b._cancelledAt = now;
+        b._autoCanceledReason = 'stale_30d';
+        b._version = (b._version||1) + 1;
+        try { auditLog('AUTO_CANCEL_BON', 'bon', b.id, {status:'brouillon'}, {status:'annulé', reason:'stale_30d', ageDays: Math.floor((now-c)/86400000)}); } catch(_){}
+        affected.push(b.numero || b.id);
+      });
+      if(affected.length > 0) {
+        if(typeof saveDB === 'function') saveDB();
+        console.log('[PSM] Auto-cancel: ' + affected.length + ' brouillon(s) > 30j annulé(s)');
+        // Notif réservée admin authentifié
+        var isAdmin = (typeof _isAuthenticAdmin === 'function') ? _isAuthenticAdmin() : false;
+        if(isAdmin && typeof notify === 'function') {
+          var prev = affected.slice(0,5).join(', ');
+          var more = affected.length > 5 ? ' (+' + (affected.length-5) + ')' : '';
+          notify(affected.length + ' bon(s) brouillon > 30j auto-annulé(s) — ' + prev + more + '. Réactivables individuellement.', 'warning');
+        }
+      }
+    } catch(e) { console.warn('[PSM] auto-cancel stale brouillons failed:', e); }
+  })();
   initGMAData();
   // Defer heavy sync ops to after first paint (non-blocking)
   setTimeout(function() { _pruneHistoricalData(); }, 200);
@@ -12095,26 +12125,52 @@ function _buildDispHistByMonth(year) {
 
 function _buildDispHistRows(list) {
   var fullHist = APP.dispatch.history || [];
-  var rows = '';
-  list.forEach(function(h) {
-    var realIdx = fullHist.indexOf(h);
-    var details = (h.alloc || []).filter(function(a) { return a.qty > 0; }).map(function(a) { return '<span style="font-size:0.75rem;background:var(--border);border-radius:10px;padding:2px 7px;display:inline-block;margin:1px">' + a.name + ': <strong>' + a.qty + '</strong></span>'; }).join(' ');
-    rows += '<div class="card" style="margin-bottom:8px;padding:12px 14px">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
-      + '<div><strong style="font-size:0.92rem">' + (h.articleName || '') + '</strong>'
-      + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s pr\u00e9lev\u00e9es</span>'
-      + (h.stockAtDispatch != null ? '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-1)" title="Stock du gadget au moment du dispatch">' + h.stockAtDispatch + ' stock initial</span>'
-      + '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-2)" title="Simulation : stock initial \u2212 unit\u00e9s pr\u00e9lev\u00e9es. N\'impacte pas le stock r\u00e9el.">' + (h.stockAtDispatch - h.totalQty) + ' \u00e0 rester</span>' : '')
-      + '</div>'
-      + '<div style="display:flex;gap:6px;align-items:center">'
-      + '<span style="font-size:0.78rem;color:var(--text-2)">' + new Date(h.ts).toLocaleString('fr-FR') + '</span>'
-      + '<button class="btn btn-sm" onclick="printDispatchReport(' + realIdx + ')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
-      + '<button class="btn btn-sm" onclick="undoDispatch(' + realIdx + ')" title="Annuler" style="color:var(--danger)"><i class="fa-solid fa-rotate-left"></i></button>'
-      + '</div></div>'
-      + '<div style="display:flex;flex-wrap:wrap;gap:4px">' + details + '</div>'
-      + '</div>';
+  var MAX_AGE = 14 * 86400 * 1000;
+  var now = Date.now();
+  // Grouper snaps par ts (preserver ordre)
+  var byTs = {}, order = [];
+  list.forEach(function(h){
+    if(!byTs[h.ts]) { byTs[h.ts] = []; order.push(h.ts); }
+    byTs[h.ts].push(h);
   });
-  return rows || '<p style="color:var(--text-2);font-size:0.85rem">Aucun r\u00e9sultat</p>';
+  var out = '';
+  order.forEach(function(ts){
+    var items = byTs[ts];
+    var locked = (now - parseInt(ts,10)) > MAX_AGE;
+    var dateStr = new Date(parseInt(ts,10)).toLocaleString('fr-FR');
+    var totalUnits = items.reduce(function(s,h){ return s + (parseInt(h.totalQty)||0); }, 0);
+    var groupHead = '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px 6px 0 0;padding:8px 12px">'
+      + '<div><strong style="font-size:0.85rem;color:var(--accent)"><i class="fa-solid fa-layer-group"></i> Dispatch du ' + dateStr + '</strong>'
+      + ' <span class="badge" style="background:var(--border);color:var(--text-1);margin-left:6px">' + items.length + ' article' + (items.length>1?'s':'') + '</span>'
+      + ' <span class="badge" style="background:var(--accent)22;color:var(--accent);margin-left:4px">' + totalUnits + ' unit\u00e9s</span>'
+      + (locked ? ' <span class="badge" style="background:#9ca3af33;color:#6b7280;margin-left:4px" title="Verrouill\u00e9 apr\u00e8s 2 semaines"><i class="fa-solid fa-lock"></i> Verrouill\u00e9</span>' : '')
+      + '</div>'
+      + '<button class="btn btn-sm" ' + (locked?'disabled style="opacity:0.4;cursor:not-allowed"':'style="color:var(--danger)"')
+      + ' onclick="cancelDispatchByTs(' + ts + ')" title="' + (locked?'Verrouill\u00e9 apr\u00e8s 2 semaines':'Annuler ce dispatch entier (tous les articles)') + '">'
+      + '<i class="fa-solid fa-ban"></i> Annuler dispatch</button>'
+      + '</div>';
+    var rows = '';
+    items.forEach(function(h){
+      var realIdx = fullHist.indexOf(h);
+      var details = (h.alloc || []).filter(function(a){ return a.qty > 0; }).map(function(a){ return '<span style="font-size:0.75rem;background:var(--border);border-radius:10px;padding:2px 7px;display:inline-block;margin:1px">' + a.name + ': <strong>' + a.qty + '</strong></span>'; }).join(' ');
+      rows += '<div style="background:var(--bg-card);border:1px solid var(--border);border-top:none;padding:12px 14px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        + '<div><strong style="font-size:0.92rem">' + (h.articleName || '') + '</strong>'
+        + '<span class="badge" style="margin-left:8px;background:var(--accent)22;color:var(--accent)">' + h.totalQty + ' unit\u00e9s pr\u00e9lev\u00e9es</span>'
+        + (h.stockAtDispatch != null ? '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-1)" title="Stock du gadget au moment du dispatch">' + h.stockAtDispatch + ' stock initial</span>'
+        + '<span class="badge" style="margin-left:6px;background:var(--border);color:var(--text-2)" title="Simulation : stock initial \u2212 unit\u00e9s pr\u00e9lev\u00e9es. N\'impacte pas le stock r\u00e9el.">' + (h.stockAtDispatch - h.totalQty) + ' \u00e0 rester</span>' : '')
+        + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center">'
+        + '<button class="btn btn-sm" onclick="printDispatchReport(' + realIdx + ')" title="Imprimer"><i class="fa-solid fa-print"></i></button>'
+        + '<button class="btn btn-sm" ' + (locked?'disabled style="opacity:0.4;cursor:not-allowed"':'style="color:#f59e0b"')
+        + ' onclick="undoDispatch(' + realIdx + ')" title="' + (locked?'Verrouill\u00e9 apr\u00e8s 2 semaines':'Retirer cet article du dispatch') + '"><i class="fa-solid fa-minus"></i></button>'
+        + '</div></div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:4px">' + details + '</div>'
+        + '</div>';
+    });
+    out += '<div style="border-radius:6px;overflow:hidden;margin-bottom:10px">' + groupHead + rows + '</div>';
+  });
+  return out || '<p style="color:var(--text-2);font-size:0.85rem">Aucun r\u00e9sultat</p>';
 }
 
 function dInitCommercialDispatchFields(c) {
@@ -12448,30 +12504,102 @@ function undoDispatch(histIdx) {
   var hist = APP.dispatch.history || [];
   if(histIdx < 0 || histIdx >= hist.length) return;
   var snap = hist[histIdx];
-  var ids = snap.bonIds || [];
-  var toDelete = []; var blockers = []; var alreadyGone = 0;
-  ids.forEach(function(bid){
-    var b = (APP.bons||[]).find(function(x){ return x.id === bid; });
-    if(!b) { alreadyGone++; return; }
-    if(b.status === 'valid\u00e9') { blockers.push(b.numero || bid); return; }
-    toDelete.push(b);
-  });
-  if(blockers.length > 0) {
-    notify('Impossible : bon(s) d\u00e9j\u00e0 valid\u00e9(s) \u2014 ' + blockers.join(', ') + '. Annulez-les d\u2019abord.', 'error');
+  // Verrou 14 jours
+  var MAX_AGE = 14 * 86400 * 1000;
+  if ((Date.now() - (snap.ts||0)) > MAX_AGE) {
+    notify('Dispatch verrouill\u00e9 \u2014 un dispatch de plus de 2 semaines ne peut \u00eatre modifi\u00e9.', 'error');
     return;
   }
-  var msg = 'Annuler le dispatch de ' + snap.articleName + ' (' + snap.totalQty + ' unit\u00e9s) du ' + new Date(snap.ts).toLocaleString('fr-FR') + ' ?\n\n';
-  if(toDelete.length > 0) msg += toDelete.length + ' bon(s) brouillon seront supprim\u00e9s.';
-  else msg += 'Aucun bon li\u00e9 \u00e0 supprimer (historique seul).';
+  var ids = snap.bonIds || [];
+  var blockers = [], bonsToTouch = [];
+  ids.forEach(function(bid){
+    var b = (APP.bons||[]).find(function(x){ return x.id === bid; });
+    if(!b) return;
+    if(!Array.isArray(b.lignes)) return;
+    var hasArt = b.lignes.some(function(l){ return l.articleId === snap.articleId; });
+    if(!hasArt) return;
+    if(b.status !== 'brouillon') { blockers.push(b.numero || bid); return; }
+    bonsToTouch.push(b);
+  });
+  if(blockers.length > 0) {
+    notify('Impossible : bon(s) non-brouillon \u2014 ' + blockers.join(', ') + '. Tous les bons issus du dispatch doivent rester en brouillon.', 'error');
+    return;
+  }
+  var willDel = 0, willTrim = 0;
+  bonsToTouch.forEach(function(b){
+    var remain = b.lignes.filter(function(l){ return l.articleId !== snap.articleId; });
+    if(remain.length === 0) willDel++; else willTrim++;
+  });
+  var msg = 'Retirer "' + snap.articleName + '" (' + snap.totalQty + ' unit\u00e9s) du dispatch du ' + new Date(snap.ts).toLocaleString('fr-FR') + ' ?\n\n';
+  if(willTrim > 0) msg += '\u2022 ' + willTrim + ' bon(s) brouillon all\u00e9g\u00e9(s) (autres articles conserv\u00e9s)\n';
+  if(willDel > 0) msg += '\u2022 ' + willDel + ' bon(s) brouillon supprim\u00e9(s) (ne contiennent plus rien)\n';
+  if(willTrim === 0 && willDel === 0) msg += '\u2022 Aucun bon li\u00e9 \u00e0 modifier (historique seul)\n';
   if(!confirm(msg)) return;
-  toDelete.forEach(function(b){
-    auditLog('DELETE', 'bon', b.id, b, null);
-    APP.bons = APP.bons.filter(function(x){ return x.id !== b.id; });
+  var deletedBons = [], trimmedBons = [];
+  bonsToTouch.forEach(function(b){
+    var before = b.lignes.slice();
+    b.lignes = b.lignes.filter(function(l){ return l.articleId !== snap.articleId; });
+    if(b.lignes.length === 0) {
+      auditLog('DELETE', 'bon', b.id, b, null);
+      APP.bons = APP.bons.filter(function(x){ return x.id !== b.id; });
+      deletedBons.push(b.numero || b.id);
+    } else {
+      b._version = (b._version||1) + 1;
+      auditLog('REMOVE_ARTICLE_DISPATCH', 'bon', b.id, {lignes: before}, {lignes: b.lignes, removedArticle: snap.articleName});
+      trimmedBons.push(b.numero || b.id);
+    }
   });
   hist.splice(histIdx, 1);
   saveDB();
-  auditLog('UNDO', 'dispatch', snap.articleId || '', null, { article: snap.articleName, totalQty: snap.totalQty, deletedBons: toDelete.length });
-  notify('Dispatch annul\u00e9 \u2014 ' + toDelete.length + ' bon(s) brouillon supprim\u00e9(s) ✓', 'success');
+  auditLog('REMOVE_ARTICLE_DISPATCH', 'dispatch', snap.articleId || '', null, { article: snap.articleName, totalQty: snap.totalQty, deletedBons: deletedBons, trimmedBons: trimmedBons });
+  notify('Article "' + snap.articleName + '" retir\u00e9 ✓ ' + trimmedBons.length + ' bon(s) all\u00e9g\u00e9(s), ' + deletedBons.length + ' supprim\u00e9(s)', 'success');
+  renderDispatchPage();
+}
+
+// Annule un dispatch ENTIER (toutes les entrees historique partageant le meme ts).
+function cancelDispatchByTs(ts) {
+  _dispEnsure();
+  ts = parseInt(ts, 10);
+  if(!ts) return;
+  var MAX_AGE = 14 * 86400 * 1000;
+  if ((Date.now() - ts) > MAX_AGE) {
+    notify('Dispatch verrouill\u00e9 \u2014 un dispatch de plus de 2 semaines ne peut \u00eatre annul\u00e9.', 'error');
+    return;
+  }
+  var hist = APP.dispatch.history || [];
+  var snaps = hist.filter(function(h){ return h.ts === ts; });
+  if(snaps.length === 0) { notify('Dispatch introuvable', 'error'); return; }
+  var bonIdMap = {};
+  snaps.forEach(function(s){ (s.bonIds||[]).forEach(function(bid){ bonIdMap[bid] = true; }); });
+  var blockers = [], bonsToDelete = [];
+  Object.keys(bonIdMap).forEach(function(bid){
+    var b = (APP.bons||[]).find(function(x){ return x.id === bid; });
+    if(!b) return;
+    if(b.status !== 'brouillon') { blockers.push(b.numero || bid); return; }
+    bonsToDelete.push(b);
+  });
+  if(blockers.length > 0) {
+    notify('Impossible : ' + blockers.length + ' bon(s) non-brouillon \u2014 ' + blockers.slice(0,5).join(', ') + (blockers.length>5?'\u2026':'') + '. Tous les bons doivent rester en brouillon.', 'error');
+    return;
+  }
+  var dateStr = new Date(ts).toLocaleString('fr-FR');
+  var articleList = snaps.map(function(s){ return '  \u2022 ' + s.articleName + ' \u00d7' + s.totalQty; }).join('\n');
+  if(!confirm(
+    '\u26a0 ANNULER LE DISPATCH ENTIER du ' + dateStr + ' ?\n\n' +
+    'Articles concern\u00e9s :\n' + articleList + '\n\n' +
+    bonsToDelete.length + ' bon(s) brouillon seront SUPPRIM\u00c9S\n' +
+    snaps.length + ' entr\u00e9e(s) historique seront EFFAC\u00c9ES\n\n' +
+    'Cette action est irr\u00e9versible.'
+  )) return;
+  if(!confirm('Confirmation finale : tu confirmes l\u2019annulation compl\u00e8te du dispatch du ' + dateStr + ' ?')) return;
+  bonsToDelete.forEach(function(b){
+    auditLog('DELETE', 'bon', b.id, b, null);
+    APP.bons = APP.bons.filter(function(x){ return x.id !== b.id; });
+  });
+  APP.dispatch.history = hist.filter(function(h){ return h.ts !== ts; });
+  saveDB();
+  auditLog('CANCEL_DISPATCH', 'dispatch', String(ts), null, { ts: ts, deletedBons: bonsToDelete.length, removedSnaps: snaps.length, articles: snaps.map(function(s){ return s.articleName; }) });
+  notify('Dispatch du ' + dateStr + ' annul\u00e9 enti\u00e8rement ✓ ' + bonsToDelete.length + ' bon(s) supprim\u00e9(s)', 'success');
   renderDispatchPage();
 }
 
