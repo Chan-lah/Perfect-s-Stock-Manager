@@ -378,6 +378,29 @@ async function _handleLogin(e) {
       } catch(e) {}
     }
 
+    // F10: Single-session enforcement — claim ownership + listen for kick
+    if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _cloudUser) {
+      try {
+        var _ssRef = _firebaseDB.ref('profiles/' + _cloudUser.uid + '/currentSessionId');
+        _ssRef.set(_psmSessionId).catch(function(){});
+        window._singleSessionRef = _ssRef;
+        window._singleSessionCb = function(snap){
+          var current = snap.val();
+          if (!current) return;
+          if (current === window._psmSessionId) return;
+          // Grace 2s pour éviter race au F5
+          if (window._psmLoginAt && Date.now() - window._psmLoginAt < 2000) return;
+          if (typeof notify === 'function') notify('Vous avez été déconnecté \u2014 votre compte vient d\u2019être utilisé sur un autre appareil.', 'warning');
+          setTimeout(function(){
+            try { window._singleSessionRef && window._singleSessionRef.off('value', window._singleSessionCb); } catch(_){}
+            window._singleSessionRef = null; window._singleSessionCb = null;
+            if (typeof _signOut === 'function') _signOut();
+          }, 1500);
+        };
+        _ssRef.on('value', window._singleSessionCb);
+      } catch(e) { console.warn('[PSM] single-session setup failed:', e); }
+    }
+
     // _tsPromise supprimé (code mort) : l'architecture cloud-first fait un fetch complet,
     // plus besoin de lire le _ts séparément.
 
@@ -777,6 +800,20 @@ function logoutUser() {
   var _logoutUid = _cloudUser ? _cloudUser.uid : null;
   _cloudUser = null;
   _userProfile = null;
+  // F10: Detach single-session listener + clear currentSessionId si encore le notre
+  if (window._singleSessionRef && window._singleSessionCb) {
+    try { window._singleSessionRef.off('value', window._singleSessionCb); } catch(_){}
+    window._singleSessionRef = null;
+    window._singleSessionCb = null;
+  }
+  if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _logoutUid && window._psmSessionId) {
+    try {
+      var _curSsRef = _firebaseDB.ref('profiles/' + _logoutUid + '/currentSessionId');
+      _curSsRef.once('value').then(function(snap){
+        if (snap.val() === window._psmSessionId) { return _curSsRef.remove(); }
+      }).catch(function(){});
+    } catch(e) {}
+  }
   // F8: Clear presence on logout
   if (typeof _firebaseDB !== 'undefined' && _firebaseDB && _logoutUid) {
     try {

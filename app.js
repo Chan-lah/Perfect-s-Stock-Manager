@@ -4452,6 +4452,26 @@ function _handleBonStatusStockChange(b, oldStatus, newStatus) {
       }
     });
   }
+  // annulé → validé : deduct stock (mirror of brouillon → validé, used by reactivateBon)
+  if(oldStatus === 'annulé' && newStatus === 'validé') {
+    for(const l of (b.lignes||[])) {
+      const art = APP.articles.find(a => a.id === l.articleId);
+      if(art && l.qty > art.stock) { notify('Stock insuffisant pour ' + (l.name||'') + ' (Dispo: ' + art.stock + ')','error'); return false; }
+    }
+    (b.lignes || []).forEach(l => {
+      const art = APP.articles.find(a => a.id === l.articleId);
+      if(art && l.qty > 0) {
+        var _sb = art.stock;
+        art.stock -= l.qty;
+        APP.mouvements.unshift({
+          id: generateId(), type: 'sortie', ts: Date.now(),
+          articleId: art.id, articleName: art.name, qty: l.qty,
+          note: 'Reactivation Bon ' + (b.numero||'') + ' → ' + (b.recipiendaire||''), commercialId: b.commercialId||'',
+          stockBefore: _sb, stockAfter: art.stock
+        });
+      }
+    });
+  }
   // When status changes TO annulé → restore stock (only if was validated)
   if(newStatus === 'annulé' && oldStatus !== 'annulé' && oldStatus !== 'brouillon') {
     (b.lignes || []).forEach(l => {
@@ -9126,6 +9146,9 @@ ${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         <button class="btn btn-secondary btn-sm" id="btn-arch-dryrun" onclick="runArchiveDryRun()">🔍 Simuler (dry-run)</button>
         <button class="btn btn-primary btn-sm" id="btn-arch-sweep" onclick="runArchiveSweep()">📦 Archiver maintenant</button>
+        <button class="btn btn-secondary btn-sm" onclick="openArchivesModal('bons')">📂 Bons archivés</button>
+        <button class="btn btn-secondary btn-sm" onclick="openArchivesModal('mouvements')">📂 Mouvements archivés</button>
+        <button class="btn btn-secondary btn-sm" onclick="openArchivesModal('audit')">📂 Audit archivé</button>
       </div>
       <div id="arch-dryrun-output"></div>
       <div style="margin-top:8px;font-size:11px;color:var(--text-3)">Dernier archivage : ${(APP.settings && APP.settings._lastArchiveRun) ? new Date(APP.settings._lastArchiveRun).toLocaleString('fr-FR') : 'jamais'}</div>
