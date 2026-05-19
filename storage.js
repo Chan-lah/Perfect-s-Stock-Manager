@@ -228,8 +228,8 @@ async function _doSaveToCloud() {
     // Sig dans le payload cloud (permet de valider l'intégrité au prochain fetch)
     dataObj._sig = _computeSig();
 
-    // ── Full upload ──
-    await _firebaseDB.ref('app_data').set({
+    // ── Full upload ── (use update, NOT set, to preserve sibling nodes like app_data/archives)
+    await _firebaseDB.ref('app_data').update({
       data: dataObj,
       updated_at: new Date().toISOString()
     });

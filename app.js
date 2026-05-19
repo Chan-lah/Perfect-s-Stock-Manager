@@ -1086,7 +1086,6 @@ async function manualRetryArchive() {
 // Délai entre soft-delete et purge physique (fenêtre de récupération)
 var _LOG_PURGE_GRACE_DAYS = 30;
 // Délai d'archivage (entrée hot → cold)
-var _LOG_ARCHIVE_MONTHS = 2;
 // Délai de purge cold → DELETE (uniquement activity_logs et sessions_logs)
 var _LOG_PURGE_MONTHS = 24;
 
@@ -1240,7 +1239,7 @@ async function archiveSweepLogs() {
   if (APP._archiveInProgress) throw new Error('Un archivage est déjà en cours');
   APP._archiveInProgress = true;
   try {
-    var cutoffArchive = Date.now() - _LOG_ARCHIVE_MONTHS * 30 * 86400000;
+    var cutoffArchive = Date.now() - _archRetentionMonths() * 30 * 86400000;
     var cutoffPurge   = Date.now() - _LOG_PURGE_MONTHS   * 30 * 86400000;
 
     var auditMoved   = await _archiveLogNode('audit_log',    'audit_logs',    cutoffArchive);
@@ -1277,9 +1276,9 @@ async function maybeAutoArchiveLogs() {
     if (!_firebaseDB) return;
     if ((APP.settings && APP.settings.disableLogArchive) === true) return;
     var last = (APP.settings && APP.settings._lastLogArchiveRun) || 0;
-    // Detection changement seuil logs : bypass throttle 1 fois si _LOG_ARCHIVE_MONTHS a change
+    // Detection changement seuil logs : bypass throttle 1 fois si la retention a change
     var lastLogRet = (APP.settings && APP.settings._lastLogArchiveMonths != null) ? APP.settings._lastLogArchiveMonths : null;
-    var currentLogRet = _LOG_ARCHIVE_MONTHS;
+    var currentLogRet = _archRetentionMonths();
     var logRetChanged = (lastLogRet !== null && lastLogRet !== currentLogRet);
     if (!logRetChanged && Date.now() - last < 7 * 86400000) return;
     var r = await archiveSweepLogs();
@@ -9134,7 +9133,7 @@ ${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba
 ${_isAdmin ? `    <div class="card" style="margin-top:12px;border:1px solid rgba(99,102,241,0.3)">
       <div class="card-header"><span class="card-title">📋 Logs Firebase archivés</span></div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.5">
-        Les logs Firebase (audit, activity, sessions) de plus de <b>12 mois</b> sont déplacés vers les archives. <br>
+        Les logs Firebase (audit, activity, sessions) de plus de <b>${_archRetentionMonths()} mois</b> sont déplacés vers les archives. <br>
         🛡 <b>Audit Log</b> conservé en permanence (conformité OHADA).<br>
         ⚠️ <b>Activity Log</b> et <b>Sessions</b> purgés après 24 mois (fenêtre de récupération de 30 jours après soft-delete).
       </div>
